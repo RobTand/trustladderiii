@@ -74,4 +74,56 @@ pub(super) proof fn bpr_open_pr_quiet(b: Node, n: Node, e: InFlight, nq: u64, nq
     allocation_stopping_lemmas::stopped_cases(
         Node { review_stop: Some(ReviewStop::PublicationBody), effect: None, ..b }, Outcome::Stopped);
 }
+
+pub(super) proof fn adoption_ack_result(before: World, after: World, i: int, seq: u64,
+    ob: Outbox, oa: Outbox)
+    requires 0 <= i < before.nodes@.len(), i < after.nodes@.len(),
+        retirement::node_rules(before, before.nodes@[i]),
+        current_item(before.nodes@[i]) == Some(Item::Do(EffectKind::PrepareWorktree)),
+        match before.nodes@[i].effect {
+            Some(e) => e.seq == seq && !e.cancelling && e.kind == EffectKind::PrepareWorktree,
+            None => false,
+        },
+        acknowledgements::on_ack_post(before, after, i, seq, Ack::Confirmed, ob, oa),
+    ensures after.nodes@[i].credit == before.nodes@[i].credit,
+        after.nodes@[i].attempt == before.nodes@[i].attempt,
+        after.nodes@[i].round == before.nodes@[i].round,
+        after.nodes@[i].run.is_none(), !after.nodes@[i].pool,
+        oa == ob, after.next_question == before.next_question,
+        before.nodes@[i].adopted ==> after.nodes@[i].adopted
+            && after.nodes@[i].head == before.nodes@[i].head
+            && after.nodes@[i].phase == before.nodes@[i].phase,
+        !before.nodes@[i].adopted && before.nodes@[i].proposed.is_some()
+            ==> after.nodes@[i].adopted && after.nodes@[i].head == before.nodes@[i].proposed
+                && after.nodes@[i].checked.is_none() && after.nodes@[i].phase == Phase::Checking,
+{
+    reveal(acknowledgements::on_ack_post);
+    reveal(acknowledgements::ack_live_post);
+    adoption_facts(before, before.nodes@[i], after.nodes@[i]);
+}
+
+pub(super) proof fn bpr_ack_result_equiv(before: World, refused: World, permanent: World,
+    i: int, seq: u64, ob: Outbox, refused_out: Outbox, permanent_out: Outbox)
+    requires 0 <= i < before.nodes@.len(), i < refused.nodes@.len(), i < permanent.nodes@.len(),
+        acknowledgements::on_ack_post(before, refused, i, seq, Ack::BodyPolicyRefused, ob, refused_out),
+        acknowledgements::on_ack_post(before, permanent, i, seq, Ack::Permanent, ob, permanent_out),
+        match before.nodes@[i].effect {
+            Some(e) => !(e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr),
+            None => true,
+        },
+    ensures refused.nodes@[i] == permanent.nodes@[i],
+        refused.next_question == permanent.next_question,
+        refused_out.len == permanent_out.len, refused_out.items@ == permanent_out.items@,
+{
+    reveal(acknowledgements::on_ack_post);
+    reveal(acknowledgements::ack_live_post);
+    if let Some(e) = before.nodes@[i].effect {
+        if e.seq == seq && !e.cancelling {
+            bpr_equiv(before.nodes@[i], e, before.next_question, i, ob,
+                refused.nodes@[i], refused.next_question, refused_out,
+                permanent.nodes@[i], permanent.next_question, permanent_out);
+        }
+    }
+}
+
 }

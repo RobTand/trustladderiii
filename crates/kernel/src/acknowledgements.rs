@@ -101,9 +101,12 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
             old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
-] proof [reveal(distance); reveal(ack_live_post);] {
+] proof [reveal(distance);] {
+    kernel_snapshot! { ack_before = *w }
+    kernel_snapshot! { ack_out = *out }
     w.nodes[i].effect = None;
     if e.cancelling {
+        kernel_proof! { ack_cancel_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out); }
         return;
     }
     match ack {
@@ -115,6 +118,16 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
             stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody);
         }
         Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
+    }
+    kernel_proof! {
+        match ack {
+            Ack::Confirmed => ack_confirmed_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+            Ack::DeliveryAccepted => ack_delivery_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+            Ack::Retryable => ack_retry_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+            Ack::Permanent => ack_permanent_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+            Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => ack_review_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+            Ack::BodyPolicyRefused => ack_permanent_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
+        }
     }
 }
 }
@@ -262,23 +275,82 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
         *final(m) == agenda_spec(*old(m), kind),
-] proof [reveal(distance);] {
-    if kind != EffectKind::Enqueue && !kind.starts_operation() {
-        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
+] {
+    *m = confirmed_agenda_value(*m, kind);
+}
+}
+
+kernel_fn! {
+fn confirmed_agenda_adopt(n: Node, head: HeadId) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == agenda_adopt_spec(n, head),
+] {
+    let m = Node { adopted: true, head: Some(head), checked: None, ..n };
+    Node { generation: m.generation + 1, phase: Phase::Checking, pos: 0, ticket: None,
+        effect: match m.effect {
+            Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+        }, ..m }
+}
+}
+
+kernel_fn! {
+fn confirmed_agenda_step(n: Node) -> (result: Node) [
+    requires n.pos < u8::MAX,
+    ensures result == agenda_step_spec(n),
+] {
+    Node { pos: n.pos + 1, ..n }
+}
+}
+
+kernel_fn! {
+fn confirmed_agenda_idle(n: Node) -> (result: Node) [
+    ensures result == agenda_idle_spec(n),
+] {
+    n
+}
+}
+
+kernel_fn! {
+fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
+    requires n.generation < u64::MAX,
+        kind == EffectKind::StopRun ==> !n.pool,
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(result) == distance(n)),
+        (n.effect.is_none() && n.question.is_none() && !n.waiting_incident
+            && (!n.paused || n.phase is Stopping)
+            && kind != EffectKind::Enqueue
+            && (current_item(n) == Some(Item::Do(kind))
+                || current_item(n) == Some(Item::Teardown(kind)))
+            ==> distance(result) + 2 <= distance(n)),
+        result.repo == n.repo, result.footprint == n.footprint,
+        (settle_shape(n)
+            && (n.phase is Stopping ==> current_item(n) == Some(Item::Teardown(kind)))
+            ==> settle_shape(result)),
+        result.generation as int <= n.generation as int + 1,
+        result.generation >= n.generation,
+        result.next_seq == n.next_seq, result.credit == n.credit,
+        result.question == n.question,
+        result.fx_failures == n.fx_failures,
+        result.fx_incidents == n.fx_incidents,
+        result.last_cmd == n.last_cmd,
+        result == agenda_spec(n, kind),
+] {
+    let result = if kind != EffectKind::Enqueue && !kind.starts_operation() {
+        if let Some(Item::Do(k) | Item::Teardown(k)) = n.current() {
             if k == kind {
-                if kind == EffectKind::PrepareWorktree && !m.adopted {
-                    if let Some(head) = m.proposed {
-                        m.adopted = true;
-                        m.head = Some(head);
-                        m.checked = None;
-                        set_phase(m, Phase::Checking);
-                        return;
+                if kind == EffectKind::PrepareWorktree && !n.adopted {
+                    if let Some(head) = n.proposed {
+                        let result = confirmed_agenda_adopt(n, head);
+                        kernel_proof! { agenda_result_properties(n, result, kind); }
+                        return result;
                     }
                 }
-                m.pos += 1;
-            }
-        }
-    }
+                confirmed_agenda_step(n)
+            } else { confirmed_agenda_idle(n) }
+        } else { confirmed_agenda_idle(n) }
+    } else { confirmed_agenda_idle(n) };
+    kernel_proof! { agenda_result_properties(n, result, kind); }
+    result
 }
 }
 
@@ -467,13 +539,50 @@ pub(super) open spec fn agenda_spec(m: Node, kind: EffectKind) -> Node {
         && !matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
         && (current_item(m) == Some(Item::Do(kind)) || current_item(m) == Some(Item::Teardown(kind))) {
         if kind == EffectKind::PrepareWorktree && !m.adopted && m.proposed.is_some() {
-            retirement::phased(Node { adopted: true, head: m.proposed, checked: None, ..m }, Phase::Checking)
+            agenda_adopt_spec(m, m.proposed.unwrap())
         } else {
-            Node { pos: (m.pos + 1) as u8, ..m }
+            agenda_step_spec(m)
         }
     } else {
-        m
+        agenda_idle_spec(m)
     }
+}
+
+pub(super) open spec fn agenda_adopt_spec(n: Node, head: HeadId) -> Node {
+    retirement::phased(Node { adopted: true, head: Some(head), checked: None, ..n }, Phase::Checking)
+}
+pub(super) open spec fn agenda_step_spec(n: Node) -> Node {
+    Node { pos: (n.pos + 1) as u8, ..n }
+}
+pub(super) open spec fn agenda_idle_spec(n: Node) -> Node { n }
+
+proof fn agenda_result_properties(n: Node, result: Node, kind: EffectKind)
+
+    requires n.generation < u64::MAX,
+        kind == EffectKind::StopRun ==> !n.pool,
+        result == agenda_spec(n, kind),
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(result) == distance(n)),
+        (n.effect.is_none() && n.question.is_none() && !n.waiting_incident
+            && (!n.paused || n.phase is Stopping)
+            && kind != EffectKind::Enqueue
+            && (current_item(n) == Some(Item::Do(kind))
+                || current_item(n) == Some(Item::Teardown(kind)))
+            ==> distance(result) + 2 <= distance(n)),
+        result.repo == n.repo, result.footprint == n.footprint,
+        (settle_shape(n)
+            && (n.phase is Stopping ==> current_item(n) == Some(Item::Teardown(kind)))
+            ==> settle_shape(result)),
+        result.generation as int <= n.generation as int + 1,
+        result.generation >= n.generation,
+        result.next_seq == n.next_seq, result.credit == n.credit,
+        result.question == n.question,
+        result.fx_failures == n.fx_failures,
+        result.fx_incidents == n.fx_incidents,
+        result.last_cmd == n.last_cmd,
+        result == agenda_spec(n, kind),
+{
+    reveal(distance);
 }
 
 /// K5 G4 / H29.2: effect_failed's exact node result. `c` already has no effect.
@@ -556,6 +665,83 @@ pub(super) open spec fn ack_live_post(b: Node, n: Node, e: InFlight, ack: Ack, n
     })
 }
 
+open spec fn ack_case_common(b: Node, n: Node, e: InFlight, i: int, ob: Outbox, oa: Outbox) -> bool {
+    n.proposed == b.proposed && (b.adopted ==> n.adopted) && n.credit == b.credit
+        && n.next_seq >= b.next_seq && n.attempt == b.attempt && n.replanned == b.replanned
+        && (n.phase is Planning ==> b.phase is Planning)
+        && (n.question == b.question || match n.question {
+            Some(q) => q.kind == QKind::EffectFailed || q.kind == QKind::CleanupFailed,
+            None => true,
+        })
+        && ob.len <= oa.len
+        && (forall|k: int| 0 <= k < ob.len ==> #[trigger] oa.items@[k] == ob.items@[k])
+        && (forall|k: int| ob.len <= k < oa.len ==> match #[trigger] oa.items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            Some(Out::Effect { node, seq, kind, head }) => node == NodeId(i as u64)
+                && seq == b.next_seq && seq < n.next_seq && kind == e.kind
+                && head == effect_head(e.kind, b.head)
+                && n.approved == b.approved && n.checked == b.checked,
+            None => false,
+        })
+}
+
+proof fn ack_cancel_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires e.cancelling, n == Node { effect: None, ..b }, nqa == nq, oa == ob,
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
+proof fn ack_confirmed_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+        ack == Ack::Confirmed, nqa == nq, oa == ob,
+        n == agenda_spec(resources_spec(Node { effect: None, ..b }, e.kind), e.kind),
+        n.review_stop == b.review_stop,
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
+proof fn ack_delivery_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+        ack == Ack::DeliveryAccepted, nqa == nq, oa == ob,
+        n.review_stop == b.review_stop,
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
+proof fn ack_retry_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+        ack == Ack::Retryable, nqa == nq, n.review_stop == b.review_stop,
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
+proof fn ack_permanent_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+        ack == Ack::Permanent || (ack == Ack::BodyPolicyRefused && e.kind != EffectKind::OpenPr),
+        nqa as int == nq as int + 1, n.review_stop == b.review_stop,
+        n == failed_spec(Node { effect: None, ..b }, e.kind, nq),
+        oa.len == ob.len + 2,
+        oa.items@ == ob.items@.update(ob.len as int, Some(Out::Notice { node: NodeId(i as u64),
+            notice: Notice::Incident { needs_rob: true } })).update(ob.len as int + 1,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: nq } })),
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
+proof fn ack_review_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
+    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+        ack == Ack::BodyPolicyRefused, e.kind == EffectKind::OpenPr, nqa == nq, oa == ob,
+        n == retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), effect: None, ..b }, Outcome::Stopped),
+    ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
+{
+    reveal(ack_live_post);
+}
+
 /// K5 G4: on_ack's exported post at node i for any outbox prefix with capacity.
 #[verifier::opaque]
 pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u64, ack: Ack,
@@ -563,7 +749,7 @@ pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u6
     let b = before.nodes@[i];
     let n = after.nodes@[i];
     if ack_stutters(b, seq, ack) {
-        n == b && oa == ob
+        n == b && oa == ob && after.next_question == before.next_question
     } else {
         match b.effect {
             Some(e) => ack_live_post(b, n, e, ack, before.next_question, after.next_question, i, ob, oa),
