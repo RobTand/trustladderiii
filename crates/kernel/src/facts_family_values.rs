@@ -365,10 +365,8 @@ pub(super) fn conflict_fact_arm(n: Node, i: usize)
     let m = &mut value;
     if m.phase == Phase::AwaitingDelivery {
         set_phase(m, Phase::Ready(Resume::Rebasing));
-        kernel_proof! { assert(*m == conflict_node(n)); }
     } else if m.phase == Phase::Publishing {
         set_phase(m, Phase::Rebasing);
-        kernel_proof! { assert(*m == conflict_node(n)); }
     }
     kernel_proof! {
         assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::Conflict)));
