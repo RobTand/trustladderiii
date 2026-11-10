@@ -49,6 +49,7 @@ pub(super) proof fn intern_footprint_preserves_accepted(before: World, after: Wo
             && after.nodes@[a].repo == after.nodes@[b].repo {
             checking::accepted_node(before, a);
             checking::accepted_node(before, b);
+            assert(progress_gate_apply::pair(before, a, b));
             footprint::disjoint_under_table_growth(before, after,
                 before.nodes@[a].footprint, before.nodes@[b].footprint);
         }
