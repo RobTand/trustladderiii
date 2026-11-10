@@ -824,7 +824,7 @@ use super::*;
 #[cfg(verus_keep_ghost)]
 verus! {
 #[verifier::opaque]
-pub(crate) open spec fn ci_change(n: Node, fast: bool, infra: bool) -> ReplyChange {
+pub(in super::super) open spec fn ci_change(n: Node, fast: bool, infra: bool) -> ReplyChange {
     if !ci_active(n, infra) { ReplyChange::Done { node: n, note: None } }
     else if infra {
         let prepared = ci_prepared(n, infra);
@@ -838,24 +838,24 @@ pub(crate) open spec fn ci_change(n: Node, fast: bool, infra: bool) -> ReplyChan
     }
 }
 
-pub(crate) open spec fn outside_active(n: Node) -> bool {
+pub(in super::super) open spec fn outside_active(n: Node) -> bool {
     n.had_pr && matches!(n.phase,
         Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing))
 }
 
-pub(crate) open spec fn outside_prepared(n: Node, head: HeadId) -> Node {
+pub(in super::super) open spec fn outside_prepared(n: Node, head: HeadId) -> Node {
     Node { head: Some(head), checked: None,
         review_restarted: n.head == Some(head) && n.review_restarted, ..n }
 }
 
 #[verifier::opaque]
-pub(crate) open spec fn outside_change(n: Node, head: HeadId) -> ReplyChange {
+pub(in super::super) open spec fn outside_change(n: Node, head: HeadId) -> ReplyChange {
     if outside_active(n) {
         reply_family_values::recheck(outside_prepared(n, head), Phase::Ready(Resume::Checking))
     } else { ReplyChange::Done { node: n, note: None } }
 }
 
-pub(crate) open spec fn outside_items(n: Node, nq: u64, i: usize,
+pub(in super::super) open spec fn outside_items(n: Node, nq: u64, i: usize,
     head: HeadId) -> Seq<Option<Out>> {
     if !n.had_pr { Seq::empty() } else {
         seq![Some(Out::Notice { node: NodeId(i as u64),
@@ -870,7 +870,7 @@ pub(crate) open spec fn outside_items(n: Node, nq: u64, i: usize,
 
 kernel_fn! {
 /// Preserve the local report work before resolving the canonical failed round.
-pub(crate) fn failed_round_unreported_value(n: Node, nq: u64, fast: bool,
+pub(in super::super) fn failed_round_unreported_value(n: Node, nq: u64, fast: bool,
     i: usize, step: ReviewStop) -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result.0 == reply_family_values::finish(nq,
@@ -899,7 +899,7 @@ pub(crate) fn failed_round_unreported_value(n: Node, nq: u64, fast: bool,
 
 kernel_fn! {
 /// The original CI guards, cancellation and selected canonical retry path.
-pub(crate) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
+pub(in super::super) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result.0 == reply_family_values::finish(nq, ci_change(n, fast, infra)),
@@ -937,7 +937,7 @@ pub(crate) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
 
 kernel_fn! {
 /// Preserve OutsidePush before the canonical head update and optional question.
-pub(crate) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
+pub(in super::super) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result.0 == reply_family_values::finish(nq, outside_change(n, head)),
@@ -980,7 +980,7 @@ pub(crate) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize, head: Hea
 }
 
 kernel_fn! {
-pub(crate) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
+pub(in super::super) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::CiFailed { infra }),
@@ -998,7 +998,7 @@ pub(crate) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
 }
 
 kernel_fn! {
-pub(crate) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
+pub(in super::super) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::PushByOther { head }),
@@ -1014,7 +1014,7 @@ pub(crate) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usize, head: H
 }
 
 kernel_fn! {
-pub(crate) fn outside_fact_entry(w: &mut World, i: usize, head: HeadId, out: &mut Outbox)
+pub(in super::super) fn outside_fact_entry(w: &mut World, i: usize, head: HeadId, out: &mut Outbox)
     -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
