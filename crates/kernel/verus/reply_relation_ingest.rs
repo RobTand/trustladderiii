@@ -4,7 +4,7 @@ use super::*;
 verus! {
 pub(super) proof fn protected_rules(w: World, i: int)
     requires 0 <= i < w.nodes@.len(), retirement::node_rules(w, w.nodes@[i]),
-        node_headroom(w.nodes@[i]), matches!(w.nodes@[i].phase, Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }),
+        node_headroom(w.nodes@[i]), (match w.nodes@[i].phase { Phase::Ingesting | Phase::Auditing | Phase::Planning { .. } => true, _ => false }),
         current_item(w.nodes@[i]) == Some(Item::Await),
     ensures retirement::node_rules(w, reply_family_values::finish(w.next_question, reply_family_values::ingest(
             port_t860_contracts::ended(w.nodes@[i]), Reply::ProtectedPaths))),
