@@ -1,10 +1,40 @@
 {
-  "source_head": "2eef546108a6751d4284caaea5531a6e69699f2c",
+  "source_head": "9393348ab47ab74e2a31cb57a64b179ad27b4ae9",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "1412bcace5dd8be1672d2af0b06837c18ea55dce9f3fc5b38ed0666d2aa6cb4a",
-  "groups": 551,
-  "obligations": 749,
+  "source_sha256": "fe450ace89448ce3a919d6fce84661cd4028f1627f0e434b9b5b02a726f00312",
+  "groups": 557,
+  "obligations": 755,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_missing_value",
+      "selector": "kernel::ranks#advance_teardown_missing_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_emitting_value",
+      "selector": "kernel::ranks#advance_teardown_emitting_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_release_value",
+      "selector": "kernel::ranks#advance_release_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_teardown_rows_intro",
+      "selector": "kernel::advance_family_post#teardown_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_stopping_items",
+      "selector": "kernel::advance_family_post#stopping_items",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_teardown_rows_reveal",
+      "selector": "kernel::advance_family_rules#teardown_rows_reveal",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_ranks_advance_rebase_value",
       "selector": "kernel::ranks#advance_rebase_value",
