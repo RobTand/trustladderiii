@@ -18,7 +18,7 @@ pub(super) open spec fn initial_young(w: World, i: int, t: u64) -> bool {
 pub(super) open spec fn initial(w: World, t: u64) -> bool {
     context(w, 8) && (w.gates@[0].w == 2 || w.gates@[0].w == 3)
         && w.nodes@[0].phase == Phase::Ready(Resume::Making)
-        && advance_family_post::ready_unobstructed(w.nodes@[0]) && w.nodes@[0].ticket == Some(t)
+        && advance_family_post::ready_unobstructed(w.nodes@[0])
         && w.nodes@[1].phase == Phase::Rebasing && w.nodes@[1].last_cmd == 0
         && w.nodes@[1].effect.is_none() && !w.nodes@[1].credit.withheld && w.nodes@[1].holds
         && !footprint::disjoint(w, w.nodes@[0].footprint, w.nodes@[1].footprint)
