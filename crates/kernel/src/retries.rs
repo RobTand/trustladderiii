@@ -765,7 +765,7 @@ fn plan_retry_again(n: Node) -> (result: ReplyChange) [
     let mut node = n;
     let mut note: Option<Notice> = None;
     let phase = node.phase;
-    node = set_phase_v(node, phase);
+    node = set_phase_v(node, Phase::Making);
     ReplyChange::Done { node, note }
 }
 }
