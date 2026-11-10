@@ -27,6 +27,39 @@ fn cli(request: &Value) -> Vec<Value> {
 /// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.
 const PYTHON_NO_BYTECODE: &str = "-B";
 
+fn fixture_scratch() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+#[test]
+fn fixture_scratch_is_ascii_under_unicode_flux_tmpdir() {
+    if std::env::var_os("TL3_ASCII_SCRATCH_CHILD").is_some() {
+        let scratch = fixture_scratch();
+        assert!(scratch.path().is_dir());
+        assert!(scratch.path().to_str().unwrap().is_ascii());
+        let marker = scratch.path().join("created");
+        fs::write(&marker, "owned scratch").unwrap();
+        assert_eq!(fs::read_to_string(marker).unwrap(), "owned scratch");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let inherited = root.path().join("flux-vanilla/ƒhm2UMeMcT");
+    fs::create_dir_all(&inherited).unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "fixture_scratch_is_ascii_under_unicode_flux_tmpdir"])
+        .env("TL3_ASCII_SCRATCH_CHILD", "1")
+        .env("TMPDIR", &inherited)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(inherited.is_dir());
+}
+
 /// Rob 11-03: a performance-budget overrun is a recorded warning, never a failure
 /// or a rerun. Only a contractual deadline (a product timeout) fails a test.
 /// The line follows the repo `{"budget_warning": ...}` convention (tools/bazel/rust_runner.py).
@@ -796,7 +829,7 @@ fn cleanup_helper_import_from_a_checkout_writes_no_bytecode() {
     fs::write(&init, text).unwrap();
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
     f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
@@ -848,7 +881,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         };
         f.request.runtime.cleanup = None;
     }
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
     f.request.reservation.cpus = 1.try_into().unwrap();
@@ -1877,7 +1910,8 @@ fn jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels(
         "PATH":"/usr/bin:/bin", "OMP_NUM_THREADS":"1", "MKL_NUM_THREADS":"1", "OPENBLAS_NUM_THREADS":"1",
         "TORCH_NUM_THREADS":"1", "NUMEXPR_NUM_THREADS":"1", "VECLIB_MAXIMUM_THREADS":"1", "BLIS_NUM_THREADS":"1",
         "OUT":f.intent.output_dir, "TL3_RUN_DIAGNOSTIC_DIR":f.intent.output_dir,
-        "FLUX_SCRATCH":"/var/tmp/flux-vanilla", "TL3_RUN_BACKEND":"flux", "TL3_RUN_INSTANCE":f.intent.instance,
+        "FLUX_SCRATCH":"/var/tmp/flux-vanilla", "FLUX_F58_FORCE_ASCII":"1",
+        "TL3_RUN_BACKEND":"flux", "TL3_RUN_INSTANCE":f.intent.instance,
         "TL3_RUN_OWNER":f.intent.owner, "TL3_RUN_CORRELATION":f.intent.correlation,
         "TL3_RUN_REQUEST_DIGEST":f.intent.request_digest, "TL3_EXECUTION_BACKEND":"flux", "TL3_RUN_BACKEND_SESSION":"1",
         "TL3_RUN_BACKEND_CLI":env!("CARGO_BIN_EXE_tl3-run-backend"), "TL3_RUN_BACKEND_CONFIG":f.config,
@@ -4756,7 +4790,7 @@ impl Fixture {
     fn no_grant_scratch() -> Self {
         let mut f = Fixture::new();
         f.podman(ContainerMode::InJob, true);
-        let scratch = tempfile::tempdir().unwrap();
+        let scratch = fixture_scratch();
         fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
         f.use_scratch_root(scratch.path().to_owned());
         f.scratch = Some(scratch);
@@ -5039,7 +5073,7 @@ fn no_grant_unsafe_leaf_holds_without_mutation() {
     // A symlinked approved root refuses at the O_NOFOLLOW parent walk.
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let real = scratch.path().join("real");
     fs::create_dir(&real).unwrap();
@@ -5139,7 +5173,7 @@ fn no_grant_off_placement_and_own_scope_never_reclaim() {
     // before the scratch decision and its leaf is untouched.
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.use_scratch_root(scratch.path().to_owned());
     f.scratch = Some(scratch);
@@ -5463,7 +5497,7 @@ fn native_submit_recovery_and_liveness_normalize_job_ids() {
 fn generator_prep_case(mode: &str) -> (Fixture, Value) {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
     f.request.reservation.cpus = 1.try_into().unwrap();
@@ -5880,7 +5914,7 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
 fn generator_exec_case(mode: &str) -> (Fixture, Value) {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
-    let scratch = tempfile::tempdir().unwrap();
+    let scratch = fixture_scratch();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
     f.request.reservation.cpus = 1.try_into().unwrap();
