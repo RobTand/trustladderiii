@@ -448,7 +448,6 @@ def verus_proofs():
             "kernel::advance_family_post::grant_facts": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::start_unobstructed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::pool_grant": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::dependency_owner_exports::waiting_owner_ok": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED-STUB checker export (external_body proof), CONTRACTS.md v2.20; never lands.",
             "kernel::transition_safety::apply_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::command_dispatch::on_command": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.1), external_body; calls the verified on_command_proved; never lands.",
             "kernel::acknowledgements::on_ack": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.2), external_body; calls the verified on_ack_proved; never lands.",
