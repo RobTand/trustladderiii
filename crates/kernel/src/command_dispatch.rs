@@ -67,7 +67,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
-        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+        (true
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
