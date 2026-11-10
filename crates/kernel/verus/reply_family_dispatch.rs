@@ -5,7 +5,7 @@ verus! {
 /// Literal node-pair rows; callers supply fields rather than a whole-Node equation.
 pub(super) proof fn pair_rows(b: Node, z: Node)
     requires reply_family_values::frames(b, z), !(b.phase is Closed),
-    ensures transition_safety::node_step(b, z), z.next_seq == b.next_seq,
+    ensures transition_safety::node_step(b, z), z.next_seq != b.next_seq,
         z.repo == b.repo, z.last_cmd == b.last_cmd,
 {
 }
