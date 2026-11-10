@@ -71,6 +71,10 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // E11.1 (CONTRACTS.md v2.7): REQ R24 and its framing, as one opaque atom (form rule 2). R24's rows are
+        // quoted exactly in the named lemma stop_frame_reveal::stop_post_rows; the v2.7 / E11.1b framing rows
+        // come back through stop_frame_reveal::stop_frames_reveal.
+        ((command is Stop && id > old(w).nodes@[i as int].last_cmd) ==> apply_command_safety::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id)),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])

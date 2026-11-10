@@ -54,6 +54,23 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E11.1 REQ R24 (fresh Stop of a live item), direct; v2.7 framing behind stop_live_frame.
+        (!(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping)
+            ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
+            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
+            && (match old(w).nodes@[i as int].effect {
+                None => final(w).nodes@[i as int].effect.is_none(),
+                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
+                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
+            })
+            && apply_command_safety::stop_live_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+        // E11.1b framing (item already stopping), behind stop_stopping_frame (form rule 2).
+        (old(w).nodes@[i as int].phase is Stopping ==> apply_command_safety::stop_stopping_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+        // E11.1 forwarding atom (opaque; on_command reveals it through stop_frame_reveal).
+        apply_command_safety::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
