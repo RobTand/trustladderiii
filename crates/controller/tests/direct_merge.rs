@@ -73,6 +73,7 @@ struct State {
     classic_context_only: bool,
     annotations: Value,
     body_patches: usize,
+    base_tip: String,
 }
 impl State {
     fn new() -> Self {
@@ -94,6 +95,7 @@ impl State {
             classic_context_only: false,
             annotations: json!([]),
             body_patches: 0,
+            base_tip: "c".repeat(40),
         }
     }
     fn merged(&mut self, unapproved: bool) {
@@ -140,10 +142,14 @@ impl Respond for Api {
             return response;
         }
         match (method, path) {
-            ("GET", "/repos/owner/sandbox/branches/main" | "/repos/owner/sandbox/branches/release") => ResponseTemplate::new(200).set_body_json(
-                if state.classic { json!({"protection":{"required_status_checks":{
+            ("GET", "/repos/owner/sandbox/branches/main" | "/repos/owner/sandbox/branches/release") => {
+                let mut branch = if state.classic { json!({"protection":{"required_status_checks":{
                     "contexts":["Sandbox tests"], "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
-                else { json!({"protected":false}) }),
+                else { json!({"protected":false}) };
+                branch["name"] = json!(path.rsplit('/').next().unwrap());
+                branch["commit"] = json!({"sha":state.base_tip});
+                ResponseTemplate::new(200).set_body_json(branch)
+            }
             ("GET", "/repos/owner/sandbox/rules/branches/main" | "/repos/owner/sandbox/rules/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),

@@ -377,7 +377,11 @@ impl Respond for Api {
         let path = path.strip_prefix(prefix).unwrap_or(path);
         let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
         if method == "GET" && matches!(path, "/branches/main" | "/branches/master") {
-            return ResponseTemplate::new(200).set_body_json(json!({"protected":false}));
+            let branch = path.strip_prefix("/branches/").unwrap();
+            let tip = git(&self.fixture.remote, &["rev-parse", branch]);
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "name": branch, "commit": {"sha": tip}, "protected": false
+            }));
         }
         if path == "/pulls/17" {
             if method == "PATCH" {
@@ -471,10 +475,6 @@ impl Respond for Api {
                         pull["head"]["sha"] = json!(git(
                             &self.fixture.remote,
                             &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
-                        ));
-                        pull["base"]["sha"] = json!(git(
-                            &self.fixture.remote,
-                            &["rev-parse", pull["base"]["ref"].as_str().unwrap()]
                         ));
                     }
                     let mergeable_override = s.mergeable_override;
@@ -1247,7 +1247,6 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             // d5-clean has no textual conflict. Its checked base alone must force a rebase.
             state.mergeable_override = Some(mode == "d5-clean");
             let pull = state.pull.as_mut().unwrap();
-            pull["base"]["sha"] = json!(target);
             pull["mergeable"] = json!(mode == "d5-clean");
             pull["mergeable_state"] = json!(if mode == "d5-clean" {
                 "clean"

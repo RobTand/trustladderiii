@@ -18,6 +18,9 @@ struct DirectState {
     failed_reads: usize,
     no_merge_method: bool,
     base_after_checks: Option<String>,
+    live_base_after_checks: Option<String>,
+    branch_status_after_checks: Option<u16>,
+    checks_read: bool,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -56,10 +59,26 @@ impl Respond for DirectApi {
         }
         if method == "GET" && path.ends_with("/check-runs") {
             let response = self.base.respond(request);
-            if let Some(base) = self.direct.lock().unwrap().base_after_checks.take() {
-                self.base.0.lock().unwrap().pull["base"]["sha"] = json!(base);
+            let mut direct = self.direct.lock().unwrap();
+            direct.checks_read = true;
+            let mut state = self.base.0.lock().unwrap();
+            if let Some(base) = direct.base_after_checks.take() {
+                state.pull["base"]["sha"] = json!(base);
+                state.base_tip = base;
+            }
+            if let Some(base) = direct.live_base_after_checks.take() {
+                state.base_tip = base;
             }
             return response;
+        }
+        if method == "GET" && path.starts_with("/repos/owner/sandbox/branches/") {
+            let mut direct = self.direct.lock().unwrap();
+            if direct.checks_read {
+                direct.checks_read = false;
+                if let Some(status) = direct.branch_status_after_checks.take() {
+                    return ResponseTemplate::new(status);
+                }
+            }
         }
         if method == "PUT" && path == "/repos/owner/sandbox/pulls/100/merge" {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -231,7 +250,67 @@ fn m3_base_moved_during_check_reads_refuses_clean_merge() {
     let key = hex::encode(delivery.key.as_bytes());
     let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("base movement needs a durable reason")).unwrap();
     assert_eq!(record["head"], json!(delivery.head_sha));
+    assert_eq!(record["current_base"], "d".repeat(40));
+    assert_eq!(record["pr_base_sha"], "d".repeat(40));
     assert_eq!(record["reason"], format!("base moved: checked {}, current {}", "c".repeat(40), "d".repeat(40)));
+}
+
+#[test]
+fn m3_live_base_moved_with_stale_pr_base_refuses_clean_merge() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_live_base_moved");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().live_base_after_checks = Some("d".repeat(40));
+    let (mut controller, delivery) = fixture.start(&settings);
+    m3_conflict(&mut controller, &fixture, &settings);
+    let state = fixture.api.state.lock().unwrap();
+    assert_eq!(state.pull["base"]["sha"], "c".repeat(40), "the PR base deliberately stays at the checked base");
+    assert_eq!(state.pull["mergeable"], true);
+    assert_eq!(state.base_tip, "d".repeat(40));
+    drop(state);
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("live base movement needs a durable reason")).unwrap();
+    assert_eq!(record["checked_base"], "c".repeat(40));
+    assert_eq!(record["current_base"], "d".repeat(40));
+    assert_eq!(record["pr_base_sha"], "c".repeat(40));
+    assert_eq!(record["reason"], format!("base moved: checked {}, current {}", "c".repeat(40), "d".repeat(40)));
+}
+
+#[test]
+fn m3_missing_live_base_refuses_merge() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_missing_live_base");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().branch_status_after_checks = Some(404);
+    let (mut controller, delivery) = fixture.start(&settings);
+    m3_conflict(&mut controller, &fixture, &settings);
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("missing live tip needs a durable reason")).unwrap();
+    assert_eq!(record["current_base"], Value::Null);
+    assert_eq!(record["pr_base_sha"], "c".repeat(40));
+    assert_eq!(record["reason"], "base moved: live tip unavailable for branch main");
+}
+
+#[test]
+fn m3_live_base_read_failure_keeps_existing_error_path() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_live_base_read_error");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().branch_status_after_checks = Some(503);
+    let error = fixture.adapter(&settings).execute(&delivery).expect_err("a failed live tip read must remain a read error");
+    assert!(matches!(&error, tl3_controller::Error::Adapter(source) if matches!(source.downcast_ref::<tl3_github::Error>(), Some(tl3_github::Error::Http { status: 503 }))), "the existing GitHub error must propagate: {error}");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("failed live tip read needs a durable reason")).unwrap();
+    assert_eq!(record["current_base"], Value::Null);
+    assert_eq!(record["pr_base_sha"], "c".repeat(40));
+    assert_eq!(record["reason"], "base moved: live tip read failed for branch main: GitHub returned HTTP 503");
 }
 
 #[test]
