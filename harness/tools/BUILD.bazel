@@ -18,6 +18,13 @@ py_binary(
 )
 
 py_binary(
+    name = "flux_tessera_image",
+    srcs = ["flux_tessera_image.py"],
+    data = glob(["images/**"]),
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
     name = "verify",
     srcs = ["verify.py"],
     visibility = ["//visibility:public"],
@@ -49,6 +56,7 @@ filegroup(
     name = "sources",
     srcs = glob([
         "*.py",
+        "*.sh",
         "images/**",
     ]),
     visibility = ["//visibility:public"],
