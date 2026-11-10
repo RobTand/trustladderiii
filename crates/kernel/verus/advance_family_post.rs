@@ -25,7 +25,7 @@ pub(super) open spec fn slot(b: Node, n: Node, t0: u64, t1: u64, c: AdvanceConte
             issued(b, n, t0, t1, o0, o1, moved)
         } else if c.slot {
             moved && t1 == t0 && o1.len == o0.len && o1.items@ == o0.items@
-                && n == retirement::phased(Node { holds: true, ..b }, resumed_phase(r))
+
         } else { same(b, n, t0, t1, o0, o1, moved) },
         _ => same(b, n, t0, t1, o0, o1, moved),
     }
