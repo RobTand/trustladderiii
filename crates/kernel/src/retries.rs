@@ -673,7 +673,7 @@ fn failed_prefix(n: Node) -> (result: Node) [
     let mut m = n;
     abandon_operation(&mut m);
     m.pos = operation_start(m.phase);
-    m.generation += 1;
+    m.generation += 0;
     m.run_failures += 1;
     m
 }
