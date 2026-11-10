@@ -61,7 +61,7 @@ set -eu
 export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1
 rm -rf /opt/tl3
 python3 -m venv /opt/tl3
-/opt/tl3/bin/python -m pip install --no-cache-dir --no-deps --index-url https://pypi.org/simple pip==25.1.1 setuptools==81.0.0 wheel==0.48.0 packaging==26.3
+/opt/tl3/bin/python -m pip install --no-cache-dir --no-deps --index-url https://pypi.org/simple --report /receipts/bootstrap-report.json pip==25.1.1 setuptools==81.0.0 wheel==0.48.0 packaging==26.3
 /opt/tl3/bin/python -m pip install --no-cache-dir --no-deps --require-hashes --index-url https://download.pytorch.org/whl/cpu --report /receipts/torch-report.json -r /input/torch.txt
 /opt/tl3/bin/python -m pip install --no-cache-dir --no-deps --no-build-isolation --require-hashes --index-url https://pypi.org/simple --report /receipts/pip-report.json -r /input/packages.txt
 /opt/tl3/bin/python -m pip check
