@@ -16,4 +16,25 @@ pub(super) proof fn stop_frames_reveal(b: Node, n: Node)
     reveal(apply_command_safety::stop_stopping_frame);
 }
 
+
+/// E11.1 forwarding for on_command (rule 7): the one stop_post atom stop_command exports, back as rows.
+pub(super) proof fn stop_post_rows(b: Node, n: Node, id: u64)
+    requires apply_command_safety::stop_post(b, n, id),
+    ensures (!(b.phase is Closed || b.phase is Stopping)
+            ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
+            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
+            && n.holds == b.holds && n.pool == b.pool
+            && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
+            && n.next_seq == b.next_seq && n.last_cmd == id
+            && (match b.effect {
+                None => n.effect.is_none(),
+                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
+                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
+            })
+            && apply_command_safety::stop_live_frame(b, n))
+        && (b.phase is Stopping ==> apply_command_safety::stop_stopping_frame(b, n)),
+{
+    reveal(apply_command_safety::stop_post);
+}
+
 }

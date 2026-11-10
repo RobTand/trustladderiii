@@ -118,6 +118,10 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     kernel_proof! {
         match command {
             Command::Answer { .. } => apply_command_safety::answer_frame(before_rules_world@, *w, i),
+            Command::Stop => {
+                stop_frame_reveal::stop_post_rows(before_rules_world@.nodes@[i as int], w.nodes@[i as int], id);
+                assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int]));
+            }
             _ => assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])),
         }
     }
