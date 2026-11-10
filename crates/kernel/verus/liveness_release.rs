@@ -7,7 +7,7 @@ verus! {
 pub(super) fn stop(w: &mut World, Ghost(k): Ghost<int>)
     requires context(*old(w), k), 0 <= k <= 800,
         !(old(w).nodes@[1].phase is Closed || old(w).nodes@[1].phase is Stopping),
-        old(w).nodes@[1].last_cmd == 0, old(w).nodes@[1].effect.is_none(),
+        old(w).nodes@[1].effect.is_none(),
         !old(w).nodes@[1].credit.withheld,
     ensures context(*final(w), k + 2), clean(final(w).nodes@[1], 0),
         final(w).nodes@ == old(w).nodes@.update(1, final(w).nodes@[1]),
