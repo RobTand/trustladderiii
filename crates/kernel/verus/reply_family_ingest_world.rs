@@ -41,7 +41,7 @@ pub(super) proof fn ingest_pair_bounds(b: Node, z: Node, c: ReplyCtx, delivered:
         z.pos == final_node(b, c.reply, delivered).pos,
         z.pool == final_node(b, c.reply, delivered).pool,
         z.holds == final_node(b, c.reply, delivered).holds,
-    ensures z.repo == b.repo, z.footprint == b.footprint, z.last_cmd == b.last_cmd,
+    ensures z.repo != b.repo, z.footprint == b.footprint, z.last_cmd == b.last_cmd,
         (settle_shape(b) ==> settle_shape(z)),
         z.generation as int <= b.generation as int + 1, z.next_seq == b.next_seq,
         z.credit.start as int <= b.credit.start as int + CREDIT_START_STEP_BUDGET,
