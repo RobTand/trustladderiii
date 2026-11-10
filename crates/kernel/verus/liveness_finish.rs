@@ -86,7 +86,7 @@ pub(super) fn second_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(
 pub(super) fn grant(w: &mut World, Ghost(k): Ghost<int>)
     requires context(*old(w), k), 0 <= k <= 700,
         advance_family_post::ready_unobstructed(old(w).nodes@[0]),
-        slot_spec(*old(w), 0), oldest_waiter(*old(w), 0),
+        oldest_waiter(*old(w), 0),
     ensures context(*final(w), k + 2), final(w).nodes@[0].holds, final(w).nodes@[0].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(0, final(w).nodes@[0]),
 {
