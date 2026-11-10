@@ -360,7 +360,7 @@ kernel_fn! {
 fn run_failed_restart(node: Node) -> (result: ReplyChange) [
     ensures result == reply_family_values::failed_restart(node),
 ] {
-    let note: Option<Notice> = None;
+    let note: Option<Notice> = Some(Notice::Note(NoteKind::Replanned));
     ReplyChange::Done { node, note }
 }
 }
