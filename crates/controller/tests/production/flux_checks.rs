@@ -858,6 +858,13 @@ fn flux_checks_success_without_report_never_passes() {
 fn flux_checks_withdrawal_targets_only_the_exact_generation() {
     with_checks_adapter(|adapter, backend, _| {
         adapter.execute(&delivery()).unwrap();
+        let mut foreign = withdrawal(Some(4));
+        foreign.key = "effect:1:6".into();
+        if let Output::Effect { node, .. } = &mut foreign.output {
+            *node = NodeId(1);
+        }
+        assert!(adapter.execute(&foreign).is_ok());
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
         assert!(adapter.execute(&withdrawal(Some(3))).is_ok());
         assert_eq!(backend.state.lock().unwrap().cancels, 0);
         assert!(adapter.execute(&withdrawal(None)).is_err());
