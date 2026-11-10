@@ -86,6 +86,83 @@ fn backend_session_survives_pending_and_repeated_term_but_not_kill() {
     }
 }
 
+#[test]
+fn backend_session_unblocked_at_spawn_keeps_default_term() {
+    let output = Command::new("/usr/bin/python3")
+        .args([PYTHON_NO_BYTECODE, "-c", r#"
+import json, os, select, signal, subprocess, sys
+def unblocked():
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+child = subprocess.Popen([sys.argv[1], '--session'], stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=unblocked)
+try:
+    child.stdin.write(b'{"request_id":1,"command":{"op":"cleanup_limits"}}\n')
+    child.stdin.flush()
+    assert select.select([child.stdout], [], [], 5)[0], 'session did not start'
+    reply = json.loads(child.stdout.readline())
+    assert reply['kind'] == 'result' and reply['result']['op'] == 'cleanup_limits', reply
+    os.kill(child.pid, signal.SIGTERM)
+    child.communicate(timeout=5)
+    assert child.returncode == -signal.SIGTERM, child.returncode
+finally:
+    if child.poll() is None: child.kill()
+    child.communicate(timeout=5)
+"#])
+        .arg(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn backend_blocked_at_spawn_passes_unblocked_ignored_term_to_helpers() {
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new("/usr/bin/python3")
+        .args([PYTHON_NO_BYTECODE, "-c", r#"
+import json, os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[2])
+helper = root / 'helper'
+helper.write_text('''#!/usr/bin/python3
+import json, os, signal
+assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+assert signal.SIGTERM not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+os.kill(os.getpid(), signal.SIGTERM)
+print('{"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0"}}]}}')
+''')
+helper.chmod(0o700)
+resolver = root / 'flux-uri.sh'
+resolver.write_text('#!/bin/sh\nprintf "local:///fixture\\n"\n')
+resolver.chmod(0o700)
+(root / 'INSTANCE').write_text('local:///fixture\n')
+config = root / 'options.json'
+config.write_text(json.dumps(dict(executable=str(helper), arguments=[], environment={'PATH':'/usr/bin:/bin'},
+    instance_file=str(root/'INSTANCE'), journal_root=str(root/'journal'),
+    bootstrap=dict(cli=sys.argv[1], config=str(config)))))
+request = dict(op='probe', reservation=dict(cpus=1, gpus=0, memory_bytes=1024,
+    memory_guarantee='declared_only', parallelism=1, native_threads=1),
+    placement=dict(architecture='x86_64', host_dependency=dict(host='dl380g10', reason='fixture')))
+def blocked():
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+child = subprocess.Popen([sys.argv[1], '--config', str(config)], stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=blocked)
+try:
+    stdout, stderr = child.communicate(json.dumps(request).encode()+b'\n', timeout=10)
+    assert child.returncode == 0, (child.returncode, stdout, stderr)
+    reply = json.loads(stdout)
+    assert reply['kind'] == 'result' and reply['result']['probe']['availability'] == 'available', reply
+finally:
+    if child.poll() is None: child.kill()
+    child.communicate(timeout=5)
+"#])
+        .arg(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .arg(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
 /// Every suite Python that may import from a source checkout runs with `-B`. The flag is
 /// on the interpreter argv, so it survives the `env_clear()` of product spawn paths that
 /// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.

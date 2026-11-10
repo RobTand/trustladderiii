@@ -229,14 +229,6 @@ impl Writer {
 }
 
 pub fn main() -> i32 {
-    // An in-job action may already be unwinding while systemd signals the whole
-    // unit. The Python spawner blocks TERM across exec; ignore it before
-    // unblocking so the CLI and its cleanup helpers retain their bounded grace.
-    // Transport shutdown and native deadlines still use SIGKILL.
-    if let Err(error) = cleanup_term_grace() {
-        eprintln!("cannot preserve backend cleanup TERM grace: {error}");
-        return 1;
-    }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let session = args.first().is_some_and(|arg| arg == "--session");
     if session {
@@ -261,23 +253,6 @@ pub fn main() -> i32 {
         };
         request_id = next;
     }
-}
-
-fn cleanup_term_grace() -> std::io::Result<()> {
-    // Called at CLI entry before any threads are started.
-    unsafe {
-        if libc::signal(libc::SIGTERM, libc::SIG_IGN) == libc::SIG_ERR {
-            return Err(std::io::Error::last_os_error());
-        }
-        let mut signals: libc::sigset_t = std::mem::zeroed();
-        if libc::sigemptyset(&mut signals) != 0
-            || libc::sigaddset(&mut signals, libc::SIGTERM) != 0
-            || libc::sigprocmask(libc::SIG_UNBLOCK, &signals, std::ptr::null_mut()) != 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
