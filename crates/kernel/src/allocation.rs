@@ -222,6 +222,15 @@ kernel_fn! {
         final(m).credit.start == old(m).credit.start, final(m).credit.added == old(m).credit.added,
         final(m).credit.spent == old(m).credit.spent,
         final(out).len <= old(out).len + 2,
+        final(out).len == old(out).len + if outcome == Outcome::Replaced { 2int } else { 1int },
+        final(out).items@ == {
+            let s = old(out).items@.update(old(out).len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Summary(outcome) }));
+            if outcome == Outcome::Replaced {
+                s.update(old(out).len as int + 1,
+                    Some(Out::Notice { node: NodeId(i as u64), notice: Notice::FileReplacement }))
+            } else { s }
+        },
     ] {
         m.phase = Phase::Closed(outcome);
         m.pos = 0;
@@ -259,6 +268,8 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
             ..old(w).nodes@[i as int]
         }),
         final(out).len == old(out).len + 1,
+        final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: old(w).next_question } })),
         final(w).gates@ == old(w).gates@,
         final(w).pool_capacity == old(w).pool_capacity,
         final(w).fail_fast == old(w).fail_fast,
@@ -320,29 +331,99 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         final(out).len == old(out).len + 1,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } })),
 ] {
     kernel_snapshot! { before_incident = w.nodes@[i as int] }
-    let m = &mut w.nodes[i];
+    kernel_snapshot! { before_out = *out }
+    let (m, notes) = incident_value(w.nodes[i], i, needs_rob);
+    w.nodes[i] = m;
+    if let Some(item) = notes.items[0] {
+        out.push(item);
+    }
+    kernel_proof! {
+        assert(retirement::notices_only(before_out@) ==> retirement::notices_only(*out)) by {
+            reveal(retirement::notices_only);
+        }
+        allocation_incident_lemmas::incident_frame(before_incident@, w.nodes@[i as int], needs_rob);
+    }
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771, K5 value form: the incident update of one node and its
+/// single Incident notice, returned for the caller to write back and append.
+pub(super) fn incident_value(n: Node, i: usize, needs_rob: bool) -> (result: (Node, Outbox)) [
+    requires holding(n.phase) ==> n.generation < u64::MAX,
+    ensures result.0 == retirement::incident(n, needs_rob),
+        result.1.len <= 1,
+        forall|k: int| 0 <= k < result.1.len ==> match #[trigger] result.1.items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            _ => false,
+        },
+        forall|k: int| result.1.len <= k < OUTBOX ==> (#[trigger] result.1.items@[k]).is_none(),
+        result.1.len == 1 && result.1.items@[0]
+            == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } }),
+] {
+    let m = incident_node(n, needs_rob);
+    let notes = incident_notes(i, needs_rob);
+    (m, notes)
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771, K5 value form: the exact incident update of one node.
+fn incident_node(n: Node, needs_rob: bool) -> (result: Node) [
+    requires holding(n.phase) ==> n.generation < u64::MAX,
+    ensures result == retirement::incident(n, needs_rob),
+] {
+    kernel_snapshot! { before_incident = n }
+    let mut m = n;
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
     m.ticket = None;
     // A leaf waiting on an incident gives back its slot and files.
     if let Some(r) = m.phase.resume() {
         m.holds = false;
-        set_phase(m, Phase::Ready(r));
+        set_phase(&mut m, Phase::Ready(r));
         kernel_proof! {
-            allocation_incident_lemmas::resumed_result(before_incident@, *m, needs_rob, r);
+            allocation_incident_lemmas::resumed_result(before_incident@, m, needs_rob, r);
         }
     }
     kernel_proof! {
         if !holding(before_incident@.phase) {
-            allocation_incident_lemmas::waiting_result(before_incident@, w.nodes@[i as int], needs_rob);
+            allocation_incident_lemmas::waiting_result(before_incident@, m, needs_rob);
         }
     }
-    notice(out, i, Notice::Incident { needs_rob });
+    m
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771, K5 value form: the single Incident notice of node i,
+/// as a one-slot outbox list.
+fn incident_notes(i: usize, needs_rob: bool) -> (result: Outbox) [
+    ensures result.len <= 1,
+        forall|k: int| 0 <= k < result.len ==> match #[trigger] result.items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            _ => false,
+        },
+        forall|k: int| result.len <= k < OUTBOX ==> (#[trigger] result.items@[k]).is_none(),
+        result.len == 1 && result.items@[0]
+            == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } }),
+] {
+    let mut notes = Outbox::new();
     kernel_proof! {
-        allocation_incident_lemmas::incident_frame(before_incident@, w.nodes@[i as int], needs_rob);
+        assert(notes.len == 0 && notes.items@ == Seq::new(OUTBOX as nat, |k: int| None::<Out>)) by {
+            reveal(empty_outbox);
+        }
     }
+    notice(&mut notes, i, Notice::Incident { needs_rob });
+    kernel_proof! {
+        assert(notes.items@ == Seq::new(OUTBOX as nat, |k: int| None::<Out>).update(0,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } })));
+    }
+    notes
 }
 }
 
@@ -372,6 +453,13 @@ pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Effect { node: NodeId(i as u64), seq: old(w).nodes@[i as int].next_seq, kind,
+                head: match kind {
+                    EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr
+                        | EffectKind::Enqueue => old(w).nodes@[i as int].head,
+                    _ => None,
+                } })),
 ] {
     emit_node(&mut w.nodes[i], i, kind, out);
 }
@@ -390,6 +478,13 @@ kernel_fn! {
         ..*old(m)
     }),
     final(out).len == old(out).len + 1,
+    final(out).items@ == old(out).items@.update(old(out).len as int,
+        Some(Out::Effect { node: NodeId(i as u64), seq: old(m).next_seq, kind,
+            head: match kind {
+                EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr
+                    | EffectKind::Enqueue => old(m).head,
+                _ => None,
+            } })),
     ] {
         let seq = m.next_seq;
         m.next_seq += 1;

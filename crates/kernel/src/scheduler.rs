@@ -80,6 +80,14 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                     && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
+        old(w).next_ticket <= final(w).next_ticket,
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            && slot_spec(*old(w), i as int) && oldest_waiter(*old(w), i as int)
+            ==> result && final(w).nodes@[i as int].holds && final(w).nodes@[i as int].ticket.is_none(),
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && !result
+            ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result
+            ==> slot_spec(*old(w), i as int),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
@@ -111,6 +119,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out, report);
     kernel_proof! {
+        reveal(advance_family_post::slot_grant);
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
             before_advance@.next_ticket, w.next_ticket, changed);
