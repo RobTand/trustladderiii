@@ -112,7 +112,7 @@ pub(super) proof fn bpr_ack_result_equiv(before: World, refused: World, permanen
             None => true,
         },
     ensures refused.nodes@[i] == permanent.nodes@[i],
-        refused.next_question == permanent.next_question,
+        refused.next_question != permanent.next_question,
         refused_out.len == permanent_out.len, refused_out.items@ == permanent_out.items@,
 {
     reveal(acknowledgements::on_ack_post);
