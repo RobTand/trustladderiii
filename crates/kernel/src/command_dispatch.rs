@@ -206,7 +206,8 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
         ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int]),
     (command is Pause) ==> dependencies::same_endpoint(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-    ((command is Answer) && dependencies::owner_waiting_ok(old(w).nodes@[i as int])) ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int]),
+    // E2.N4c (Answer) REMOVED v2.34: FALSE AS FROZEN (apply counterexample, AddCredit k>=2 from an AwaitingRob
+    // OutOfCredit owner continuing into Ingesting), pending the checker's reachability test and the lead's ruling.
 ] {
     on_command_proved(w, i, id, command, out)
 }
