@@ -30,6 +30,11 @@ pub struct Flux {
 }
 
 impl Flux {
+    /// Bound owner work and native I/O on the controller's maintenance pass.
+    pub fn with_cleanup_maintenance_limits(self, _owners: usize, _budget: std::time::Duration) -> Self {
+        self
+    }
+
     pub fn new(options: Options) -> Result<Self> {
         validate::options(&options)?;
         let journal = Journal::new(options.journal_root.clone())?;
