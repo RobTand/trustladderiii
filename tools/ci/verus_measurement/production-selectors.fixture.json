@@ -1,10 +1,20 @@
 {
-  "source_head": "95ac58f60065a65a1579c997a3f1144c18fb2d58",
+  "source_head": "340ee9cfd479856cedc7323ca000f1b03cfdd3ce",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "cb8fd0fd22c25ed380a7b1ecdfc905ad670d32f90eecb8366c80362ad00594eb",
-  "groups": 587,
-  "obligations": 785,
+  "source_sha256": "830c2c162c22f4dab07b22a12f8c7781bb67fcb5415b2d40f27c4c665f29fdcf",
+  "groups": 589,
+  "obligations": 787,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_room_bound",
+      "selector": "kernel::reply_family_posts#room_bound",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_rebase_value_posts",
+      "selector": "kernel::reply_family_posts#rebase_value_posts",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_recheck_free_arm",
       "selector": "kernel::reply_family_posts#recheck_free_arm",
