@@ -1368,6 +1368,7 @@ fn waiting_cover() -> (result: (World, bool, Outbox, i128))
     }
     let ghost w = world;
     let result = waiting_holds_nothing(world, 0);
+    // kani-parity: KP-H4-01
     let empty = result.0.nodes[0].footprint.is_empty();
     proof {
         reveal(initial_node);

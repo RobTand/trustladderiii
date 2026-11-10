@@ -214,10 +214,13 @@ pub(super) fn verify_abandoned(status: DependencyStatus) -> (result: (World, boo
 {
     let world = waiting_world();
     let (world, note) = verify_fact(world, DependencyStatus::Abandoned);
+    // kani-parity: KP-R839-01
     assert(note.len == 1);
+    // kani-parity: KP-R839-02
     assert(note.items@[0] == Some(Out::Notice { node: NodeId(0),
         notice: Notice::Note(NoteKind::DependencyAbandoned { number: 2761 }) }));
     let (mut world, out) = verify_fact(world, status);
+    // kani-parity: KP-R839-03
     assert(out.len == 0);
     assert(world.dependencies@[0].status == status);
     let ghost before = world;
