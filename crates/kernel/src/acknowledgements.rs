@@ -38,6 +38,41 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         on_ack_post(*old(w), *final(w), i as int, seq, ack, *old(out), *final(out)),
+        (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false })) ==> ((final(w).nodes@[i as int].effect.is_none())
+        && (final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
+        && (final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos)
+        && (final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds)
+        && (final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool)
+        && (final(w).nodes@[i as int].run == old(w).nodes@[i as int].run)
+        && (final(w).nodes@[i as int].job == old(w).nodes@[i as int].job)
+        && (final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open)
+        && (final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree)
+        && (final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq)
+        && (final(w).nodes@[i as int].question == old(w).nodes@[i as int].question)
+        && (final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures)
+        && (final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents)
+        && (final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures)
+        && (final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents)),
+        (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && !e.cancelling && transition_safety::teardown_kind(e.kind) && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)), None => false })) ==> ((final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
+        && (final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds)
+        && (final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq)
+        && (final(w).nodes@[i as int].question == old(w).nodes@[i as int].question)
+        && (final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures)
+        && (final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents)
+        && (final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket)
+        && (final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation)
+        && (final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1)
+        && (final(w).nodes@[i as int].effect.is_none())
+        && (final(w).nodes@[i as int].fx_failures == 0)
+        && (final(w).nodes@[i as int].fx_incidents == 0)
+        && (final(w).nodes@[i as int].run == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { None } else { old(w).nodes@[i as int].run }))
+        && (final(w).nodes@[i as int].pool == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { false } else { old(w).nodes@[i as int].pool }))
+        && (final(w).nodes@[i as int].job == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::WithdrawJob { None } else { old(w).nodes@[i as int].job }))
+        && (final(w).nodes@[i as int].pr_open == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::ClosePr { false } else { old(w).nodes@[i as int].pr_open }))
+        && (final(w).nodes@[i as int].worktree == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::RemoveWorktree { false } else { old(w).nodes@[i as int].worktree }))),
+        (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && (e.cancelling || (old(w).nodes@[i as int].phase is Stopping && transition_safety::teardown_kind(e.kind) && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))), None => false })) ==> final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).next_question == old(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && (e.cancelling || (old(w).nodes@[i as int].phase is Stopping && transition_safety::teardown_kind(e.kind) && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))), None => false }))) ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+
 ] proof [reveal(on_ack_post);] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
@@ -101,12 +136,65 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
             old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
+        (ack == Ack::Confirmed && e.cancelling) ==> ((final(w).nodes@[i as int].effect.is_none())
+        && (final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
+        && (final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos)
+        && (final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds)
+        && (final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool)
+        && (final(w).nodes@[i as int].run == old(w).nodes@[i as int].run)
+        && (final(w).nodes@[i as int].job == old(w).nodes@[i as int].job)
+        && (final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open)
+        && (final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree)
+        && (final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq)
+        && (final(w).nodes@[i as int].question == old(w).nodes@[i as int].question)
+        && (final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures)
+        && (final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents)
+        && (final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures)
+        && (final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents)),
+        (ack == Ack::Confirmed && !e.cancelling && acknowledgement_resources::confirmed_teardown_input(old(w).nodes@[i as int], e.kind)) ==> ((final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
+        && (final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds)
+        && (final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq)
+        && (final(w).nodes@[i as int].question == old(w).nodes@[i as int].question)
+        && (final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures)
+        && (final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents)
+        && (final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket)
+        && (final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation)
+        && (final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1)
+        && (final(w).nodes@[i as int].effect.is_none())
+        && (final(w).nodes@[i as int].fx_failures == 0)
+        && (final(w).nodes@[i as int].fx_incidents == 0)
+        && (final(w).nodes@[i as int].run == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { None } else { old(w).nodes@[i as int].run }))
+        && (final(w).nodes@[i as int].pool == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { false } else { old(w).nodes@[i as int].pool }))
+        && (final(w).nodes@[i as int].job == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::WithdrawJob { None } else { old(w).nodes@[i as int].job }))
+        && (final(w).nodes@[i as int].pr_open == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::ClosePr { false } else { old(w).nodes@[i as int].pr_open }))
+        && (final(w).nodes@[i as int].worktree == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::RemoveWorktree { false } else { old(w).nodes@[i as int].worktree }))),
+        ((ack == Ack::Confirmed && e.cancelling) || (ack == Ack::Confirmed && !e.cancelling && acknowledgement_resources::confirmed_teardown_input(old(w).nodes@[i as int], e.kind))) ==> final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).next_question == old(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && ((ack == Ack::Confirmed && e.cancelling) || (ack == Ack::Confirmed && !e.cancelling && acknowledgement_resources::confirmed_teardown_input(old(w).nodes@[i as int], e.kind)))) ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+
 ] {
+    kernel_snapshot!(before_world = *w);
     let (node, next_question, output) = ack_value(w.nodes[i], i, e, ack, w.next_question, *out);
-    kernel_proof! { ack_result_properties(*w, i as int, e, ack, *out, node, next_question, output); }
+    kernel_proof! {
+        ack_result_properties(*w, i as int, e, ack, *out, node, next_question, output);
+        acknowledgement_resources::confirmed_ack_rows(w.nodes@[i as int], node, e, ack,
+            w.next_question, next_question);
+        if ack == Ack::Confirmed && (e.cancelling
+            || acknowledgement_resources::confirmed_teardown_input(w.nodes@[i as int], e.kind)) {
+            if retirement::node_rules(*w, w.nodes@[i as int]) {
+                acknowledgement_resources::confirmed_node_rules(*w, w.nodes@[i as int], node);
+            }
+        }
+    }
     w.nodes[i] = node;
     w.next_question = next_question;
     *out = output;
+    kernel_proof! {
+        let b = before_world@.nodes@[i as int];
+        if ack == Ack::Confirmed && (e.cancelling
+            || acknowledgement_resources::confirmed_teardown_input(b, e.kind)) {
+            retirement::node_frame(before_world@, *w, w.nodes@[i as int]);
+        }
+    }
 }
 }
 
@@ -281,7 +369,8 @@ kernel_fn! {
 fn confirmed_agenda_step(n: Node) -> (result: Node) [
     requires n.pos < u8::MAX,
     ensures result == agenda_step_spec(n),
-] {
+        acknowledgement_resources::confirmed_step_frame(n, result),
+] proof [acknowledgement_resources::confirmed_agenda_teardown_rows(n);] {
     Node { pos: n.pos + 1, ..n }
 }
 }
@@ -319,6 +408,7 @@ fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
         result.fx_incidents == n.fx_incidents,
         result.last_cmd == n.last_cmd,
         result == agenda_spec(n, kind),
+        acknowledgement_resources::confirmed_agenda_frame(n, result, kind),
 ] {
     let result = if kind != EffectKind::Enqueue && !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = n.current() {
@@ -326,7 +416,10 @@ fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
                 if kind == EffectKind::PrepareWorktree && !n.adopted {
                     if let Some(head) = n.proposed {
                         let result = confirmed_agenda_adopt(n, head);
-                        kernel_proof! { agenda_result_properties(n, result, kind); }
+                        kernel_proof! {
+                            agenda_result_properties(n, result, kind);
+                            acknowledgement_resources::confirmed_agenda_other_rows(n, result, kind);
+                        }
                         return result;
                     }
                 }
@@ -334,7 +427,12 @@ fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
             } else { confirmed_agenda_idle(n) }
         } else { confirmed_agenda_idle(n) }
     } else { confirmed_agenda_idle(n) };
-    kernel_proof! { agenda_result_properties(n, result, kind); }
+    kernel_proof! {
+        agenda_result_properties(n, result, kind);
+        if acknowledgement_resources::confirmed_teardown_input(n, kind) {
+            acknowledgement_resources::confirmed_agenda_step_rows(n, result, kind);
+        } else { acknowledgement_resources::confirmed_agenda_other_rows(n, result, kind); }
+    }
     result
 }
 }
@@ -762,7 +860,8 @@ fn ack_append_value(out: Outbox, item: Out) -> (result: Outbox) [
 kernel_fn! {
 fn ack_resources_value(n: Node, kind: EffectKind) -> (result: Node) [
     ensures result == resources_spec(n, kind),
-] {
+        acknowledgement_resources::confirmed_resources_frame(n, result, kind),
+] proof [acknowledgement_resources::confirmed_resources_rows(n, kind);] {
     Node { fx_failures: 0, fx_incidents: 0,
         run: if kind == EffectKind::StopRun { None } else { n.run },
         pool: if kind == EffectKind::StopRun { false } else { n.pool },
@@ -809,16 +908,20 @@ fn ack_stopped_value(n: Node) -> (result: Node) [
 kernel_fn! {
 fn ack_cancel_value(n: Node, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     ensures ack_view(result) == ack_cancel_spec(n, nq, out), result.2 == out,
-] proof [reveal(ack_cancel_spec);] { (n, nq, out) }
+        result.1 == nq, acknowledgement_resources::confirmed_cancel_frame(n, result.0),
+] proof [reveal(ack_cancel_spec); acknowledgement_resources::confirmed_cancel_rows(n);] { (n, nq, out) }
 }
 
 kernel_fn! {
 fn ack_confirmed_value(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     requires n.generation < u64::MAX,
     ensures ack_view(result) == ack_confirmed_spec(n, kind, nq, out), result.2 == out,
+        result.1 == nq, acknowledgement_resources::confirmed_value_frame(n, result.0, kind),
 ] proof [reveal(ack_confirmed_spec);] {
     let m = ack_resources_value(n, kind);
+    kernel_snapshot!(resources = m);
     let m = confirmed_agenda_value(m, kind);
+    kernel_proof! { acknowledgement_resources::confirmed_value_rows(n, resources@, m, kind); }
     (m, nq, out)
 }
 }
@@ -960,21 +1063,34 @@ fn ack_body_policy_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outb
 }
 
 kernel_fn! {
+#[allow(clippy::let_and_return)] // Keep the qualified common-prefix executable order.
 fn ack_value(n: Node, i: usize, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX, out.len + 2 <= OUTBOX,
     ensures ack_view(result) == ack_value_spec(n, i as int, e, ack, nq, out),
         ack_quiet(e, ack) ==> result.2 == out,
+        acknowledgement_resources::confirmed_ack_frame(n, result.0, e, ack, nq, result.1),
 ] {
+    kernel_snapshot!(before = n);
     let mut n = n;
     n.effect = None;
-    if e.cancelling { return ack_cancel_value(n, nq, out); }
-    match ack {
+    if e.cancelling {
+        let result = ack_cancel_value(n, nq, out);
+        kernel_proof! { acknowledgement_resources::confirmed_cancel_forward(before@, result.0, e, ack, nq, result.1); }
+        return result;
+    }
+    let result = match ack {
         Ack::Confirmed => ack_confirmed_value(n, e.kind, nq, out),
         Ack::DeliveryAccepted => ack_delivery_value(n, nq, out),
         Ack::Retryable => ack_retry_value(n, i, e.kind, nq, out),
         Ack::Permanent => ack_permanent_value(n, i, e.kind, nq, out),
         Ack::BodyPolicyRefused => ack_body_policy_value(n, i, e.kind, nq, out),
+    };
+    kernel_proof! {
+        if ack == Ack::Confirmed {
+            acknowledgement_resources::confirmed_value_forward(before@, result.0, e, ack, nq, result.1);
+        } else { acknowledgement_resources::confirmed_irrelevant_rows(before@, result.0, e, ack, nq, result.1); }
     }
+    result
 }
 }
 
