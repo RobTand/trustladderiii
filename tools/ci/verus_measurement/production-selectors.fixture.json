@@ -1,10 +1,20 @@
 {
-  "source_head": "e96c9c1bbac4c21a3d32a4f8ca580a85e4d27b3a",
+  "source_head": "5bb274ab6b7121cb71019a3db0189311183a9503",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "6667d57b03f46b3e58361c6e625c9a842d7f82ca344e22cc4d526e736431e05d",
-  "groups": 902,
-  "obligations": 1110,
+  "source_sha256": "23c5c697bfd90f3c20852e6621e8749766cda6a9f923b27653f79ab0fd371683",
+  "groups": 903,
+  "obligations": 1111,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_command_frames_command_owner_rows_intro",
+      "selector": "kernel::command_frames#command_owner_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_reveal_command_owner_rows_reveal",
+      "selector": "kernel::command_frames_reveal#command_owner_rows_reveal",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_stop_frames_stop_e11_frames",
       "selector": "kernel::stop_frames#stop_e11_frames",
@@ -33,11 +43,6 @@
     {
       "target": "//crates/kernel:verus_answer_rules_rules_after_last_cmd",
       "selector": "kernel::answer_rules#rules_after_last_cmd",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_command_frames_reveal_r24_stop",
-      "selector": "kernel::command_frames_reveal#r24_stop",
       "expected": 1
     },
     {
