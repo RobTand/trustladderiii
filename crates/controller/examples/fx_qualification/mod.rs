@@ -200,7 +200,8 @@ fn plan(inputs: &Inputs) -> Value {
     ].into_iter().map(|(kind, duration, pass_flux_uri)| json!({
         "kind":kind,"version":1,
         "resources":[{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":1},{"type":"memory","count":2}]}],
-        "duration":duration,"gpus":0,"parallelism":1,"native_threads":1,
+        "tasks":[{"command":["<command-materialized-by-admitted-preparation>"],"slot":"task","count":{"per_slot":1}}],
+        "attributes":{"system":{"duration":duration}},"gpus":0,"parallelism":1,"native_threads":1,
         "host_dependency":{"host":"dl380g10","reason":"provisioned amd64 image store and host interpreter"},
         "environment_policy":{"start_empty":true,"request_allowlist":["HOME","PATH","XDG_RUNTIME_DIR"],
             "controller_allowlist":["OUT","TL3_RUN_DIAGNOSTIC_DIR","FLUX_SCRATCH","TL3_RUN_BACKEND","TL3_RUN_INSTANCE",
@@ -435,13 +436,19 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     let verdict = match outcome {
         Ok(value) => value,
         Err(error) => {
+            let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
+                .into_iter()
+                .filter_map(|name| admission::retained(&inputs, name))
+                .collect();
+            let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
+                .into_iter()
+                .collect();
             json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
             "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
             "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head)?},
             "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
-            "builds":state.builds,"preparation_jobs":["preparation-job","generator-preparation-job"].into_iter()
-                .filter_map(|name|admission::retained(&inputs,name)).collect::<Vec<_>>(),
-            "verification_jobs":admission::retained(&inputs,"verification-job").into_iter().collect::<Vec<_>>(),"canaries":state.canaries,"pin":null,
+            "builds":state.builds,"preparation_jobs":preparation_jobs,
+            "verification_jobs":verification_jobs,"canaries":state.canaries,"pin":null,
             "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
             "errors":[{"phase":state.phase,"code":error.to_string(),"evidence":[]}]})
         }

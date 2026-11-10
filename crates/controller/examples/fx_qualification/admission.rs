@@ -273,9 +273,8 @@ pub fn run(
         durable::atomic(&job_path, id.as_bytes())?;
         id
     };
-    if original(options, &id, &native)?
-        != serde_json::from_slice::<Value>(&durable::read(&spec_path)?)?
-    {
+    let expected: Value = serde_json::from_slice(&durable::read(&spec_path)?)?;
+    if original(options, &id, &native)? != expected {
         return Err("retained job original jobspec differs; no collection or cancellation".into());
     }
     // Every native job is fully collected before any following dispatch.
@@ -297,6 +296,14 @@ pub fn run(
         if exit != 1 && exit != 124 {
             return Err("native clean event unavailable; job retained".into());
         }
+        if original(options, &id, &native)? != expected {
+            return Err(
+                "native history changed during collection; retain UNKNOWN ownership".into(),
+            );
+        }
+    }
+    if original(options, &id, &native)? != expected {
+        return Err("native history changed before terminal collection".into());
     }
     let (exit, status) = capture(
         options,
