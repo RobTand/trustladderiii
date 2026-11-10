@@ -950,6 +950,64 @@ pub(super) proof fn answer_mid(before: World, mid: World, i: usize, id: u64, que
     }
 }
 
+pub(super) proof fn answer_mid_lit(before: World, mid: World, r: Node, id: u64, question: u64,
+    answer: Answer)
+    requires
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, r) ==> node_checked(mid, (Node { last_cmd: id, ..r })),
+        node_checked(before, r) && command_progress_input(r, Command::Answer { question, answer })
+            ==> answer_progress_input((Node { last_cmd: id, ..r }), question, answer) && distance((Node { last_cmd: id, ..r })) == distance(r),
+        retirement::node_rules(before, r) ==> retirement::node_rules(mid, (Node { last_cmd: id, ..r })),
+{
+    let a = Node { last_cmd: id, ..r };
+    if node_checked(before, r) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(r, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(r, id);
+        }
+    }
+    if retirement::node_rules(before, r) {
+        handler_safety::rules_to_v(before, r);
+        handler_safety::last_cmd_rules_v(r, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, r, a);
+    }
+}
+
+pub(super) proof fn answer_mid_pa(before: World, mid: World, r: Node, a: Node, id: u64, question: u64,
+    answer: Answer)
+    requires a == (Node { last_cmd: id, ..r }),
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, r) ==> node_checked(mid, a),
+        node_checked(before, r) && command_progress_input(r, Command::Answer { question, answer })
+            ==> answer_progress_input(a, question, answer) && distance(a) == distance(r),
+        retirement::node_rules(before, r) ==> retirement::node_rules(mid, a),
+{
+    let a = Node { last_cmd: id, ..r };
+    if node_checked(before, r) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(r, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(r, id);
+        }
+    }
+    if retirement::node_rules(before, r) {
+        handler_safety::rules_to_v(before, r);
+        handler_safety::last_cmd_rules_v(r, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, r, a);
+    }
+}
+
 /// Design A: a one-slot frame is a table update (the N-cut table clause), proven here so the
 /// extensionality step stays out of the entry's query. The premise is the entry's own frame clause.
 pub(super) proof fn frame_to_update(s: Seq<Node>, t: Seq<Node>, i: int)
