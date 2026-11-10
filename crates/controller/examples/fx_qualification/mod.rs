@@ -324,8 +324,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             canaries: vec![],
         }
     };
-    bb::preflight_transport(&inputs)?;
     if !dry {
+        bb::preflight_transport(&inputs)?;
         bb::verify_client()?;
     }
     save(&inputs.out, &state)?;
@@ -420,7 +420,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         let overlay = prepare::lifecycle_inputs(&inputs, &lifecycle_canaries(&state.canaries)?)?;
         let qualified = bb::build(&inputs, "qualified-production", Some(&overlay))?;
         if state.builds.len() == 1 {
-            state.builds.push(qualified);
+            state.builds.push(qualified.clone());
         }
         state.phase = "pin_built".into();
         save(&inputs.out, &state)?;
@@ -461,7 +461,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             save(&inputs.out, &state)?;
         }
         let verification = verification?;
-        let pin = publish::publish(&inputs, &overlay, &state.canaries)?;
+        let pin = publish::publish(&inputs, &overlay, &state.canaries, &qualified)?;
         let entries = evidence::pathset(&inputs.repo, &inputs.head)?;
         let decisions = evidence::decisions(&state.canaries)?;
         if policy::verdict(&decisions, true) != policy::Status::Pass {
@@ -506,7 +506,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
                 .into_iter()
                 .collect();
             json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
-            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"]).ok(),
+            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)]).ok(),
             "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head).ok()},
             "inputs":{"image_map":identity(&inputs.image_map).ok(),"test_image":inputs.test_image,"generator_image":inputs.generator_image},
             "builds":state.builds,"preparation_jobs":preparation_jobs,

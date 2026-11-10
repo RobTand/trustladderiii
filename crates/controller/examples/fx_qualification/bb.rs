@@ -210,7 +210,7 @@ pub fn build(
     let result = root.join("build.json");
     if result.exists() {
         let build: Build = serde_json::from_slice(&durable::read(&result)?)?;
-        verify_build_source(&build, commit, &tree)?;
+        verify_build_source(&build, &inputs.head, commit, &tree)?;
         verify_client()?;
         if build.client_sha256 != CLIENT_SHA256 {
             return Err("retained BuildBuddy client hash differs".into());
@@ -356,7 +356,7 @@ pub fn build(
         wrapper_result: wrapper,
         artifacts,
     };
-    verify_build_source(&build, commit, &tree)?;
+    verify_build_source(&build, &inputs.head, commit, &tree)?;
     durable::atomic(&result, &serde_json::to_vec_pretty(&build)?)?;
     Ok(build)
 }
@@ -392,11 +392,25 @@ fn fixed_argv(commit: &str, qualified: bool) -> Vec<String> {
 // Both requests have the same fixed script and a 40-byte commit. Check the
 // larger boolean spelling before admission; future evidence never enters argv.
 pub fn preflight_transport(inputs: &Inputs) -> Result<()> {
-    check_transport_size(&fixed_argv(&inputs.head, false))
+    check_transport_size(&fixed_argv(&inputs.head, false))?;
+    git(
+        &inputs.repo,
+        &[
+            "push",
+            "--dry-run",
+            "--no-force",
+            "origin",
+            &format!(
+                "{}:refs/heads/fx-x3-overlay/preflight-{}",
+                inputs.head, inputs.head
+            ),
+        ],
+    )
+    .map_err(|_| "staging push preflight failed: origin must authenticate and permit dry-run pushes to fx-x3-overlay/*; no canaries admitted")?;
+    Ok(())
 }
 
 fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Result<Vec<String>> {
-    preflight_transport(inputs)?;
     let commit = if let Some(overlay) = overlay {
         stage_overlay(inputs, &inputs.out.join("qualified-production"), overlay)?.commit
     } else {
@@ -654,6 +668,7 @@ fn stage_overlay(
                 ],
             )?
         };
+        let tree = git(&inputs.repo, &["rev-parse", &format!("{commit}^{{tree}}")])?;
         OverlayCommit {
             commit,
             tree,
@@ -695,7 +710,10 @@ pub fn candidate(inputs: &Inputs, overlay: &BTreeMap<String, Vec<u8>>) -> Result
     Ok(staged)
 }
 
-fn verify_build_source(build: &Build, commit: &str, tree: &str) -> Result<()> {
+fn verify_build_source(build: &Build, head: &str, commit: &str, tree: &str) -> Result<()> {
+    if build.base_head != head {
+        return Err("BuildBuddy base head differs from H".into());
+    }
     if build.build_commit != commit
         || build.overlay_tree != tree
         || build.own_verdict["source"]["commitSha"] != commit
@@ -825,9 +843,18 @@ mod staged_transport_tests {
         let (inputs, _) = fixture(root.path());
         let before = git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap();
         preflight_transport(&inputs).unwrap();
-        assert_eq!(git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(), before);
-        assert_eq!(git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(), inputs.head);
-        assert_eq!(git(&inputs.repo, &["status", "--porcelain"]).unwrap(), "");
+        assert_eq!(
+            git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(),
+            before
+        );
+        assert_eq!(
+            git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(),
+            inputs.head
+        );
+        assert_eq!(
+            git(&inputs.repo, &["status", "--porcelain"]).unwrap(),
+            ""
+        );
     }
 
     #[test]
@@ -837,13 +864,24 @@ mod staged_transport_tests {
         let refuse = root.path().join("refuse-push");
         fs::write(&refuse, b"#!/bin/sh\nexit 1\n").unwrap();
         fs::set_permissions(&refuse, fs::Permissions::from_mode(0o700)).unwrap();
-        git(&inputs.repo, &["config", "remote.origin.receivepack", refuse.to_str().unwrap()]).unwrap();
+        git(
+            &inputs.repo,
+            &["config", "remote.origin.receivepack", refuse.to_str().unwrap()],
+        )
+        .unwrap();
         assert_eq!(
             preflight_transport(&inputs).unwrap_err().to_string(),
             "staging push preflight failed: origin must authenticate and permit dry-run pushes to fx-x3-overlay/*; no canaries admitted"
         );
-        git(&inputs.repo, &["config", "--unset", "remote.origin.receivepack"]).unwrap();
-        assert_eq!(git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(), "");
+        git(
+            &inputs.repo,
+            &["config", "--unset", "remote.origin.receivepack"],
+        )
+        .unwrap();
+        assert_eq!(
+            git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(),
+            ""
+        );
     }
 
     #[test]
@@ -851,7 +889,18 @@ mod staged_transport_tests {
         let root = tempfile::tempdir().unwrap();
         let (inputs, overlay) = fixture(root.path());
         let tree = git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]).unwrap();
-        let wrong = git(&inputs.repo, &["commit-tree", &tree, "-p", &inputs.head, "-m", "wrong overlay"]).unwrap();
+        let wrong = git(
+            &inputs.repo,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &inputs.head,
+                "-m",
+                "wrong overlay",
+            ],
+        )
+        .unwrap();
         assert_ne!(wrong, inputs.head);
         let digest = overlay_digest(&overlay).unwrap();
         let branch = format!("refs/heads/fx-x3-overlay/{}", &digest[..16]);
@@ -860,7 +909,14 @@ mod staged_transport_tests {
             build_argv(&inputs, Some(&overlay)).unwrap_err().to_string(),
             "overlay commit blobs or modes differ from private derivation"
         );
-        assert_eq!(git(&inputs.repo, &["ls-remote", "origin", &branch]).unwrap().split_whitespace().next().unwrap(), wrong);
+        assert_eq!(
+            git(&inputs.repo, &["ls-remote", "origin", &branch])
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap(),
+            wrong
+        );
         assert!(!inputs.out.join("qualified-production/overlay-commit.json").exists());
     }
 
@@ -885,7 +941,11 @@ mod staged_transport_tests {
     }
 
     fn retain(inputs: &Inputs, value: &Build) {
-        durable::atomic(&inputs.out.join("production/build.json"), &serde_json::to_vec(value).unwrap()).unwrap();
+        durable::atomic(
+            &inputs.out.join("production/build.json"),
+            &serde_json::to_vec(value).unwrap(),
+        )
+        .unwrap();
     }
 
     struct TestClient(PathBuf);
@@ -914,7 +974,12 @@ mod staged_transport_tests {
         super::build(&inputs, "production", None).unwrap();
         retained.base_head = "f".repeat(40);
         retain(&inputs, &retained);
-        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "BuildBuddy base head differs from H");
+        assert_eq!(
+            super::build(&inputs, "production", None)
+                .unwrap_err()
+                .to_string(),
+            "BuildBuddy base head differs from H"
+        );
     }
 
     #[test]
@@ -926,7 +991,12 @@ mod staged_transport_tests {
         super::build(&inputs, "production", None).unwrap();
         retained.client_sha256 = "f".repeat(64);
         retain(&inputs, &retained);
-        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "retained BuildBuddy client hash differs");
+        assert_eq!(
+            super::build(&inputs, "production", None)
+                .unwrap_err()
+                .to_string(),
+            "retained BuildBuddy client hash differs"
+        );
     }
 
     #[test]
@@ -937,7 +1007,12 @@ mod staged_transport_tests {
         retain(&inputs, &retained);
         super::build(&inputs, "production", None).unwrap();
         fs::write(client_path(), b"changed client").unwrap();
-        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "BuildBuddy client sha256 differs from pinned version");
+        assert_eq!(
+            super::build(&inputs, "production", None)
+                .unwrap_err()
+                .to_string(),
+            "BuildBuddy client sha256 differs from pinned version"
+        );
     }
 
     #[test]
@@ -1088,17 +1163,17 @@ mod staged_transport_tests {
         };
         let tree = build.overlay_tree.clone();
         assert_eq!(
-            verify_build_source(&build, &inputs.head, &tree)
+            verify_build_source(&build, &inputs.head, &inputs.head, &tree)
                 .unwrap_err()
                 .to_string(),
             "BuildBuddy invocation recorded another source commit or tree"
         );
         let mut accepted = build.clone();
         accepted.own_verdict["source"] = json!({"commitSha":inputs.head,"repoUrl":"https://github.com/RobTand/trustladderiii","invocationId":build.invocation_id});
-        assert!(verify_build_source(&accepted, &inputs.head, &tree).is_ok());
+        assert!(verify_build_source(&accepted, &inputs.head, &inputs.head, &tree).is_ok());
         accepted.own_verdict["source"]["commitSha"] = "f".repeat(40).into();
         assert_eq!(
-            verify_build_source(&accepted, &inputs.head, &tree)
+            verify_build_source(&accepted, &inputs.head, &inputs.head, &tree)
                 .unwrap_err()
                 .to_string(),
             "BuildBuddy invocation recorded another source commit or tree"

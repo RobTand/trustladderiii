@@ -29,6 +29,8 @@ fn git(root: &Path, arguments: &[&str]) -> Result<String> {
         .envs(production::flux_job_environment())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
         .env("GIT_AUTHOR_DATE", "2026-11-07T00:00:00Z")
         .env("GIT_COMMITTER_DATE", "2026-11-07T00:00:00Z")
         .args([
@@ -40,6 +42,10 @@ fn git(root: &Path, arguments: &[&str]) -> Result<String> {
             "core.hooksPath=/dev/null",
             "-c",
             "commit.gpgsign=false",
+            "-c",
+            "credential.https://github.com.helper=",
+            "-c",
+            "credential.https://github.com.helper=!/usr/bin/gh auth git-credential",
         ])
         .args(arguments)
         .output()?;
@@ -395,7 +401,10 @@ mod tests {
     fn served_fixture_verdicts_and_wait() {
         assert_eq!(FixtureKind::parse("success").unwrap(), FixtureKind::Success);
         assert_eq!(FixtureKind::parse("cancel").unwrap(), FixtureKind::Cancel);
-        assert!(FixtureKind::parse("arbitrary-command").is_err());
+        assert_eq!(
+            FixtureKind::parse("arbitrary-command").unwrap_err().to_string(),
+            "fixture kind must be success or cancel"
+        );
         let mut arguments = vec![std::ffi::OsString::from("input"); 5];
         assert_eq!(fixture_kind(&arguments).unwrap(), FixtureKind::Success);
         arguments.extend(["--fixture-kind".into(), "cancel".into()]);
@@ -403,9 +412,15 @@ mod tests {
         arguments[6] = "success".into();
         assert_eq!(fixture_kind(&arguments).unwrap(), FixtureKind::Success);
         arguments[6] = "arbitrary-command".into();
-        assert!(fixture_kind(&arguments).is_err());
+        assert_eq!(
+            fixture_kind(&arguments).unwrap_err().to_string(),
+            "fixture kind must be success or cancel"
+        );
         arguments.pop();
-        assert!(fixture_kind(&arguments).is_err());
+        assert_eq!(
+            fixture_kind(&arguments).unwrap_err().to_string(),
+            "expected five positional inputs and optional --fixture-kind success|cancel"
+        );
         let temporary = tempfile::tempdir().unwrap();
         for kind in [FixtureKind::Success, FixtureKind::Cancel] {
             let name = kind.metadata()["kind"].as_str().unwrap().to_owned();
@@ -717,7 +732,10 @@ mod tests {
         );
         let mut prismabuild = flux_config(None);
         prismabuild.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
-        assert!(Stager::for_canary_qualification(&prismabuild).is_err());
+        assert_eq!(
+            refusal(Stager::for_canary_qualification(&prismabuild)),
+            "Flux preparation requires explicit Flux selection"
+        );
     }
 
     #[test]

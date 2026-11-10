@@ -97,6 +97,7 @@ pub fn publish(
     inputs: &Inputs,
     outputs: &BTreeMap<String, Vec<u8>>,
     canaries: &[evidence::CanaryEvidence],
+    build: &bb::Build,
 ) -> Result<Value> {
     let decisions = evidence::decisions(canaries)?;
     if policy::verdict(&decisions, true) != policy::Status::Pass {
@@ -113,9 +114,6 @@ pub fn publish(
         return Err("final admitted verification missing or changed".into());
     }
     let staged = bb::candidate(inputs, outputs)?;
-    let build: bb::Build = serde_json::from_slice(&durable::read(
-        &inputs.out.join("qualified-production/build.json"),
-    )?)?;
     if build.build_commit != staged.commit || build.overlay_tree != staged.tree {
         return Err("candidate pin commit differs from rebuilt production".into());
     }
