@@ -541,7 +541,7 @@ pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) 
 kernel_fn! {
 /// Older slot waiters block runnable or overlapping younger leaves.
 /// Q30/Q39 / #771: the oldest waiter is first in its actual executable line.
-pub(super) fn first_in_line_proved(w: &World, i: usize) -> (result: bool) [
+pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures oldest_waiter(*w, i as int) ==> result,
         result ==> w.nodes@[i as int].ticket.is_some(),
@@ -607,54 +607,5 @@ pub(super) fn first_in_line_proved(w: &World, i: usize) -> (result: bool) [
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }
     first_runnable == mine
-}
-}
-
-kernel_fn! {
-/// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E5.9: TRUSTED export wrapper. Contract =
-/// `first_in_line_proved`'s, verbatim, plus E5.9 (direct). The body only calls the verified
-/// `first_in_line_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
-#[cfg_attr(verus_keep_ghost, verifier::external_body)]
-pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
-    requires i < w.nodes@.len(), scheduling_safe(*w),
-    ensures oldest_waiter(*w, i as int) ==> result,
-        result ==> w.nodes@[i as int].ticket.is_some(),
-        // K4c pool order: the pool line is exactly the declared priority/ticket order.
-        !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
-        // K4c gate fairness: no grant passes an older overlapping same-repository waiter.
-        result && w.nodes@[i as int].phase is Ready ==> forall|j: int| 0 <= j < w.nodes@.len()
-            && w.nodes@[j].phase is Ready && w.nodes@[j].repo == w.nodes@[i as int].repo
-            && w.nodes@[j].ticket.is_some()
-            && w.nodes@[j].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-            ==> footprint::disjoint(*w, w.nodes@[j].footprint, w.nodes@[i as int].footprint),
-        // K4c gate fairness: no grant passes an older same-repository waiter that could
-        // itself take a slot now (free slot, no older overlapping waiter of its own).
-        result && w.nodes@[i as int].phase is Ready ==> forall|j: int| 0 <= j < w.nodes@.len()
-            && w.nodes@[j].phase is Ready && w.nodes@[j].repo == w.nodes@[i as int].repo
-            && w.nodes@[j].ticket.is_some()
-            && w.nodes@[j].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-            ==> !(slot_spec(*w, j) && !overlapped_by_older(*w, j, w.nodes@[j].ticket.unwrap())),
-        // E5.9 (CONTRACTS.md v2.49; TRUSTED-FROZEN, owner advance): the Ready case's sufficient direction. A Ready
-        // ticketed item whose every older same-repository Ready ticketed waiter is footprint-disjoint, and none of
-        // which could itself take a slot now, is first in line. True of the executable query below (it returns
-        // false only on an older overlap, and lowers first_runnable only for an older slot-free, unoverlapped waiter).
-        (w.nodes@[i as int].phase is Ready
-            && w.nodes@[i as int].ticket.is_some()
-            && (forall|older: int| 0 <= older < w.nodes@.len()
-                && w.nodes@[older].phase is Ready
-                && w.nodes@[older].repo == w.nodes@[i as int].repo
-                && w.nodes@[older].ticket.is_some()
-                && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-                ==> footprint::disjoint(*w, w.nodes@[older].footprint, w.nodes@[i as int].footprint))
-            && (forall|older: int| 0 <= older < w.nodes@.len()
-                && w.nodes@[older].phase is Ready
-                && w.nodes@[older].repo == w.nodes@[i as int].repo
-                && w.nodes@[older].ticket.is_some()
-                && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-                ==> !(slot_spec(*w, older)
-                    && !overlapped_by_older(*w, older, w.nodes@[older].ticket.unwrap()))))
-            ==> result,
-] {
-    first_in_line_proved(w, i)
 }
 }
