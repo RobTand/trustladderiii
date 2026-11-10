@@ -549,4 +549,37 @@ pub(super) proof fn disjoint_symmetric(world: World, a: Footprint, b: Footprint)
         }
     }
 }
+
+/// K5 G19: an append-only file table keeps every existing disjointness answer.
+pub(super) proof fn disjoint_under_table_growth(before: World, after: World, a: Footprint, b: Footprint)
+    requires valid_footprint(before, a), valid_footprint(before, b),
+        after.file_sets@.len() >= before.file_sets@.len(),
+        forall|j: int| 0 <= j < before.file_sets@.len()
+            ==> #[trigger] after.file_sets@[j] == before.file_sets@[j],
+    ensures disjoint(after, a, b) == disjoint(before, a, b),
+        valid_footprint(after, a), valid_footprint(after, b),
+{
+    reveal(valid_footprint); reveal(disjoint); reveal(file_view); reveal(contains_file);
+    if let Repr::Interned(index) = a.0 {
+        assert(after.file_sets@[index as int] == before.file_sets@[index as int]);
+    }
+    if let Repr::Interned(index) = b.0 {
+        assert(after.file_sets@[index as int] == before.file_sets@[index as int]);
+    }
+    assert(file_view(after, a) == file_view(before, a));
+    assert forall|file: FileId| contains_file(after, b, file) == contains_file(before, b, file) by {}
+}
+
+/// K5 G19: node rules are monotone in the world bounds they read.
+pub(super) proof fn node_rules_grow(before: World, after: World, n: super::Node)
+    requires super::retirement::node_rules(before, n),
+        after.gates@.len() >= before.gates@.len(),
+        after.file_sets@.len() >= before.file_sets@.len(),
+        after.next_ticket >= before.next_ticket,
+        after.next_question >= before.next_question,
+    ensures super::retirement::node_rules(after, n),
+{
+    reveal(super::retirement::node_rules);
+    valid_under_table_growth(before, after, n.footprint);
+}
 }
