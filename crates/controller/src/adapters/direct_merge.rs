@@ -92,6 +92,7 @@ struct Read {
     facts: Facts,
     failure: Option<(DeliveryOutcome, String)>,
     method: Option<MergeMethod>,
+    base_moved: Option<serde_json::Value>,
 }
 
 /// Sleeping effects are invalidated only by relevant webhook/catch-up events.
@@ -426,11 +427,11 @@ impl Adapter {
         Ok(())
     }
     fn read(&self, d: &Delivery, write_authorized: bool) -> Result<Read> {
-        let approved = head(
-            d.head_sha
-                .as_deref()
-                .ok_or(Error::Invalid("direct delivery requires an approved head"))?,
-        )?;
+        let approved_sha = d
+            .head_sha
+            .as_deref()
+            .ok_or(Error::Invalid("direct delivery requires an approved head"))?;
+        let approved = head(approved_sha)?;
         let github = self.client(d)?;
         let repo = full_name(&d.repository);
         let mut pull = self
@@ -634,6 +635,36 @@ impl Adapter {
                     && row.value["open"] == true
                     && row.value["node"].as_u64() == Some(d.node().0)
             });
+        // The report records the executed base; a plan or GitHub check is not that evidence.
+        let checked_base = snapshot
+            .rows
+            .iter()
+            .find(|row| {
+                row.table == "check_reports"
+                    && row.id == format!("{}:{approved_sha}", d.node().0)
+                    && row.value["head_sha"].as_str() == Some(approved_sha)
+                    && row.value["pass"] == true
+            })
+            .and_then(|row| row.value["base_sha"].as_str())
+            .filter(|base| head(base).is_ok());
+        let base_moved = if checked_base == Some(pull.base.sha.as_str()) {
+            None
+        } else {
+            let reason = match checked_base {
+                Some(base) => format!("base moved: checked {base}, current {}", pull.base.sha),
+                None => format!(
+                    "base moved: checked base unavailable for approved head {}, current {}",
+                    approved_sha,
+                    pull.base.sha
+                ),
+            };
+            Some(serde_json::json!({
+                "head": approved_sha,
+                "checked_base": checked_base,
+                "current_base": pull.base.sha,
+                "reason": reason,
+            }))
+        };
         Ok(Read {
             facts: Facts {
                 approved,
@@ -646,7 +677,7 @@ impl Adapter {
                 merged: pull.merged_at.is_some(),
                 recorded_merge: false,
                 held,
-                conflict: pull.mergeable == Some(false),
+                conflict: pull.mergeable == Some(false) || base_moved.is_some(),
                 checks,
                 visible: pull
                     .body
@@ -658,6 +689,7 @@ impl Adapter {
             pull,
             failure,
             method,
+            base_moved,
         })
     }
     fn fact(&self, d: &Delivery, outcome: DeliveryOutcome) -> Result<Completion> {
@@ -734,12 +766,21 @@ impl Adapter {
                     head: read.pull.head.sha.clone(),
                 },
             )?,
-            Outcome::Conflict => self.fact(
-                d,
-                DeliveryOutcome::Conflict {
-                    head: read.pull.head.sha.clone(),
-                },
-            )?,
+            Outcome::Conflict => {
+                if let Some(record) = &read.base_moved {
+                    self.write(
+                        Write::Receipt,
+                        &self.records.path(&d.key).with_extension("base-moved"),
+                        &serde_json::to_vec(record)?,
+                    )?;
+                }
+                self.fact(
+                    d,
+                    DeliveryOutcome::Conflict {
+                        head: read.pull.head.sha.clone(),
+                    },
+                )?
+            }
             Outcome::Failed => {
                 let (outcome, receipt) = read
                     .failure
