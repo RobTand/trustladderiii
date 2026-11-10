@@ -57,6 +57,6 @@ use sampling as kani;
 const LIMIT: u64 = 1 << 40;
 const CREDIT_LIMIT: u64 = 1 << 30;
 '''
-(D/'mod.rs').write_text(header+'\n'+'\n'.join(functions)+'\ninclude!("api.rs");\n')
+(D/'mod.rs').write_text(header+'\n'+'\n'.join(functions)+'\ninclude!("api.rs");\ninclude!("b.rs");\npub mod b_beyond;\n')
 (D/'assertion_hashes.json').write_text(json.dumps({'source_sha256':hashlib.sha256(proof.encode()).hexdigest(),'root_source_sha256':hashlib.sha256(root.encode()).hexdigest(),'test_scope_sha256':hashlib.sha256(scope.encode()).hexdigest(),'functions':rows},indent=2)+'\n')
 print(json.dumps({'copied_functions':len(rows),'all_equal':all(r['source_sha256']==r['copy_sha256'] for r in rows)}))
