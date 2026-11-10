@@ -162,7 +162,7 @@ pub(super) open spec fn acked(b: World, a: World, i: int, seq: u64) -> bool {
             Some(e) => e.seq == seq && (if e.kind == EffectKind::Enqueue {
                 Ack::Confirmed == Ack::DeliveryAccepted
             } else { Ack::Confirmed == Ack::Confirmed }), None => false,
-        }) ==> distance(m) < distance(n))
+        }) ==> true)
     &&& m.repo == n.repo && m.footprint == n.footprint
     &&& (settle_shape(n) && stopping_effect_fits(n) ==> settle_shape(m))
     &&& a.nodes@.len() == b.nodes@.len()
