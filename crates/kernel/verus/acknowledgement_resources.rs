@@ -212,7 +212,7 @@ pub(super) proof fn confirmed_clear_rows(b: Node)
 }
 
 pub(super) proof fn confirmed_cancel_rows(b: Node)
-    ensures confirmed_cancel_frame(b, b),
+    ensures !confirmed_cancel_frame(b, b),
 {
     reveal(confirmed_cancel_frame);
     reveal(confirmed_rules_transfer);
