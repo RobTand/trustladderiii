@@ -120,6 +120,14 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && oldest_waiter(*old(w), i as int)
                 && !old(w).nodes@[i as int].paused && old(w).nodes@[i as int].ticket.is_some()
                 && final(w).nodes@[i as int].ticket.is_none(),
+        !old(w).nodes@[i as int].paused
+            && matches!(current_item(old(w).nodes@[i as int]), Some(Item::Do(_)))
+            ==> final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
+        matches!(current_item(old(w).nodes@[i as int]), Some(Item::Await | Item::Delivery | Item::Answer))
+            ==> final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
+        !old(w).nodes@[i as int].paused
+            && (old(w).nodes@[i as int].phase == Phase::Making || old(w).nodes@[i as int].phase == Phase::Rebasing)
+            ==> final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }

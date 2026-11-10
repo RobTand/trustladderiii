@@ -330,4 +330,33 @@ pub(super) proof fn slot_grant_facts(b: Node, t: u64, c: AdvanceContext, v: (Nod
     slot_item_ready(b);
 }
 
+
+/// Agenda alternatives needed for the unpaused Making/Rebasing holds frame.
+pub(super) proof fn holds_phase_items(n: Node)
+    requires n.phase == Phase::Making || n.phase == Phase::Rebasing,
+    ensures match current_item(n) {
+        Some(item) => matches!(item, Item::Do(_) | Item::Start(_) | Item::StartRebase | Item::Await),
+        None => true,
+    },
+{
+    reveal(current_item);
+    reveal(items);
+    match n.phase {
+        Phase::Making => {
+            if n.pos < 3 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::Do(EffectKind::PrepareWorktree))); }
+                else if n.pos == 1 { assert(current_item(n) == Some(Item::Start(Role::Make))); }
+                else { assert(n.pos == 2); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        Phase::Rebasing => {
+            if n.pos < 2 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::StartRebase)); }
+                else { assert(n.pos == 1); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        _ => {},
+    }
+}
+
 }
