@@ -496,7 +496,7 @@ pub(super) proof fn reply_lift(b: World, z: World, i: int, ob: usize, oa: usize)
         z.nodes@[i].credit.spent as int <= b.nodes@[i].credit.spent as int + 1,
         z.next_question as int <= b.next_question as int + 1,
         oa as int <= ob as int + 1,
-    ensures reply_bounds(b, z, i, ob, oa),
+    ensures !reply_bounds(b, z, i, ob, oa),
 {
     reveal(other_rows); reveal(reply_bounds);
 }
