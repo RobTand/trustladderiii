@@ -51,7 +51,7 @@ pub(super) fn finish(w: &mut World, Ghost(k): Ghost<int>)
 
 pub(super) fn release(w: &mut World, Ghost(k): Ghost<int>)
     requires context(*old(w), k), 0 <= k <= 700,
-        old(w).nodes@[1].phase == Phase::Rebasing, old(w).nodes@[1].last_cmd == 0,
+        old(w).nodes@[1].phase == Phase::Rebasing,
         old(w).nodes@[1].effect.is_none(), !old(w).nodes@[1].credit.withheld,
     ensures context(*final(w), k + 24), final(w).nodes@[1].phase == Phase::Closed(Outcome::Stopped),
         !final(w).nodes@[1].holds,
