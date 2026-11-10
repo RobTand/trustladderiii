@@ -78,7 +78,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
         && (n.ticket == b.ticket)
         && (n.generation == b.generation)
         && (n.effect == b.effect)
-        && (n.fx_failures == 0)
+        && (n.fx_failures == 1)
         && (n.fx_incidents == 0)
         && (n.run == (if kind == EffectKind::StopRun { None } else { b.run }))
         && (n.pool == (if kind == EffectKind::StopRun { false } else { b.pool }))
