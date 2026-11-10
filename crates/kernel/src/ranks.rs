@@ -732,7 +732,7 @@ kernel_fn! {
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
-        if n.paused {
+        if false && n.paused {
             let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return paused;
