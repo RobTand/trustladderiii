@@ -766,6 +766,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "advance_family_post_teardown_missing_rows": ("kernel::advance_family_post#teardown_missing_rows", 1),
             "ranks_advance_teardown_missing_value": ("kernel::ranks#advance_teardown_missing_value", 1),
             "ranks_advance_teardown_emitting_value": ("kernel::ranks#advance_teardown_emitting_value", 1),
             "ranks_advance_release_value": ("kernel::ranks#advance_release_value", 1),
