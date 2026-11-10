@@ -443,6 +443,13 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::acknowledgements::effect_head": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::resources_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::agenda_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::failed_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_stutters": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_live_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::on_ack_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -742,6 +749,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "acknowledgements_ack_live": ("kernel::acknowledgements#ack_live", 1),
+            "ack_family_node_safety": ("kernel::ack_family_safety#ack_node_safety", 1),
+            "ack_family_adoption_facts": ("kernel::ack_family_safety#adoption_facts", 1),
+            "ack_family_bpr_equiv": ("kernel::ack_family_safety#bpr_equiv", 1),
+            "ack_family_bpr_open_pr_quiet": ("kernel::ack_family_safety#bpr_open_pr_quiet", 1),
             "allocation_incident_value": ("kernel::allocation#incident_value", 1),
             "handler_safety_command_node_safety": ("kernel::handler_safety#command_node_safety", 1),
             "transition_safety_unchanged_node": ("kernel::transition_safety#unchanged_node", 1),
