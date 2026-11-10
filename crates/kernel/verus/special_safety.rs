@@ -954,7 +954,7 @@ mod assembly_entry_witnesses {
 
     fn invalid() {
         let w = assembly_witness_world::world(0);
-        let event = Event::Command { node: NodeId(1), id: 1, command: Command::Answer {
+        let event = Event::Command { node: NodeId(0), id: 1, command: Command::Answer {
             question: 0, answer: Answer::Stop } };
         let _ = invalid_command_assembly::apply_invalid_target(w, event, Outbox::new(), Report::new());
     }
