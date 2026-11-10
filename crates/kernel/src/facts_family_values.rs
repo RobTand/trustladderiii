@@ -684,7 +684,7 @@ pub(super) open spec fn infrastructure_incident_arm_result(n: Node) -> (Node, Op
 }
 
 pub(super) open spec fn infrastructure_retry_result(n: Node) -> (Node, Option<bool>) {
-    if n.run_failures == 0 { infrastructure_retry_arm_result(n) }
+    if n.run_failures == 1 { infrastructure_retry_arm_result(n) }
     else { infrastructure_incident_arm_result(n) }
 }
 
