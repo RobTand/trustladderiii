@@ -56,7 +56,7 @@ pub(super) proof fn work_progress(n: Node, c: ReplyCtx)
 pub(super) proof fn work_maker_rows(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::MakerDone { .. } | Reply::MakerCantMeet | Reply::MakerOutOfRoom),
-    ensures reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
 {
     work_bounds(n, c);
     reveal(reply_family_safety::completed);
