@@ -1,10 +1,50 @@
 {
-  "source_head": "8a2882dd1d13d96f047ce8a4dad51ad6fc3c39d1",
+  "source_head": "83ab9b8ee28069919f98747e963e434244b40b40",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "cfa62df1b868206d28905333b88bcfe15ad64d2d2f4ab3455d41cba9348389f8",
-  "groups": 811,
-  "obligations": 1016,
+  "source_sha256": "09de693e83590f48b53bb1f0fda50d5f97533d454278e83611112f721e0190c9",
+  "groups": 819,
+  "obligations": 1024,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_liveness_gate_visit_frames",
+      "selector": "kernel::liveness_gate_visit#visit_frames",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_before_visit",
+      "selector": "kernel::liveness_gate_visit#before_visit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_start_inv",
+      "selector": "kernel::liveness_gate_release#start_inv",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_reserved",
+      "selector": "kernel::liveness_gate_release#reserved",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_released",
+      "selector": "kernel::liveness_gate_release#released",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_after_visit",
+      "selector": "kernel::liveness_gate_grant#after_visit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_waiter_granted",
+      "selector": "kernel::liveness_gate_grant#waiter_granted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_leaf_progress",
+      "selector": "kernel::liveness_gate_trace#gate_leaf_progress",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_post_step_rows_intro",
       "selector": "kernel::advance_family_post#step_rows_intro",
