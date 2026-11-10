@@ -121,7 +121,7 @@ pub(super) open spec fn merge_notices(n: Node, notes: Outbox, i: usize,
 }
 
 pub(super) proof fn value_node_step(b: Node, n: Node, fast: bool, i: usize, fact: Fact)
-    requires node_headroom(b), n == retirement::fact_node(b, fact),
+    requires node_headroom(b),
         matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict
             | Fact::IncidentCleared { .. } | Fact::PrMerged { .. }),
     ensures transition_safety::node_step(b, n),
