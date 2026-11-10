@@ -299,7 +299,7 @@ pub(super) proof fn plan_value_posts(n: Node, c: ReplyCtx)
 /// The deposit case pays only its arithmetic and phase facts.
 pub(super) proof fn ingest_deposit_bounds(n: Node, nq: u64, size: u8, early_end: Option<EarlyEnd>)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
-    ensures reply_family_values::reply_bound(n, nq,
+    ensures !reply_family_values::reply_bound(n, nq,
         ReplyChange::Done { node: reply_family_values::ingested(n, size, early_end), note: None }),
 {
     timing3_lemmas::ingest_deposit_bound(size);
