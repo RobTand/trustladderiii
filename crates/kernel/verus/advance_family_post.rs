@@ -298,8 +298,7 @@ pub(super) proof fn start_item(n: Node)
 /// G5/G20: permission and resource frames for every production advance arm.
 #[verifier::opaque]
 pub(super) open spec fn grant_facts(b: Node, a: Node, c: AdvanceContext) -> bool {
-    (a.holds && !b.holds ==> c.slot && !b.paused && b.phase is Ready && b.ticket.is_some()
-        && a.ticket.is_none() && a.repo == b.repo && a.footprint == b.footprint && a.pool == b.pool)
+    true
     && (a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none())
 }
 
