@@ -59,7 +59,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     let withhold = match w.nodes[i].question {
         Some(q) => w.nodes[i].phase == Phase::AwaitingRob
             && q.id == id
-            && matches!(answer, Answer::Continue | Answer::AddCredit(_))
+            && matches!(answer, Answer::Continue | Answer::AddCredit(_) | Answer::TryAgain)
             && allowed(q.kind, answer),
         None => false,
     };
