@@ -1042,4 +1042,12 @@ pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
     }
 }
 
+
+/// R28-Answer (11-10): the incident row of node_rules, as one implication. Own group.
+pub(super) proof fn rules_incident(w: World, n: Node)
+    ensures retirement::node_rules(w, n) ==> (n.incident_needs_rob ==> n.waiting_incident),
+{
+    reveal(retirement::node_rules);
+}
+
 }
