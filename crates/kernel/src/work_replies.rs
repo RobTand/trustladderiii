@@ -145,6 +145,7 @@ pub(super) fn reply_plan_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
             reply_family_values::finish(c.next_question, result).phase == Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(c.next_question, result).review_stop == Some(ReviewStop::PlanCantMeet)),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+    kernel_proof! { footprint::inline_is_valid(vstd::pervasive::arbitrary(), 1); }
     let mut node = n;
     let mut note: Option<Notice> = None;
     let i = c.node;
