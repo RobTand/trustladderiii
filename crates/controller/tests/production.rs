@@ -250,6 +250,9 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
     let mut flux = flux_options::flux(root.path());
     flux.staging_root = "/mnt/shared/tl3-inputs".into();
     flux.output_root = "/mnt/shared/flux-out/tl3".into();
+    flux.environment.insert("HOME".into(), "/home/rob".into());
+    flux.environment
+        .insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
     config.flux = flux;
     let error = match production::register(&config) {
         Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
