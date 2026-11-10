@@ -719,7 +719,7 @@ fn next_rung_replan_paid(n: Node) -> (result: ReplyChange) [
     let mut node = n;
     let mut note: Option<Notice> = None;
     node.credit = spend_v(node.credit, 1);
-    node.plan_retries = 0;
+    node.plan_retries = 1;
     node = set_phase_v(node, Phase::Planning { must_split: false });
     note = Some(Notice::Note(NoteKind::Replanned));
     ReplyChange::Done { node, note }
