@@ -192,11 +192,11 @@ pub fn build(
     let result = root.join("build.json");
     if result.exists() {
         let build: Build = serde_json::from_slice(&durable::read(&result)?)?;
+        verify_build_source(&build, commit, &tree)?;
         verify_client()?;
         if build.client_sha256 != CLIENT_SHA256 {
             return Err("retained BuildBuddy client hash differs".into());
         }
-        verify_build_source(&build, commit, &tree)?;
         evidence::verify_references(&serde_json::to_value(&build)?)?;
         return Ok(build);
     }
@@ -863,9 +863,9 @@ mod staged_transport_tests {
             &["push", "origin", &format!("{}:{branch}", inputs.head)],
         )
         .unwrap();
-        assert!(
-            build_argv(&inputs, Some(&overlay)).is_err(),
-            "an occupied branch cannot be replaced"
+        assert_eq!(
+            build_argv(&inputs, Some(&overlay)).unwrap_err().to_string(),
+            "overlay commit identity or exact parent H differs"
         );
         assert_eq!(
             git(&inputs.repo, &["ls-remote", "origin", &branch])
@@ -916,9 +916,15 @@ mod staged_transport_tests {
         .unwrap();
         let digest = durable::digest(&serde_json::to_vec(&overlay).unwrap());
         write(&work.join("overlay-commit.json"), &json!({"commit":commit,"tree":wrong_tree,"base_head":inputs.head,"branch":format!("fx-x3-overlay/{}", &digest[..16]),"overlay_sha256":digest})).unwrap();
-        assert!(
-            expected_tree(&inputs, &work, Some(&overlay)).is_err(),
-            "staged content must equal private derivation"
+        assert_eq!(
+            expected_tree(&inputs, &work, Some(&overlay))
+                .unwrap_err()
+                .to_string(),
+            if extra_path {
+                "overlay commit contains non-derived paths"
+            } else {
+                "overlay commit blobs or modes differ from private derivation"
+            }
         );
     }
 
@@ -942,16 +948,28 @@ mod staged_transport_tests {
             artifacts: vec![],
         };
         let tree = build.overlay_tree.clone();
-        assert!(verify_build_source(&build, &inputs.head, &tree).is_err());
+        assert_eq!(
+            verify_build_source(&build, &inputs.head, &tree)
+                .unwrap_err()
+                .to_string(),
+            "BuildBuddy invocation recorded another source commit or tree"
+        );
         let mut accepted = build.clone();
         accepted.own_verdict["source"] = json!({"commitSha":inputs.head,"repoUrl":"https://github.com/RobTand/trustladderiii","invocationId":build.invocation_id});
         assert!(verify_build_source(&accepted, &inputs.head, &tree).is_ok());
         accepted.own_verdict["source"]["commitSha"] = "f".repeat(40).into();
-        assert!(verify_build_source(&accepted, &inputs.head, &tree).is_err());
-        write(&work.join("build.json"), &build).unwrap();
-        assert!(
-            super::build(&inputs, "production", None).is_err(),
-            "retained invocation commit must be checked"
+        assert_eq!(
+            verify_build_source(&accepted, &inputs.head, &tree)
+                .unwrap_err()
+                .to_string(),
+            "BuildBuddy invocation recorded another source commit or tree"
+        );
+        write(&work.join("build.json"), &accepted).unwrap();
+        assert_eq!(
+            super::build(&inputs, "production", None)
+                .expect_err("retained invocation commit must be checked")
+                .to_string(),
+            "BuildBuddy invocation recorded another source commit or tree"
         );
     }
 }

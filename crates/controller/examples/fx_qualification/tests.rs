@@ -304,15 +304,26 @@ fn lifecycle_inputs_refuse_missing_duplicate_and_foreign_kinds() {
     let directory = tempfile::tempdir().unwrap();
     let inputs = inputs(directory.path());
     prepared(&inputs);
-    for kinds in [
-        ["launch_failure", "cancel", "generator"],
-        ["launch_failure", "cancel", "cancel"],
+    for (kinds, expected) in [
+        (
+            ["launch_failure", "cancel", "generator"],
+            "missing lifecycle canary kind",
+        ),
+        (
+            ["launch_failure", "cancel", "cancel"],
+            "duplicate lifecycle canary kind",
+        ),
     ] {
         let canaries: Vec<_> = kinds
             .into_iter()
             .map(|kind| canary(directory.path(), kind))
             .collect();
-        assert!(prepare::lifecycle_inputs(&inputs, &canaries).is_err());
+        assert_eq!(
+            prepare::lifecycle_inputs(&inputs, &canaries)
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
     }
 }
 

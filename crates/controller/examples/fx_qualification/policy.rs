@@ -209,7 +209,13 @@ mod tests {
         let ordered = publication_order(&fixture).unwrap();
         assert_eq!(ordered.last(), Some(&fixture[0]));
         assert_eq!(ordered.first(), Some(&fixture[2]));
-        assert!(publication_order(&["harness/src/tl3_harness/runtime.py".into()]).is_err());
-        assert!(publication_order(&[fixture[0].clone(), fixture[0].clone()]).is_err());
+        assert_eq!(
+            publication_order(&["harness/src/tl3_harness/runtime.py".into()]).unwrap_err(),
+            "qualification.publication.inventory"
+        );
+        assert_eq!(
+            publication_order(&[fixture[0].clone(), fixture[0].clone()]).unwrap_err(),
+            "qualification.publication.inventory"
+        );
     }
 }

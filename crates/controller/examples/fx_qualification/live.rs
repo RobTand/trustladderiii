@@ -657,11 +657,17 @@ mod tests {
     fn allocation_uses_counts_and_allowed_host_without_identity_pins() {
         let fixture = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"7"}}],"nodelist":["dl380g10"]}});
         assert!(allocation(&fixture, 1, "dl380g10").is_ok());
-        assert!(allocation(&fixture, 2, "dl380g10").is_err());
+        assert_eq!(
+            allocation(&fixture, 2, "dl380g10").unwrap_err().to_string(),
+            "allocated core count mismatch"
+        );
         let mut other = fixture.clone();
         other["execution"]["R_lite"][0]["children"]["core"] = "19".into();
         assert!(allocation(&other, 1, "dl380g10").is_ok());
         other["execution"]["R_lite"][0]["children"]["gpu"] = "0".into();
-        assert!(allocation(&other, 1, "dl380g10").is_err());
+        assert_eq!(
+            allocation(&other, 1, "dl380g10").unwrap_err().to_string(),
+            "SHAPE allocation host/rank/GPU mismatch"
+        );
     }
 }
