@@ -1335,14 +1335,11 @@ kernel_fn! {
         let mut node = b;
         kernel_snapshot! { before_grant = node }
         kernel_snapshot! { before_phase = node.phase }
-        let m = &mut node;
-        if kind == EffectKind::StopRun {
-            m.pool = false;
-        }
-        m.pos += 1;
+        node = Node { pool: b.pool && kind != EffectKind::StopRun,
+            pos: b.pos + 1, ..b };
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
-        kernel_proof! { advance_family_post::teardown_rows_intro(b, node, true); }
+        kernel_proof! { advance_family_post::teardown_missing_rows(b, kind); }
         return (node, true);
 
     }

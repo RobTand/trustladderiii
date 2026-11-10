@@ -473,4 +473,19 @@ pub(super) proof fn stopping_items(n: Node)
     reveal(current_item); reveal(items);
 }
 
+
+/// Case-local R26 rows over the literal missing-resource result.
+pub(super) proof fn teardown_missing_rows(b: Node, kind: EffectKind)
+    requires b.phase is Stopping,
+        current_item(b) == Some(Item::Teardown(kind)), teardown_gone(b, kind),
+    ensures teardown_rows(b, Node { pool: b.pool && kind != EffectKind::StopRun,
+        pos: (b.pos + 1) as u8, ..b }, true),
+{
+    reveal(current_item); reveal(items);
+    assert(b.pos < 5);
+    let a = Node { pool: b.pool && kind != EffectKind::StopRun,
+        pos: (b.pos + 1) as u8, ..b };
+    teardown_rows_intro(b, a, true);
+}
+
 }
