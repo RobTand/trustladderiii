@@ -926,7 +926,7 @@ pub(in super::super) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infr
     }
     let (node, escalation) = infrastructure_retry_value(prepared);
     let change = match escalation {
-        Some(needs_rob) => ReplyChange::Incident { node, needs_rob },
+        Some(needs_rob) => ReplyChange::Done { node, note: None },
         None => ReplyChange::Done { node, note: None },
     };
     let result = facts_reply_adapter::resolve_reply_value(change, nq, i);
