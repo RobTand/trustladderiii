@@ -93,7 +93,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && old(w).nodes@[older].phase is Ready
                 && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
                 && old(w).nodes@[older].ticket.is_some()
-                && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+                && old(w).nodes@[older].ticket.unwrap() > old(w).nodes@[i as int].ticket.unwrap()
                 && slot_spec(*old(w), older)
                 && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
                 ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
