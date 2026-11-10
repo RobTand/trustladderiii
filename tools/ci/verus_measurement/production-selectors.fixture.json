@@ -1,9 +1,9 @@
 {
-  "source_head": "def9cf0d795de77d8cfa5f5d45a4a119e5ba9ec9",
+  "source_head": "290e8785920bd88ff6707cd42f8bdb2f1f018845",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "f887a4b11e2d5d50dacdc9c3fd3260de75833d0e90e1259391a56a915088dbcf",
-  "groups": 605,
-  "obligations": 803,
+  "source_sha256": "e799bd747aa6c5d6557a9b9fa34fc4018d5ca6b02ee315b91f1b211deff34143",
+  "groups": 604,
+  "obligations": 802,
   "selections": [
     {
       "target": "//crates/kernel:verus_apply_command_safety_answered_parts",
@@ -73,11 +73,6 @@
     {
       "target": "//crates/kernel:verus_apply_command_safety_answer_dist",
       "selector": "kernel::apply_command_safety#answer_dist",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_apply_command_safety_command_stutter",
-      "selector": "kernel::apply_command_safety#command_stutter",
       "expected": 1
     },
     {
