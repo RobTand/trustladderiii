@@ -1,13 +1,13 @@
 {
-  "source_head": "dacac8dce229dd8d0ec909f17c1b4225dcd9867e",
+  "source_head": "532b3217917b41c138c2a68787e87a3917641ac7",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b85b5038c6e3d6e11b56a8dc8974b4769673d7585d632bea340d02a14b0a646e",
+  "source_sha256": "4b3944ba976bb0ccd8d17c662983a99352b91e7b4892673f64e60d14fb3e6c0d",
   "groups": 624,
   "obligations": 822,
   "selections": [
     {
-      "target": "//crates/kernel:verus_apply_command_safety_stop_e11",
-      "selector": "kernel::apply_command_safety#stop_e11",
+      "target": "//crates/kernel:verus_apply_command_safety_stop_e11_v",
+      "selector": "kernel::apply_command_safety#stop_e11_v",
       "expected": 1
     },
     {
