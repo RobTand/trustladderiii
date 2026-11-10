@@ -199,7 +199,11 @@ impl Journal {
         boundary: impl Fn(bool),
     ) -> Result<()> {
         let records = Records::new(&self.records_root);
-        let intent: Option<Intent> = read_file(&records.path(&d.key).with_extension("intent"))?;
+        // Intent metadata may be unreadable; that must not suppress the merged receipt.
+        let intent: Option<Intent> = match read_file(&records.path(&d.key).with_extension("intent")) {
+            Ok(intent) => intent,
+            Err(_) => return Ok(()),
+        };
         if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
             return Ok(());
         }
@@ -563,40 +567,63 @@ impl Adapter {
             store: self.store.clone(),
         }
     }
-    fn observed_evidence(
+    fn finish_merge(
         &self,
         d: &Delivery,
         pull: &PullRequest,
-    ) -> Result<Box<crate::outcome::MergeEvidence>> {
-        let github = self.client(d)?;
-        let repo = full_name(&d.repository);
-        let checks = read_checks(&self.runtime, github, &repo, pull)?;
-        let intent: Option<Intent> =
-            read_file(&self.records.path(&d.key).with_extension("intent"))?;
-        let base = intent
-            .filter(|intent| intent.action == "Merge" && intent.head == pull.head.sha)
-            .map(|intent| intent.base_before_merge);
-        merge_evidence(
-            &self.runtime,
-            github,
-            &repo,
-            &self.snapshot()?,
-            d.node(),
-            pull,
-            pull.merge_commit_sha
-                .as_deref()
-                .ok_or(Error::Invalid("merged PR lacks landed commit"))?,
-            base,
-            crate::outcome::RequiredChecks {
-                passed: checks.checks == Checks::Passed,
-                count: checks.count,
-            },
-            true,
-        )
-    }
-    fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
+        head: String,
+        checks_passed: bool,
+        submitted: Option<SubmittedMerge>,
+    ) -> Result<Completion> {
+        let mut merged = Merged::pending(head, checks_passed);
         self.journal()
             .remember_merged(d, &merged, |write, after| self.boundary(write, after))?;
+        let mut evidence = crate::outcome::MergeEvidence::empty(merged.head.clone());
+        let intent = match read_file::<Intent>(&self.records.path(&d.key).with_extension("intent")) {
+            Ok(intent) => {
+                intent.filter(|intent| intent.action == "Merge" && intent.head == merged.head)
+            }
+            Err(error) => {
+                evidence.error("merge_intent", evidence_error_class(&error));
+                None
+            }
+        };
+        let request = MergeRead::new(
+            pull,
+            submitted.as_ref(),
+            intent.as_ref(),
+            evidence.evidence_errors.is_empty(),
+        );
+        match (self.client(d), self.snapshot()) {
+            (Ok(github), Ok(snapshot)) => collect_merge_evidence(
+                self.runtime,
+                github,
+                &snapshot,
+                d.node(),
+                request,
+                &mut evidence,
+            ),
+            (client, snapshot) => {
+                if let Err(error) = client {
+                    evidence.error("client", evidence_error_class(&error));
+                }
+                if let Err(error) = snapshot {
+                    evidence.error("snapshot", evidence_error_class(&error));
+                }
+            }
+        }
+        merged.evidence = Box::new(evidence);
+        self.merged(d, merged)
+    }
+    fn merged(&self, d: &Delivery, mut merged: Merged) -> Result<Completion> {
+        if let Err(error) = self
+            .journal()
+            .remember_merged(d, &merged, |write, after| self.boundary(write, after))
+        {
+            merged
+                .evidence
+                .error("evidence_receipt", evidence_error_class(&error));
+        }
         self.fact(
             d,
             DeliveryOutcome::Merged {
@@ -612,14 +639,7 @@ impl Adapter {
                 let matched = read.facts.observed == read.facts.approved
                     && read.facts.checking
                     && read.facts.checked == read.facts.approved;
-                self.merged(
-                    d,
-                    Merged {
-                        head: read.pull.head.sha.clone(),
-                        checks_passed: matched,
-                        evidence: self.observed_evidence(d, &read.pull)?,
-                    },
-                )?
+                self.finish_merge(d, &read.pull, read.pull.head.sha.clone(), matched, None)?
             }
             Outcome::Moved => self.fact(
                 d,
@@ -823,31 +843,20 @@ impl Adapter {
                         self.boundary(Write::Merge, true);
                         match result {
                             Ok(result) if result.merged => {
-                                return self.merged(
+                                return self.finish_merge(
                                     d,
-                                    Merged {
-                                        head: sha.clone(),
-                                        checks_passed: true,
-                                        evidence: merge_evidence(
-                                            &self.runtime,
-                                            &github,
-                                            &repo,
-                                            &self.snapshot()?,
-                                            d.node(),
-                                            &read.pull,
-                                            result.sha.as_deref().ok_or(Error::Invalid(
-                                                "successful merge lacks landed commit",
-                                            ))?,
-                                            Some(merge_base.clone().ok_or(Error::Invalid(
-                                                "merge base was not read before merge",
-                                            ))?),
-                                            crate::outcome::RequiredChecks {
-                                                passed: true,
-                                                count: read.required_count,
-                                            },
-                                            false,
-                                        )?,
-                                    },
+                                    &read.pull,
+                                    sha.clone(),
+                                    true,
+                                    Some(SubmittedMerge {
+                                        commit: result.sha,
+                                        base: merge_base.clone(),
+                                        checks: crate::outcome::RequiredChecks {
+                                            passed: true,
+                                            count: read.required_count,
+                                        },
+                                        method: read.method,
+                                    }),
                                 );
                             }
                             Ok(_) | Err(tl3_github::Error::Http { status: 405 }) => {
@@ -865,13 +874,12 @@ impl Adapter {
                                     .runtime
                                     .block_on(github.pull_request(&repo, number(d)?))?;
                                 if current.merged_at.is_some() {
-                                    return self.merged(
+                                    return self.finish_merge(
                                         d,
-                                        Merged {
-                                            checks_passed: current.head.sha == sha,
-                                            evidence: self.observed_evidence(d, &current)?,
-                                            head: current.head.sha,
-                                        },
+                                        &current,
+                                        current.head.sha.clone(),
+                                        current.head.sha == sha,
+                                        None,
                                     );
                                 }
                                 return self.fact(
@@ -887,13 +895,12 @@ impl Adapter {
                                     .runtime
                                     .block_on(github.pull_request(&repo, number(d)?))?;
                                 if current.merged_at.is_some() {
-                                    return self.merged(
+                                    return self.finish_merge(
                                         d,
-                                        Merged {
-                                            checks_passed: current.head.sha == sha,
-                                            evidence: self.observed_evidence(d, &current)?,
-                                            head: current.head.sha,
-                                        },
+                                        &current,
+                                        current.head.sha.clone(),
+                                        current.head.sha == sha,
+                                        None,
                                     );
                                 }
                                 return Err(error.into());
@@ -966,13 +973,12 @@ impl Executor for Adapter {
             .runtime
             .block_on(github.pull_request(&full_name(&d.repository), number(d)?))?;
         let completion = if pull.merged_at.is_some() {
-            self.merged(
+            self.finish_merge(
                 d,
-                Merged {
-                    checks_passed: Some(pull.head.sha.as_str()) == d.head_sha.as_deref(),
-                    evidence: self.observed_evidence(d, &pull)?,
-                    head: pull.head.sha,
-                },
+                &pull,
+                pull.head.sha.clone(),
+                Some(pull.head.sha.as_str()) == d.head_sha.as_deref(),
+                None,
             )?
         } else {
             Completion::confirmed(vec![])
@@ -1349,7 +1355,7 @@ fn live_merge_base(
 ) -> Result<String> {
     let branch = runtime
         .block_on(github.branch(repo, &pull.base.branch))?
-        .ok_or(Error::Invalid("merge base branch is missing"))?;
+        .ok_or(tl3_github::Error::Http { status: 404 })?;
     head(&branch.commit.sha)?;
     Ok(branch.commit.sha)
 }
@@ -1370,64 +1376,189 @@ fn passing_check_base<'a>(
         .and_then(|row| row.value["base_sha"].as_str())
         .filter(|base| head(base).is_ok())
 }
-fn merge_evidence(
+struct SubmittedMerge {
+    commit: Option<String>,
+    base: Option<String>,
+    checks: crate::outcome::RequiredChecks,
+    method: Option<MergeMethod>,
+}
+struct MergeRead<'a> {
+    pull: &'a PullRequest,
+    commit: Option<&'a str>,
+    base: Option<&'a str>,
+    checks: Option<&'a crate::outcome::RequiredChecks>,
+    method: Option<MergeMethod>,
+    observed: bool,
+    outside: bool,
+}
+impl<'a> MergeRead<'a> {
+    fn new(
+        pull: &'a PullRequest,
+        submitted: Option<&'a SubmittedMerge>,
+        intent: Option<&'a Intent>,
+        intent_known: bool,
+    ) -> Self {
+        Self {
+            pull,
+            commit: submitted.map_or(pull.merge_commit_sha.as_deref(), |value| {
+                value.commit.as_deref()
+            }),
+            base: submitted
+                .and_then(|value| value.base.as_deref())
+                .or_else(|| intent.map(|value| value.base_before_merge.as_str())),
+            checks: submitted.map(|value| &value.checks),
+            method: submitted
+                .and_then(|value| value.method)
+                .or_else(|| intent.map(|value| value.method)),
+            observed: submitted.is_none(),
+            outside: submitted.is_none() && intent.is_none() && intent_known,
+        }
+    }
+}
+impl Merged {
+    fn pending(head: String, checks_passed: bool) -> Self {
+        let mut evidence = crate::outcome::MergeEvidence::empty(head.clone());
+        evidence.error("collection", "interrupted");
+        Self {
+            head,
+            checks_passed,
+            evidence: Box::new(evidence),
+        }
+    }
+}
+fn evidence_error_class(error: &Error) -> String {
+    match error {
+        Error::Permanent {
+            class: "direct_protection_read",
+            ..
+        } => "direct_protection_read".into(),
+        Error::Permanent { source, class } => source
+            .downcast_ref::<tl3_github::Error>()
+            .map(github_evidence_class)
+            .unwrap_or_else(|| (*class).into()),
+        Error::Adapter(source) => source
+            .downcast_ref::<tl3_github::Error>()
+            .map(github_evidence_class)
+            .unwrap_or_else(|| "adapter".into()),
+        Error::Quota { .. } => "quota".into(),
+        Error::Io(_) => "io".into(),
+        Error::Json(_) | Error::StoredJson(_) => "json".into(),
+        Error::Store(_) => "store".into(),
+        Error::Invalid(_) => "invalid".into(),
+        _ => "controller".into(),
+    }
+}
+fn github_evidence_class(error: &tl3_github::Error) -> String {
+    match error {
+        tl3_github::Error::Http { status } => format!("http_{status}"),
+        tl3_github::Error::CatchUp { source, .. }
+        | tl3_github::Error::InstallationToken { source } => github_evidence_class(source),
+        _ => error.failure_class().as_str().into(),
+    }
+}
+fn evidence_read<T>(
+    evidence: &mut crate::outcome::MergeEvidence,
+    read: &str,
+    result: Result<T>,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            evidence.error(read, evidence_error_class(&error));
+            None
+        }
+    }
+}
+fn collect_merge_evidence(
     runtime: &tokio::runtime::Runtime,
     github: &GitHub,
-    repo: &str,
     snapshot: &Snapshot,
     node: tl3_kernel::NodeId,
-    pull: &PullRequest,
-    landed: &str,
-    base_before_merge: Option<String>,
-    required_checks: crate::outcome::RequiredChecks,
-    observed: bool,
-) -> Result<Box<crate::outcome::MergeEvidence>> {
-    let commit = runtime.block_on(github.git_commit(repo, landed))?;
-    let head_commit = runtime.block_on(github.git_commit(repo, &pull.head.sha))?;
-    let world = crate::snapshot::decode(snapshot)?;
-    let n = world
-        .nodes
-        .get(node.0 as usize)
-        .ok_or(Error::Invalid("merge evidence node missing"))?;
-    let checked_base = crate::commit_sha(snapshot, n.approved)
-        .and_then(|approved| passing_check_base(snapshot, node, approved))
-        .map(str::to_owned);
-    let merge_base = if observed {
-        live_merge_base(runtime, github, repo, pull)?
-    } else {
-        base_before_merge
-            .clone()
-            .ok_or(Error::Invalid("merge lacks its pre-call live base"))?
+    request: MergeRead<'_>,
+    evidence: &mut crate::outcome::MergeEvidence,
+) {
+    let pull = request.pull;
+    let repo = match crate::request(snapshot, node) {
+        Ok(request) => full_name(&request.repo),
+        Err(error) => {
+            evidence.error("request", evidence_error_class(&error));
+            return;
+        }
     };
-    let base_moved = checked_base.as_ref().map(|base| base != &merge_base);
-    let parents: Vec<_> = commit
-        .parents
-        .into_iter()
-        .map(|parent| parent.sha)
-        .collect();
-    Ok(Box::new(crate::outcome::MergeEvidence {
-        head: pull.head.sha.clone(),
-        tl3_checks_passed: crate::commit_sha(snapshot, n.checked) == Some(pull.head.sha.as_str()),
-        review_approved: crate::commit_sha(snapshot, n.approved) == Some(pull.head.sha.as_str()),
-        required_checks,
-        observed,
-        landed: crate::outcome::Landed {
-            commit: commit.sha,
-            merge_base,
-            pr_base_sha: pull.base.sha.clone(),
-            base_moved,
-            checked_parent_matches: checked_base
-                .as_ref()
-                .map(|base| parents.first() == Some(base)),
-            checked_base,
-            tree_matches: commit.tree.sha == head_commit.tree.sha,
-            tree: commit.tree.sha,
-            head_tree: head_commit.tree.sha,
-            parent_matches: base_before_merge
-                .as_ref()
-                .map(|base| parents.first() == Some(base)),
-            parents,
-            base_before_merge,
-        },
-    }))
+    evidence.observed = request.outside;
+    evidence.landed.pr_base_sha = Some(pull.base.sha.clone());
+    evidence.landed.base_before_merge = request.base.map(str::to_owned);
+    evidence.landed.method = request.method;
+    if let Some(world) = evidence_read(evidence, "snapshot", crate::snapshot::decode(snapshot)) {
+        if let Some(n) = world.nodes.get(node.0 as usize) {
+            evidence.tl3_checks_passed =
+                Some(crate::commit_sha(snapshot, n.checked) == Some(pull.head.sha.as_str()));
+            evidence.review_approved =
+                Some(crate::commit_sha(snapshot, n.approved) == Some(pull.head.sha.as_str()));
+            evidence.landed.checked_base = crate::commit_sha(snapshot, n.approved)
+                .and_then(|approved| passing_check_base(snapshot, node, approved))
+                .map(str::to_owned);
+        } else {
+            evidence.error("snapshot", "missing_node");
+        }
+    }
+    evidence.required_checks = if let Some(checks) = request.checks {
+        Some(checks.clone())
+    } else {
+        evidence_read(
+            evidence,
+            "required_checks",
+            read_checks(runtime, github, &repo, pull),
+        )
+        .map(|checks| crate::outcome::RequiredChecks {
+            passed: checks.checks == Checks::Passed,
+            count: checks.count,
+        })
+    };
+    evidence.landed.merge_base = if request.observed {
+        evidence_read(
+            evidence,
+            "live_merge_base",
+            live_merge_base(runtime, github, &repo, pull),
+        )
+    } else {
+        request.base.map(str::to_owned)
+    };
+    let mut landed = request.commit.map(str::to_owned);
+    if landed.is_none() {
+        landed = evidence_read(
+            evidence,
+            "pull_request",
+            runtime
+                .block_on(github.pull_request(&repo, pull.number))
+                .map_err(Error::from),
+        )
+        .and_then(|current| current.merge_commit_sha);
+        if landed.is_none() {
+            evidence.error("merge_commit_sha", "missing");
+        }
+    }
+    evidence.landed.commit = landed.clone();
+    if let Some(landed) = landed
+        && let Some(commit) = evidence_read(
+            evidence,
+            "landed_commit",
+            runtime
+                .block_on(github.git_commit(&repo, &landed))
+                .map_err(Error::from),
+        )
+    {
+        evidence.landed.tree = Some(commit.tree.sha);
+        evidence.landed.parents = Some(commit.parents.into_iter().map(|parent| parent.sha).collect());
+    }
+    if let Some(commit) = evidence_read(
+        evidence,
+        "head_commit",
+        runtime
+            .block_on(github.git_commit(&repo, &pull.head.sha))
+            .map_err(Error::from),
+    ) {
+        evidence.landed.head_tree = Some(commit.tree.sha);
+    }
+    evidence.compare();
 }

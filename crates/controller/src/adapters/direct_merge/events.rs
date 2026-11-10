@@ -54,41 +54,100 @@ impl Translator {
             if n.merged.is_some() {
                 continue;
             }
-            let evidence = if pull.merged_at.is_some() {
+            let outcome = if pull.merged_at.is_some() {
+                let checks_passed = crate::commit_sha(snapshot, n.approved)
+                    == Some(pull.head.sha.as_str())
+                    && n.checked == n.approved
+                    && n.approved.is_some();
+                let mut merged = Merged::pending(pull.head.sha.clone(), checks_passed);
+                let journal = self.wakes.journal();
+                let mut deliveries = BTreeMap::new();
+                if journal.is_some() {
+                    for effect in &snapshot.pending_effects {
+                        let delivery = crate::hydrate(effect, snapshot)?;
+                        deliveries.insert(delivery.key.clone(), delivery);
+                    }
+                    for row in snapshot
+                        .rows
+                        .iter()
+                        .filter(|row| matches!(row.table.as_str(), "watches" | "retiring_effects"))
+                    {
+                        let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+                        deliveries.insert(delivery.key.clone(), delivery);
+                    }
+                }
+                deliveries.retain(|_, delivery| {
+                    delivery.node() == node
+                        && matches!(
+                            delivery.output,
+                            Output::Effect {
+                                kind: EffectKind::Enqueue,
+                                ..
+                            }
+                        )
+                });
+                for delivery in deliveries.values_mut() {
+                    delivery.pull_request = Some(pull.number);
+                }
+                let mut record = crate::outcome::MergeEvidence::empty(pull.head.sha.clone());
+                let mut intent = None;
+                if let Some(journal) = &journal {
+                    for delivery in deliveries.values() {
+                        // Preserve the known merge before any optional REST audit read.
+                        journal.remember_merged(delivery, &merged, |_, _| {})?;
+                        match read_file::<Intent>(
+                            &Records::new(&journal.records_root)
+                                .path(&delivery.key)
+                                .with_extension("intent"),
+                        ) {
+                            Ok(Some(saved))
+                                if saved.action == "Merge" && saved.head == pull.head.sha =>
+                            {
+                                intent = Some(saved);
+                            }
+                            Ok(_) => {}
+                            Err(error) => record.error("merge_intent", evidence_error_class(&error)),
+                        }
+                    }
+                }
+                let request = MergeRead::new(
+                    pull,
+                    None,
+                    intent.as_ref(),
+                    record.evidence_errors.is_empty(),
+                );
+                match (
+                    self.clients.get(&repo.installation),
+                    crate::executor::runtime(),
+                ) {
+                    (Some(client), Ok(runtime)) => {
+                        collect_merge_evidence(runtime, client, snapshot, node, request, &mut record);
+                    }
+                    (client, runtime) => {
+                        if client.is_none() {
+                            record.error("client", "missing");
+                        }
+                        if let Err(error) = runtime {
+                            record.error("runtime", evidence_error_class(&error));
+                        }
+                    }
+                }
+                merged.evidence = Box::new(record);
+                if let Some(journal) = &journal {
+                    for delivery in deliveries.values() {
+                        if let Err(error) = journal.remember_merged(delivery, &merged, |_, _| {}) {
+                            merged
+                                .evidence
+                                .error("evidence_receipt", evidence_error_class(&error));
+                        }
+                    }
+                }
                 Some(DeliveryOutcome::Merged {
-                    evidence: {
-                        let client = self
-                            .clients
-                            .get(&repo.installation)
-                            .ok_or(Error::Invalid("missing direct event client"))?;
-                        let runtime = crate::executor::runtime()?;
-                        let checks = read_checks(&runtime, client, &full_name(repo), pull)?;
-                        Some(merge_evidence(
-                            &runtime,
-                            client,
-                            &full_name(repo),
-                            snapshot,
-                            node,
-                            pull,
-                            pull.merge_commit_sha
-                                .as_deref()
-                                .ok_or(Error::Invalid("merged PR lacks landed commit"))?,
-                            None,
-                            crate::outcome::RequiredChecks {
-                                passed: checks.checks == Checks::Passed,
-                                count: checks.count,
-                            },
-                            true,
-                        )?)
-                    },
-                    head: pull.head.sha.clone(),
-                    checks_passed: crate::commit_sha(snapshot, n.approved)
-                        == Some(pull.head.sha.as_str())
-                        && n.checked == n.approved
-                        && n.approved.is_some(),
+                    head: merged.head,
+                    checks_passed: merged.checks_passed,
+                    evidence: Some(merged.evidence),
                 })
-            } else if synchronized
-                && crate::commit_sha(snapshot, n.head) != Some(pull.head.sha.as_str())
+            } else if synchronized && crate::commit_sha(snapshot, n.head) != Some(pull.head.sha.as_str())
             {
                 Some(DeliveryOutcome::PushByOther {
                     head: pull.head.sha.clone(),
@@ -96,67 +155,8 @@ impl Translator {
             } else {
                 None
             };
-            if let Some(mut evidence) = evidence {
-                if let DeliveryOutcome::Merged {
-                    head,
-                    checks_passed,
-                    evidence: merge_record,
-                } = &mut evidence
-                    && let Some(journal) = self.wakes.journal()
-                {
-                    let mut deliveries: Vec<Delivery> = snapshot
-                        .pending_effects
-                        .iter()
-                        .map(|effect| crate::hydrate(effect, snapshot))
-                        .collect::<Result<_>>()?;
-                    for row in snapshot
-                        .rows
-                        .iter()
-                        .filter(|r| matches!(r.table.as_str(), "watches" | "retiring_effects"))
-                    {
-                        deliveries.push(crate::decode_stored(row.value.clone())?);
-                    }
-                    for mut delivery in deliveries {
-                        if delivery.node() == node
-                            && matches!(
-                                delivery.output,
-                                Output::Effect {
-                                    kind: EffectKind::Enqueue,
-                                    ..
-                                }
-                            )
-                        {
-                            delivery.pull_request = Some(pull.number);
-                            let intent: Option<Intent> = read_file(
-                                &Records::new(&journal.records_root)
-                                    .path(&delivery.key)
-                                    .with_extension("intent"),
-                            )?;
-                            if let Some(intent) = intent
-                                .filter(|intent| intent.action == "Merge" && intent.head == *head)
-                                && let Some(record) = merge_record.as_mut()
-                            {
-                                record.landed.parent_matches = Some(
-                                    record.landed.parents.first()
-                                        == Some(&intent.base_before_merge),
-                                );
-                                record.landed.base_before_merge = Some(intent.base_before_merge);
-                            }
-                            journal.remember_merged(
-                                &delivery,
-                                &Merged {
-                                    head: head.clone(),
-                                    checks_passed: *checks_passed,
-                                    evidence: merge_record
-                                        .clone()
-                                        .ok_or(Error::Invalid("merged event lacks evidence"))?,
-                                },
-                                |_, _| {},
-                            )?;
-                        }
-                    }
-                }
-                let suffix = match &evidence {
+            if let Some(outcome) = outcome {
+                let suffix = match &outcome {
                     DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
                     DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
                     _ => unreachable!("PR event outcome"),
@@ -167,7 +167,7 @@ impl Translator {
                         key: format!("direct:{identity}"),
                         observation: Observation::Outcome {
                             node,
-                            outcome: evidence,
+                            outcome,
                             receipt: Some(identity),
                         },
                     });

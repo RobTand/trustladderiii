@@ -50,48 +50,138 @@ pub struct RequiredChecks {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Landed {
-    pub commit: String,
-    pub tree: String,
+    pub commit: Option<String>,
+    pub tree: Option<String>,
     pub checked_base: Option<String>,
-    pub merge_base: String,
-    pub pr_base_sha: String,
+    pub merge_base: Option<String>,
+    pub pr_base_sha: Option<String>,
     pub base_moved: Option<bool>,
     pub checked_parent_matches: Option<bool>,
-    pub parents: Vec<String>,
-    pub head_tree: String,
+    pub parents: Option<Vec<String>>,
+    pub head_tree: Option<String>,
     pub base_before_merge: Option<String>,
-    pub tree_matches: bool,
+    pub tree_matches: Option<bool>,
     pub parent_matches: Option<bool>,
+    pub parent_comparison_reason: Option<String>,
+    pub method: Option<tl3_github::MergeMethod>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MergeEvidence {
     pub head: String,
-    pub tl3_checks_passed: bool,
-    pub review_approved: bool,
-    pub required_checks: RequiredChecks,
+    pub tl3_checks_passed: Option<bool>,
+    pub review_approved: Option<bool>,
+    pub required_checks: Option<RequiredChecks>,
     pub landed: Landed,
     pub observed: bool,
+    pub evidence_errors: Vec<EvidenceError>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvidenceError {
+    pub read: String,
+    pub class: String,
 }
 impl MergeEvidence {
+    pub(crate) fn empty(head: String) -> Self {
+        Self {
+            head,
+            tl3_checks_passed: None,
+            review_approved: None,
+            required_checks: None,
+            observed: false,
+            evidence_errors: vec![],
+            landed: Landed {
+                commit: None,
+                tree: None,
+                checked_base: None,
+                merge_base: None,
+                pr_base_sha: None,
+                base_moved: None,
+                checked_parent_matches: None,
+                parents: None,
+                head_tree: None,
+                base_before_merge: None,
+                tree_matches: None,
+                parent_matches: None,
+                parent_comparison_reason: None,
+                method: None,
+            },
+        }
+    }
+    pub(crate) fn error(&mut self, read: &str, class: impl Into<String>) {
+        self.evidence_errors.push(EvidenceError {
+            read: read.into(),
+            class: class.into(),
+        });
+    }
+    pub(crate) fn compare(&mut self) {
+        let landed = &mut self.landed;
+        landed.base_moved = landed
+            .checked_base
+            .as_ref()
+            .zip(landed.merge_base.as_ref())
+            .map(|(checked, current)| checked != current);
+        landed.tree_matches = landed
+            .tree
+            .as_ref()
+            .zip(landed.head_tree.as_ref())
+            .map(|(actual, checked)| actual == checked);
+        if landed.method == Some(tl3_github::MergeMethod::Rebase) {
+            landed.parent_matches = None;
+            landed.checked_parent_matches = None;
+            landed.parent_comparison_reason = Some("rebase merge method".into());
+        } else {
+            landed.parent_matches = landed
+                .parents
+                .as_ref()
+                .zip(landed.base_before_merge.as_ref())
+                .map(|(parents, base)| parents.first() == Some(base));
+            landed.checked_parent_matches = landed
+                .parents
+                .as_ref()
+                .zip(landed.checked_base.as_ref())
+                .map(|(parents, base)| parents.first() == Some(base));
+        }
+    }
     fn notices(&self) -> Vec<String> {
         let mut notices = Vec::new();
-        if self.required_checks.count == 0 {
+        if self
+            .required_checks
+            .as_ref()
+            .is_some_and(|checks| checks.count == 0)
+        {
             notices.push("merged with no required GitHub checks".into());
         }
-        if self.observed && !self.required_checks.passed {
+        if self.observed
+            && self
+                .required_checks
+                .as_ref()
+                .is_some_and(|checks| !checks.passed)
+        {
             notices.push(
                 "observed someone else's merge with required GitHub checks not passed".into(),
             );
         }
-        if !self.landed.tree_matches {
+        if self.landed.tree_matches == Some(false) {
             notices.push(format!(
                 "landed tree differs from the checked head: landed {}, checked {}",
-                self.landed.tree, self.landed.head_tree
+                self.landed.tree.as_deref().unwrap_or_default(),
+                self.landed.head_tree.as_deref().unwrap_or_default()
             ));
         }
         if self.landed.parent_matches == Some(false) {
             notices.push(format!("landed first parent differs from the base read before merge: landed {:?}, base {:?}",
-                self.landed.parents.first(), self.landed.base_before_merge));
+                self.landed.parents.as_ref().and_then(|parents| parents.first()), self.landed.base_before_merge));
+        }
+        if !self.evidence_errors.is_empty() {
+            let reads: std::collections::BTreeSet<_> = self
+                .evidence_errors
+                .iter()
+                .map(|error| error.read.as_str())
+                .collect();
+            notices.push(format!(
+                "merge evidence incomplete: {}",
+                reads.into_iter().collect::<Vec<_>>().join(", ")
+            ));
         }
         notices
     }
