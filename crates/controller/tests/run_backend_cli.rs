@@ -6520,3 +6520,32 @@ fn x7_terminal_original_mismatch_retains_scratch_debt() {
     );
     assert!(debt.exists());
 }
+
+
+fn maintenance_backend(f: &Fixture) -> tl3_controller::adapters::run_backend::flux::Flux {
+    tl3_controller::adapters::run_backend::flux::Flux::new(f.options.clone()).unwrap()
+}
+
+fn maintenance_due(f: &Fixture) -> u64 {
+    maintenance_backend(f).next_cleanup_maintenance_ms().unwrap()
+        .expect("an attempted, unproven cleanup must schedule durable maintenance")
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timeout_recovers_with_positive_evidence() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("maintenance-timeout", 'd');
+    f.cleanup_control(&owned.execution, cleanup_limits().native_timeout_seconds + 5);
+    let frames = f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], false);
+    assert!(!cleanup_debts(&f).is_empty());
+    let due = maintenance_due(&f);
+    f.cleanup_control(&owned.execution, 0);
+    assert!(maintenance_backend(&f).cleanup_maintenance(due).unwrap().is_empty());
+    assert!(cleanup_debts(&f).is_empty());
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(maintenance_backend(&f).next_cleanup_maintenance_ms().unwrap().is_none());
+}

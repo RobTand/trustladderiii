@@ -574,6 +574,15 @@ pub struct Probe {
 
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
+    /// Retry failed cleanup and explicitly held, undispatched submissions once per due owner.
+    /// Returns every owner whose attempted cleanup still lacks positive stop evidence.
+    fn cleanup_maintenance(&self, _now_ms: u64) -> Result<Vec<Owner>> {
+        Ok(vec![])
+    }
+    fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
+
     fn begin_container_launch(
         &self,
         owner: &Owner,
