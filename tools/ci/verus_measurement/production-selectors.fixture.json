@@ -1,10 +1,35 @@
 {
-  "source_head": "08761952de809998429d2495380d3f1214ca8db4",
+  "source_head": "0ef0dcfedbda7c6811829a01362aebbe87b80b81",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "8452827ec327e37477c711a1a23956ac6302b71775f0542ac58121e82a56610f",
-  "groups": 511,
-  "obligations": 710,
+  "source_sha256": "be52e775017e246c6eaeb64aef43aef3033cb056a939769de8d35d538369a636",
+  "groups": 516,
+  "obligations": 715,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_step",
+      "selector": "kernel::facts_family_values#value_node_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_fail_fast",
+      "selector": "kernel::facts_family_values#value_fail_fast",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_event_rules",
+      "selector": "kernel::facts_family_values#value_event_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_distance",
+      "selector": "kernel::facts_family_values#ordinary_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_empty_merge_notices",
+      "selector": "kernel::facts_family_values#empty_merge_notices",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_facts_family_value_node_rows",
       "selector": "kernel::facts_family_values#value_node_rows",
