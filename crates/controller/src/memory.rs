@@ -1655,7 +1655,7 @@ impl crate::Controller {
                 class: class.into(),
             },
             effect: None,
-            post_key: Some(format!("incident:{id}")),
+            post_key: Some(crate::snapshot::world_key(snapshot, &format!("incident:{id}"))?),
             cause: Some(cause),
         };
         let mut commit = Commit::new(

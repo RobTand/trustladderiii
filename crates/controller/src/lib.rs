@@ -137,6 +137,10 @@ pub enum Error {
     InvalidKernelResult,
     #[error("invalid stored kernel world")]
     InvalidStoredKernelWorld,
+    #[error("stored world id is missing; fresh-init required")]
+    MissingWorldId,
+    #[error("stored world id must be 128 bits of lowercase hex; fresh-init required")]
+    InvalidWorldId,
     #[error("Hindsight returned HTTP {0}")]
     HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
@@ -423,6 +427,7 @@ impl Controller {
             );
             let mut commit = Commit::new("controller:init", json!({"initialize": 1}), &snapshot);
             commit.rows = snapshot::changes(&snapshot::Rows::new(), snapshot::encode(&world)?);
+            commit.rows.push(put("kernel", "world_id".into(), json!(hex::encode(clock.new_world_id()?))));
             for (index, repo) in bootstrap.repos.iter().enumerate() {
                 store.intern_repo(&repo.owner, &repo.name)?;
                 commit
@@ -431,9 +436,11 @@ impl Controller {
             }
             store.commit(&commit)?;
         } else {
+            snapshot::world_id(&snapshot)?;
             snapshot::decode(&snapshot)?;
         }
         let snapshot = store.load()?;
+        snapshot::world_id(&snapshot)?;
         let mut backfill = Commit::new(
             format!("steering:backfill:{}", snapshot.revision.get()),
             json!({"comment_backfill": true}),
@@ -2111,10 +2118,10 @@ impl Controller {
                 continue;
             }
             let (node, key) = match output {
-                Out::Effect { node, seq, .. } => (node, format!("effect:{}:{seq}", node.0)),
+                Out::Effect { node, seq, .. } => (node, snapshot::effect_key(snapshot, node, seq)?),
                 Out::Notice { node, .. } => (
                     node,
-                    format!("notice:{}:{index}", snapshot.revision.get() + 1),
+                    snapshot::world_key(snapshot, &format!("notice:{}:{index}", snapshot.revision.get() + 1))?,
                 ),
             };
             let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];

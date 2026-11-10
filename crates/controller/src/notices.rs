@@ -112,7 +112,7 @@ impl Controller {
         };
         crate::worker_inputs::append(&mut summary, resource_failure.as_ref());
         let mut post = delivery.clone();
-        post.key = format!("incident:{id}");
+        post.key = snapshot::world_key(snapshot, &format!("incident:{id}"))?;
         post.marker_key = None;
         post.epoch = snapshot.epoch.get();
         post.output = Output::Notice {
@@ -213,7 +213,7 @@ impl Controller {
             }
         }
         retry.marker_key = Some(retry.marker_key().into());
-        retry.key = format!("notice-retry:{}", snapshot.revision.get() + 1);
+        retry.key = snapshot::world_key(snapshot, &format!("notice-retry:{}", snapshot.revision.get() + 1))?;
         retry.epoch = snapshot.epoch.get();
         commit.rows.push(self.allowance_row(retry.clone()));
         commit.effects.push(retry.into_effect());
@@ -251,7 +251,7 @@ impl Controller {
             class: class.into(),
         };
         let mut post = delivery.clone();
-        post.key = format!("incident:{id}");
+        post.key = snapshot::world_key(snapshot, &format!("incident:{id}"))?;
         post.marker_key = None;
         post.epoch = snapshot.epoch.get();
         post.output = Output::Notice {

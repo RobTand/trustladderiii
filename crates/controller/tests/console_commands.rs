@@ -2,6 +2,21 @@
 //! effect of Rob's equivalent comment, refusals say why, and a crash between
 //! filing and applying loses nothing and applies once.
 
+
+mod world_identity {
+    struct WorldClock;
+    impl tl3_controller::clock::Clock for WorldClock {
+        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    }
+    pub(super) fn open(
+        store: tl3_store::Store,
+        adapters: tl3_controller::executor::Registry,
+        bootstrap: tl3_controller::Bootstrap,
+    ) -> tl3_controller::Result<tl3_controller::Controller> {
+        tl3_controller::Controller::open_with_clock(store, adapters, bootstrap, WorldClock)
+    }
+}
 #[path = "support/command.rs"]
 mod command;
 
@@ -77,6 +92,8 @@ fn open(settings: &tl3_config::Store, root: &Path, workers: &Workers, store: Sto
 struct Hours(Cell<u64>);
 
 impl tl3_controller::clock::Clock for Hours {
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+
     fn now(&self) -> std::time::SystemTime {
         self.0.set(self.0.get() + 3_600_000);
         std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.0.get())
@@ -110,7 +127,7 @@ fn open_clocked(
         )
         .unwrap()
     } else {
-        Controller::open(store, registry, bootstrap).unwrap()
+        world_identity::open(store, registry, bootstrap).unwrap()
     }
 }
 
@@ -559,7 +576,7 @@ fn clear_incident_matches_robs_comment() {
         let (key, _) = world
             .rows("allowances")
             .into_iter()
-            .find(|(key, _)| key.starts_with("effect:0:"))
+            .find(|(key, _)| key.starts_with("w00000000000000000000000000000000:effect:0:"))
             .expect("a worker run is in flight");
         world.workers.unreadable.set(true);
         for _ in 0..10 {

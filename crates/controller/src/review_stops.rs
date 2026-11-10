@@ -7,7 +7,7 @@
 
 use crate::executor::{CommentKind, Delivery, Output};
 use crate::question_findings::{self, Sources};
-use crate::{Controller, Repository, Result, put};
+use crate::{Controller, Repository, Result, put, snapshot};
 use serde_json::{Value, json};
 use tl3_kernel::{NodeId, ReviewStop, World};
 use tl3_store::{Commit, RowChange, Snapshot};
@@ -219,7 +219,7 @@ impl Controller {
                 crate::publication_failure::retained(
                     snapshot,
                     commit,
-                    &format!("effect:{index}:{}", effect.seq),
+                    &snapshot::effect_key(snapshot, NodeId(index as u64), effect.seq)?,
                 )?
             } else {
                 None

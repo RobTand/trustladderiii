@@ -1345,12 +1345,12 @@ impl Controller {
                 summary: summary.clone(),
                 signature: signature.clone(),
                 effect: Some(state.delivery.key.clone()),
-                post_key: Some(format!("incident:{id}")),
+                post_key: Some(snapshot::world_key(&snapshot, &format!("incident:{id}"))?),
                 cause: Some(Cause::of(signature.upstream, &signature.class)),
             }),
         ));
         let mut delivery = state.delivery.clone();
-        delivery.key = format!("incident:{id}");
+        delivery.key = snapshot::world_key(&snapshot, &format!("incident:{id}"))?;
         delivery.output = Out::Notice {
             node: delivery.node(),
             notice: tl3_kernel::Notice::Incident { needs_rob },
@@ -1437,7 +1437,7 @@ impl Controller {
             diagnostic.render()
         );
         let mut post = delivery.clone();
-        post.key = format!("incident:{id}");
+        post.key = snapshot::world_key(snapshot, &format!("incident:{id}"))?;
         post.output = Out::Notice {
             node: delivery.node(),
             notice: tl3_kernel::Notice::Incident { needs_rob: false },

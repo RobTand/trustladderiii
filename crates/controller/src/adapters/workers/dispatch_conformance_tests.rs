@@ -189,7 +189,7 @@ fn sampled(controller: &mut Controller, root: &Path) -> Evidence {
     else {
         return e;
     };
-    let key = format!("effect:0:{seq}");
+    let key = crate::snapshot::effect_key(&snapshot, NodeId(0), seq).unwrap();
     e.intent = controller
         .store
         .effect(&key)
@@ -364,7 +364,7 @@ fn schedule(
         {
             break;
         }
-        let key = format!("effect:0:{}", node.next_seq - 1);
+        let key = crate::snapshot::effect_key(&controller.snapshot().unwrap(), NodeId(0), node.next_seq - 1).unwrap();
         let mut expected = evidence();
         let mut store = Store::open(&settings).unwrap();
         let snapshot = store.load().unwrap();
@@ -673,7 +673,7 @@ fn quota_ending_is_a_model_quota_retry_across_recovery() {
         .unwrap();
     settle(&mut controller);
     let node = controller.world().unwrap().nodes[0];
-    let key = format!("effect:0:{}", node.next_seq - 1);
+    let key = crate::snapshot::effect_key(&controller.snapshot().unwrap(), NodeId(0), node.next_seq - 1).unwrap();
     let until = 1_794_088_801_362;
     controller
         .observe(

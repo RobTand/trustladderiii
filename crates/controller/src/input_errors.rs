@@ -156,7 +156,7 @@ impl InputFailure {
 pub(crate) fn recoverable(error: &Error) -> bool {
     !matches!(
         error,
-        Error::Store(_) | Error::Config(_) | Error::StoredJson(_) | Error::InvalidStoredKernelWorld
+        Error::Store(_) | Error::Config(_) | Error::StoredJson(_) | Error::InvalidStoredKernelWorld | Error::MissingWorldId | Error::InvalidWorldId
     )
 }
 
@@ -748,7 +748,7 @@ impl Controller {
             summary,
             signature,
             effect: None,
-            post_key: Some(format!("incident:{id}")),
+            post_key: Some(crate::snapshot::world_key(snapshot, &format!("incident:{id}"))?),
             // Reading or translating upstream input failed.
             cause: Some(
                 if matches!(

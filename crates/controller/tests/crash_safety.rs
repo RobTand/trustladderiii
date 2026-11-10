@@ -1,3 +1,18 @@
+
+mod world_identity {
+    struct WorldClock;
+    impl tl3_controller::clock::Clock for WorldClock {
+        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    }
+    pub(super) fn open(
+        store: tl3_store::Store,
+        adapters: tl3_controller::executor::Registry,
+        bootstrap: tl3_controller::Bootstrap,
+    ) -> tl3_controller::Result<tl3_controller::Controller> {
+        tl3_controller::Controller::open_with_clock(store, adapters, bootstrap, WorldClock)
+    }
+}
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 #[path = "crash/upstreams.rs"]
@@ -61,6 +76,8 @@ const SCENARIOS: &[&str] = &[
 #[derive(Clone)]
 struct FakeClock(Rc<Cell<u64>>);
 impl Clock for FakeClock {
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+
     fn now(&self) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(self.0.get())
     }
@@ -234,11 +251,11 @@ fn child(args: &[String]) {
                         tl3_controller::executor::Upstream::Workers,
                     ))
                     .records
-                    .contains_key("effect:0:0"))
+                    .contains_key("w00000000000000000000000000000000:effect:0:0"))
                     && snapshot
                         .pending_effects
                         .iter()
-                        .any(|e| e.key == "effect:0:0" && e.state == EffectState::Sent)
+                        .any(|e| e.key == "w00000000000000000000000000000000:effect:0:0" && e.state == EffectState::Sent)
             }
             "stop-run" => {
                 node.phase == Phase::Making && node.run.is_some() && node.effect.is_none()
@@ -458,12 +475,12 @@ fn emission_coverage(
                 Out::Effect {
                     node, seq, kind, ..
                 } => (
-                    format!("effect:{}:{seq}", node.0),
+                    format!("w00000000000000000000000000000000:effect:{}:{seq}", node.0),
                     node,
                     format!("{kind:?}"),
                 ),
                 Out::Notice { node, notice } => (
-                    format!("notice:{}:{index}", record.receipt.revision.get()),
+                    format!("w00000000000000000000000000000000:notice:{}:{index}", record.receipt.revision.get()),
                     node,
                     format!("Notice({notice:?})"),
                 ),
@@ -595,7 +612,7 @@ fn verify_cuts(
 }
 
 fn normalized(settings: &tl3_config::Store, root: &Path, scenario: &str) -> Value {
-    let mut controller = Controller::open(
+    let mut controller = world_identity::open(
         Store::open(settings).unwrap(),
         upstreams::registry(&root.join("upstreams"), scenario, 0),
         bootstrap(),

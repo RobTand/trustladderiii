@@ -117,7 +117,7 @@ impl<I: RecoveryIo> Recovery<I> {
             if decision::preflight(awaited, covered) == decision::Repair::Keep {
                 continue;
             }
-            let key = key(id, node);
+            let key = key(snapshot, id, node)?;
             let effect = key
                 .as_deref()
                 .map(|key| self.store.effect(key))

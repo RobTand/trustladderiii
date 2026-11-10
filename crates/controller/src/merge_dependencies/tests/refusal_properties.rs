@@ -320,6 +320,7 @@ fn refusal_is_a_noop_seeded() {
 
 struct FixedClock;
 impl crate::clock::Clock for FixedClock {
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
     fn now(&self) -> std::time::SystemTime {
         std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000)
     }
@@ -401,11 +402,11 @@ fn replay_bytes(c: &mut Controller, initial_revision: i64) -> Vec<u8> {
             Value::String(s) => {
                 if let Some(mapped) = ids.get(s) {
                     *s = mapped.clone();
-                } else if let Some(rest) = s.strip_prefix("notice:")
+                } else if let Some((prefix, rest)) = s.split_once(":notice:")
                     && let Some((number, suffix)) = rest.split_once(':')
                     && let Ok(number) = number.parse::<i64>()
                 {
-                    *s = format!("notice:{}:{suffix}", revision(number, excluded));
+                    *s = format!("{prefix}:notice:{}:{suffix}", revision(number, excluded));
                 } else if s.starts_with("cancel:")
                     && let Some((stem, number)) = s.rsplit_once(':')
                     && let Ok(number) = number.parse::<i64>()

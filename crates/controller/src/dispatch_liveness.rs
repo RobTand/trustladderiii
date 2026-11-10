@@ -46,13 +46,14 @@ fn acknowledged_wait(node: &Node) -> bool {
         && operation(node).is_some_and(|(_, kind)| node.operation_pending(kind, node.generation))
 }
 
-fn key(id: NodeId, node: &Node) -> Option<String> {
+fn key(snapshot: &Snapshot, id: NodeId, node: &Node) -> Result<Option<String>> {
     node.next_seq
         .checked_sub(1)
-        .map(|seq| format!("effect:{}:{seq}", id.0))
+        .map(|seq| snapshot::effect_key(snapshot, id, seq)).transpose()
 }
 
 struct Coverage<'a> {
+    snapshot: &'a Snapshot,
     watches: BTreeMap<&'a str, &'a Value>,
     allowances: BTreeSet<&'a str>,
 }
@@ -60,6 +61,7 @@ struct Coverage<'a> {
 impl<'a> Coverage<'a> {
     fn new(snapshot: &'a Snapshot, changes: &'a [RowChange]) -> Self {
         let mut coverage = Self {
+            snapshot,
             watches: snapshot
                 .rows
                 .iter()
@@ -94,7 +96,8 @@ impl<'a> Coverage<'a> {
     }
 
     fn tracked(&self, id: NodeId, node: &Node, epoch: i64) -> Result<bool> {
-        let Some(key) = key(id, node) else {
+        let snapshot = self.snapshot;
+        let Some(key) = key(snapshot, id, node)? else {
             return Ok(false);
         };
         self.watches
@@ -106,7 +109,7 @@ impl<'a> Coverage<'a> {
 
     fn covered(&self, id: NodeId, node: &Node, epoch: i64) -> Result<bool> {
         Ok(self.tracked(id, node, epoch)?
-            && key(id, node).is_some_and(|key| self.allowances.contains(key.as_str())))
+            && key(self.snapshot, id, node)?.is_some_and(|key| self.allowances.contains(key.as_str())))
     }
 }
 
@@ -448,7 +451,7 @@ impl Controller {
         });
         if let Some((seq, kind)) = current {
             e.class = delivery_class(kind);
-            let key = format!("effect:{}:{seq}", id.0);
+            let key = snapshot::effect_key(snapshot, id, seq)?;
             let matches = |d: &Delivery| {
                 d.key == key
                     && d.generation == node.generation
@@ -589,7 +592,7 @@ pub(crate) fn quota_held(
     id: NodeId,
     node: &Node,
 ) -> Result<bool> {
-    let Some(key) = key(id, node) else {
+    let Some(key) = key(snapshot, id, node)? else {
         return Ok(false);
     };
     let mut value = snapshot

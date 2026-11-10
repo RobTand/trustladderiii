@@ -867,3 +867,31 @@ fn reopened_world_keeps_durable_identity() {
     );
     assert_eq!(after.pending_effects, effects);
 }
+
+
+#[test]
+fn missing_or_malformed_world_identity_requires_fresh_init() {
+    let mut db = crate::git_tests::support::Database::start();
+    for missing in [true, false] {
+        let (repo, mut c, settings) = fresh_identity_world(&mut db, "world_identity_invalid");
+        let before = c.snapshot().unwrap();
+        let mut commit = tl3_store::Commit::new("damage-world-id", serde_json::json!({}), &before);
+        commit.rows.push(if missing {
+            tl3_store::RowChange::Delete { table: "kernel".into(), id: "world_id".into() }
+        } else {
+            crate::put("kernel", "world_id".into(), serde_json::json!("not-hex"))
+        });
+        c.store.commit(&commit).unwrap();
+        let bootstrap = c.bootstrap.clone();
+        drop(c);
+        let result = crate::Controller::open(
+            tl3_store::Store::open(&settings).unwrap(),
+            crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+            bootstrap,
+        );
+        let error = match result { Err(error) => error, Ok(_) => panic!("invalid identity was opened") };
+        assert!(matches!((&error, missing), (crate::Error::MissingWorldId, true) | (crate::Error::InvalidWorldId, false)));
+        assert!(!crate::input_errors::recoverable(&error));
+        assert!(error.to_string().contains("fresh-init required"));
+    }
+}

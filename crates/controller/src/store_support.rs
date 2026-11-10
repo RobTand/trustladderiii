@@ -107,3 +107,10 @@ pub fn ownership() -> MutexGuard<'static, crate::Ownership> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
 }
+
+
+pub(crate) struct WorldClock;
+impl crate::clock::Clock for WorldClock {
+    fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+}

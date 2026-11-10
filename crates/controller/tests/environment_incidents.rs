@@ -1,4 +1,19 @@
 //! Q50 environment blockers and Q51 release clears (Rob, 2026-11-01).
+
+mod world_identity {
+    struct WorldClock;
+    impl tl3_controller::clock::Clock for WorldClock {
+        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    }
+    pub(super) fn open(
+        store: tl3_store::Store,
+        adapters: tl3_controller::executor::Registry,
+        bootstrap: tl3_controller::Bootstrap,
+    ) -> tl3_controller::Result<tl3_controller::Controller> {
+        tl3_controller::Controller::open_with_clock(store, adapters, bootstrap, WorldClock)
+    }
+}
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -101,7 +116,7 @@ fn open_registry(
     registry: tl3_controller::executor::Registry,
     release: Option<&str>,
 ) -> Controller {
-    let mut c = Controller::open(
+    let mut c = world_identity::open(
         Store::open(settings).unwrap(),
         registry,
         Bootstrap {
@@ -395,7 +410,7 @@ fn new_release_clears_a_tl3_side_look_incident_that_holds_an_effect() {
         .unwrap()
         .rows
         .into_iter()
-        .filter(|r| r.table == "allowances" && r.id.starts_with("effect:0:"))
+        .filter(|r| r.table == "allowances" && r.id.starts_with("w00000000000000000000000000000000:effect:0:"))
         .max_by_key(|r| r.id.rsplit(':').next().unwrap().parse::<u64>().unwrap())
         .unwrap()
         .id;

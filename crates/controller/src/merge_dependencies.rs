@@ -989,10 +989,11 @@ mod tests {
         for number in [42, 2761, 2772, 2779] {
             crate::adapters::github::set_fake_issue(&repo.root.path().join("fakes"), &serde_json::from_value(json!({"number":number,"title":"Prerequisite","body":null,"state":"open","updated_at":"2026-11-03T23:00:00Z"})).unwrap());
         }
-        let controller = Controller::open(
+        let controller = Controller::open_with_clock(
             tl3_store::Store::open(&config.store).unwrap(),
             crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
             bootstrap,
+            crate::store_support::WorldClock,
         )
         .unwrap();
         (repo, controller, repository, config.store)

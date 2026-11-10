@@ -1,3 +1,18 @@
+
+mod world_identity {
+    struct WorldClock;
+    impl tl3_controller::clock::Clock for WorldClock {
+        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    }
+    pub(super) fn open(
+        store: tl3_store::Store,
+        adapters: tl3_controller::executor::Registry,
+        bootstrap: tl3_controller::Bootstrap,
+    ) -> tl3_controller::Result<tl3_controller::Controller> {
+        tl3_controller::Controller::open_with_clock(store, adapters, bootstrap, WorldClock)
+    }
+}
 #[path = "support/ownership.rs"]
 mod startup_ownership;
 use tl3_controller::executor::Output as Out;
@@ -32,6 +47,8 @@ impl FakeClock {
     }
 }
 impl Clock for FakeClock {
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+
     fn now(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(self.0.get())
     }
@@ -215,7 +232,7 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
     assert!(!node.incident_needs_rob);
     let id = incident(&mut c);
     let message = c
-        .effect(&format!("notice:{}", id.replace('.', ":")))
+        .effect(&format!("w00000000000000000000000000000000:notice:{}", id.replace('.', ":")))
         .unwrap()
         .unwrap();
     assert_eq!(message.payload["repository"]["name"], "tl3");
@@ -800,7 +817,7 @@ fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
     }
     let id = incident(&mut c);
     let snapshot = c.snapshot().unwrap();
-    let message = c.effect(&format!("incident:{id}")).unwrap().unwrap();
+    let message = c.effect(&format!("w00000000000000000000000000000000:incident:{id}")).unwrap().unwrap();
     assert_incident_request(&message.payload);
     assert!(
         snapshot
@@ -1014,7 +1031,7 @@ fn look_adapter_errors_survive(settings: &tl3_config::Store, resume: bool) {
 }
 fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
-    let mut c = Controller::open(
+    let mut c = world_identity::open(
         Store::open(settings).unwrap(),
         adapters::simulation(root.path()).unwrap(),
         bootstrap(),
@@ -1059,7 +1076,7 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
                 .checkout(&fixture.delivery(EffectKind::PrepareWorktree, 1)),
         },
     );
-    let mut c = Controller::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    let mut c = world_identity::open(Store::open(settings).unwrap(), registry, boot).unwrap();
     c.intake(LabelledIssue {
         delivery: "dirty-worktree".into(),
         owner: "RobTand".into(),

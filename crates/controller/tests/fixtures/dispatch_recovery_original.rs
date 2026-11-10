@@ -44,7 +44,7 @@ impl<I: RecoveryIo> Reference<I> {
             if !acknowledged_wait(node) || coverage.covered(id, node, snapshot.epoch.get())? {
                 continue;
             }
-            let key = key(id, node);
+            let key = key(snapshot, id, node)?;
             let effect = key
                 .as_deref()
                 .map(|key| self.store.effect(key))
