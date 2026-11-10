@@ -551,9 +551,9 @@ fn same_regression_failure(test: &TestResult) -> bool {
         let base = phase_failures(base);
         let head = phase_failures(head);
         return !base.is_empty()
-            && base
-                .iter()
-                .all(|(_, _, exception, _)| !exception.is_empty() && exception.chars().count() < 200)
+            && base.iter().all(|(_, _, exception, _)| {
+                !exception.is_empty() && exception.chars().count() < 200
+            })
             && base == head;
     };
     let requested = test.test.as_str();
