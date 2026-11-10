@@ -851,7 +851,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 (match command {
                     Command::Answer { question, answer } => handler_safety::answer_pair(
                         old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int],
-                        id > old(w).nodes@[node.0 as int].last_cmd, question, answer,
+                        id >= old(w).nodes@[node.0 as int].last_cmd, question, answer,
                         final(w).dependencies@, node),
                     _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
                 })
