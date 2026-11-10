@@ -2159,7 +2159,7 @@ fn invalid_step_result_retains_input_world_and_effects() {
     })).unwrap();
     let before = c.snapshot().unwrap();
     let world = json!(c.world().unwrap());
-    let effects = json!(before.pending_effects);
+    let effects = format!("{:?}", before.pending_effects);
     let row = before.rows.iter().find(|r| r.table == "inbox").unwrap();
     // The readiness probe precedes the command's real step.
     c.invalid_result_injection.set(Some(1));
@@ -2168,7 +2168,7 @@ fn invalid_step_result_retains_input_world_and_effects() {
     assert!(!accepted, "a checker-rejected step result must refuse its input");
     let after = c.snapshot().unwrap();
     assert_eq!(json!(c.world().unwrap()), world, "old world must remain durable");
-    assert_eq!(json!(after.pending_effects), effects, "no effects from the bad step");
+    assert_eq!(format!("{:?}", after.pending_effects), effects, "no effects from the bad step");
     assert!(after.rows.iter().any(|r| r.table == row.table && r.id == row.id && r.value == row.value));
     let incidents: Vec<_> = after.rows.iter().filter(|r| r.table == "incidents").collect();
     assert_eq!(incidents.len(), 1);
