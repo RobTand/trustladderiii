@@ -23,6 +23,7 @@ pub(super) fn stop(w: &mut World, Ghost(k): Ghost<int>)
     proof {
         // Integration (CONTRACTS.md v2.35): the v2.7 Stop rows are behind the opaque command_frame_rows.
         command_frames_reveal::command_frame_rows_reveal(before.nodes@[1], w.nodes@[1], 1, Command::Stop);
+        command_frames_reveal::r24_stop(before.nodes@[1], w.nodes@[1], 1);
         liveness_bounds::event_accepts(before, *w, 1);
         reveal(small);
         liveness_bounds::context_frame(before, *w, 1, k, 2);

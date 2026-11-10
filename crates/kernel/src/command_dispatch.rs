@@ -192,17 +192,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         }),
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
-    // E11.1 REQ R24: a fresh Stop of a live item.
-    (command is Stop && id > old(w).nodes@[i as int].last_cmd && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping))
-        ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
-            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
-            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
-            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
-            && (match old(w).nodes@[i as int].effect {
-                None => final(w).nodes@[i as int].effect.is_none(),
-                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
-                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
-            }),
+    // E11.1 / R24 (v2.45, rule 1): R24's rows are inside command_frame_rows; carrier = command_frames_reveal::r24_stop.
     // E2 framing (v2.35, form rule 2, owner apply): the v2.7 Stop counter/credit/generation rows, E11.1b,
     // E2.N4a and E2.N4b behind one opaque predicate; consumers use command_frames_reveal. E2.N4c stays off
     // (FALSE AS FROZEN, v2.34).
