@@ -78,7 +78,7 @@ fn reviewer_reports_findings_from_different_rules_in_order() {
                 "head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "diff":"+def unrelated(): return 42\n", "checks":[],
                 "standing_rules":[{"id":"request-scope","description":"Request goals only."}]},
-            "reply": {"verdict":"changes", "head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "reply": {"verdict":"changes",
                 "blocking_findings":[
                     {"problem":"Unknown goal", "evidence":"goal", "citation":{"kind":"goal","id":"missing"}},
                     {"problem":"Outside scope", "evidence":"no quote", "citation":{"kind":"standing_rule","id":"request-scope"}}
