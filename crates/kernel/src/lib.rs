@@ -2399,6 +2399,27 @@ mod transition_composition;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/internal_safety.rs"]
 mod internal_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_domain.rs"]
+mod liveness_gate_domain;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_steps.rs"]
+mod liveness_gate_steps;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_visit.rs"]
+mod liveness_gate_visit;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_release.rs"]
+mod liveness_gate_release;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_grant.rs"]
+mod liveness_gate_grant;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_teardown.rs"]
+mod liveness_gate_teardown;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_trace.rs"]
+mod liveness_gate_trace;
 
 #[cfg(verus_keep_ghost)]
 verus! {
