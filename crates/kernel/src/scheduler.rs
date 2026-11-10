@@ -160,7 +160,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
         ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && current_item(old(w).nodes@[i as int]).is_none())
     ==> result && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == 0
-        && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase == Phase::Closed(o), _ => true }),
+        && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase != Phase::Closed(o), _ => true }),
         ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && current_item(old(w).nodes@[i as int]).is_some())
     ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
         && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
