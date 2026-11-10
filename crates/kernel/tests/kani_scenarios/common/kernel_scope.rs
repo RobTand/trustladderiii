@@ -2136,7 +2136,7 @@ spec fn settle_chain(before: World, after: World) -> bool {
 /// Read scheduling predicates at the same branches as the local transition.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy)]
-struct AdvanceContext {
+pub struct AdvanceContext {
     node: usize,
     admit: bool,
     pool: bool,
