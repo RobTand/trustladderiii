@@ -9,7 +9,10 @@ fn c6_default_pytest_configuration_is_protected() {
     let paths = tl3_config::Planning::default().protected_paths;
     for name in ["pytest.toml", ".pytest.toml"] {
         assert!(paths.contains(&name.to_string()), "missing root {name}");
-        assert!(paths.contains(&format!("**/{name}")), "missing nested {name}");
+        assert!(
+            paths.contains(&format!("**/{name}")),
+            "missing nested {name}"
+        );
     }
 }
 
