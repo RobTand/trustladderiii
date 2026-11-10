@@ -2159,7 +2159,7 @@ fn invalid_step_result_retains_input_world_and_effects() {
     })).unwrap();
     let before = c.snapshot().unwrap();
     let world = json!(c.world().unwrap());
-    let effects = format!("{:?}", before.pending_effects);
+    let effects = before.pending_effects.clone();
     let row = before.rows.iter().find(|r| r.table == "inbox").unwrap();
     // The readiness probe precedes the command's real step.
     c.invalid_result_injection.set(Some(1));
@@ -2168,7 +2168,7 @@ fn invalid_step_result_retains_input_world_and_effects() {
     assert!(!accepted, "a checker-rejected step result must refuse its input");
     let after = c.snapshot().unwrap();
     assert_eq!(json!(c.world().unwrap()), world, "old world must remain durable");
-    assert_eq!(format!("{:?}", after.pending_effects), effects, "no effects from the bad step");
+    assert_eq!(after.pending_effects, effects, "no effects from the bad step");
     assert!(after.rows.iter().any(|r| r.table == row.table && r.id == row.id && r.value == row.value));
     let incidents: Vec<_> = after.rows.iter().filter(|r| r.table == "incidents").collect();
     assert_eq!(incidents.len(), 1);
@@ -2198,7 +2198,7 @@ fn invalid_stored_world_is_fatal_and_retains_inbox() {
     assert_eq!(error.to_string(), "invalid stored kernel world");
     let result = c.drive_once();
     let after = c.snapshot().unwrap();
-    assert_eq!(json!(after.rows), json!(before.rows), "fatal stored state must delete no inbox rows");
+    assert_eq!(after.rows, before.rows, "fatal stored state must delete no inbox rows");
     assert!(result.is_err(), "a running controller must stop on a bad stored world");
     assert!(!crate::input_errors::recoverable(&error), "invalid stored kernel worlds must never be recoverable input errors");
 }

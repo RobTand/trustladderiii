@@ -833,7 +833,7 @@ fn reopened_world_keeps_durable_identity() {
     let id = before.rows.iter().find(|r| r.table == "kernel" && r.id == "world_id")
         .expect("initialization must durably store a world id").value.clone();
     assert!(id.as_str().is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())));
-    let effects = format!("{:?}", before.pending_effects);
+    let effects = before.pending_effects.clone();
     let bootstrap = c.bootstrap.clone();
     drop(c);
     let mut reopened = crate::Controller::open(
@@ -843,5 +843,5 @@ fn reopened_world_keeps_durable_identity() {
     ).unwrap();
     let after = reopened.snapshot().unwrap();
     assert_eq!(after.rows.iter().find(|r| r.table == "kernel" && r.id == "world_id").unwrap().value, id);
-    assert_eq!(format!("{:?}", after.pending_effects), effects);
+    assert_eq!(after.pending_effects, effects);
 }
