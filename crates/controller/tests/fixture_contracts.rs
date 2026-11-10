@@ -672,17 +672,28 @@ fn workers_forward_cleanup_maintenance_hooks() {
     for real in [false, true] {
         let calls = Calls::default();
         let mut workers = Workers::new(
-            real.then(|| Box::new(Spy { name: "real", calls: calls.clone() }) as Box<dyn Executor>),
-            Spy { name: "fake", calls: calls.clone() },
+            real.then(|| {
+                Box::new(Spy {
+                    name: "real",
+                    calls: calls.clone(),
+                }) as Box<dyn Executor>
+            }),
+            Spy {
+                name: "fake",
+                calls: calls.clone(),
+            },
             if real { vec![Role::Make] } else { vec![] },
             |_, _| {},
         );
         assert!(workers.cleanup_maintenance(123).is_err());
         assert!(workers.next_cleanup_maintenance_ms().is_err());
         let selected = if real { "real" } else { "fake" };
-        assert_eq!(*calls.lock().unwrap(), vec![
-            (selected, "cleanup_maintenance", "123".into()),
-            (selected, "next_cleanup_maintenance_ms", String::new()),
-        ]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                (selected, "cleanup_maintenance", "123".into()),
+                (selected, "next_cleanup_maintenance_ms", String::new()),
+            ]
+        );
     }
 }

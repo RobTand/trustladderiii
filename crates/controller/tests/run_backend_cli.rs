@@ -6792,12 +6792,32 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
     f.cleanup_facts(&owned, true);
     let backend = maintenance_backend(&f);
     let failures = backend.cleanup_maintenance(due).unwrap();
-    assert!(!failures.is_empty(), "corrupt owner must be reported for an incident");
-    assert!(cleanup_debts(&f).is_empty(), "healthy owner must still be maintained");
+    assert!(
+        !failures.is_empty(),
+        "corrupt owner must be reported for an incident"
+    );
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "healthy owner must still be maintained"
+    );
     assert!(!f.state().cleanup_evidence.is_empty());
-    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due), "bad owner must back off instead of keeping the timer overdue");
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due),
+        "bad owner must back off instead of keeping the timer overdue"
+    );
     let errors = f.options.journal_root.join("maintenance-errors");
-    assert!(errors.read_dir().unwrap().next().is_some(), "owner errors must survive restart");
+    assert!(
+        errors.read_dir().unwrap().next().is_some(),
+        "owner errors must survive restart"
+    );
     let restarted = maintenance_backend(&f);
-    assert!(restarted.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due));
+    assert!(
+        restarted
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due)
+    );
 }

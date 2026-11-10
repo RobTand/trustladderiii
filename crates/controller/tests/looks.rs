@@ -1842,7 +1842,9 @@ fn main() {
     if std::env::args().any(|arg| arg == "--cleanup-maintenance") {
         let mut db = support::Database::start();
         cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
-        cleanup_maintenance_adapter_errors_do_not_block_looks(&db.create("cleanup_maintenance_errors"));
+        cleanup_maintenance_adapter_errors_do_not_block_looks(
+            &db.create("cleanup_maintenance_errors"),
+        );
         db.stop();
         return;
     }
@@ -3073,8 +3075,12 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
 fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::Store) {
     struct Broken;
     impl Executor for Broken {
-        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> { unreachable!() }
-        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> { unreachable!() }
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
         fn cleanup_maintenance(&mut self, _: u64) -> tl3_controller::Result<Vec<String>> {
             Err(tl3_controller::Error::Invalid("broken maintenance adapter"))
         }
@@ -3084,8 +3090,12 @@ fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::
     }
     struct Healthy(Rc<Cell<u32>>);
     impl Executor for Healthy {
-        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> { unreachable!() }
-        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> { unreachable!() }
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
         fn cleanup_maintenance(&mut self, _: u64) -> tl3_controller::Result<Vec<String>> {
             self.0.set(self.0.get() + 1);
             Ok(vec![])
@@ -3096,12 +3106,34 @@ fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::PrismaBuild, Broken);
     registry.register(Upstream::Worktrees, Healthy(calls.clone()));
-    let mut c = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), FakeClock::new()).unwrap();
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
     // A timer error alone must be durable and must supply a future retry.
-    assert!(c.next_look_in().unwrap().is_some_and(|delay| delay > Duration::ZERO));
-    for _ in 0..3 { c.look_now().unwrap(); }
-    assert_eq!(calls.get(), 3, "a failed adapter must not prevent later adapters");
-    assert!(c.next_look_in().unwrap().is_some_and(|delay| delay > Duration::ZERO));
+    assert!(
+        c.next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
+    for _ in 0..3 {
+        c.look_now().unwrap();
+    }
+    assert_eq!(
+        calls.get(),
+        3,
+        "a failed adapter must not prevent later adapters"
+    );
+    assert!(
+        c.next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
     let snapshot = c.snapshot().unwrap();
-    assert!(snapshot.rows.iter().any(|row| row.table == "incidents" && row.value["open"] == true && row.value["signature"]["class"] == "runtime_cleanup"));
+    assert!(snapshot.rows.iter().any(|row| row.table == "incidents"
+        && row.value["open"] == true
+        && row.value["signature"]["class"] == "runtime_cleanup"));
 }

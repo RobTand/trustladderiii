@@ -572,6 +572,8 @@ impl Controller {
     /// One timer for the earliest outstanding allowance, including outage probes.
     pub fn next_look_in(&mut self) -> Result<Option<Duration>> {
         let now = self.now_ms();
+        let maintenance = self.adapters.next_cleanup_maintenance_ms(now);
+        self.record_cleanup_maintenance(self.adapters.cleanup_maintenance_errors())?;
         let snapshot = self.store.load()?;
         // Same-second priority rereads share the timer (Q39).
         let reread = crate::priority::next_reread_ms(&snapshot)?;
@@ -585,21 +587,30 @@ impl Controller {
             .filter_map(|s| s.due_ms)
             .chain(reread)
             .chain(crate::memory::next_probe_ms(&snapshot)?)
-            .chain(self.adapters.next_cleanup_maintenance_ms()?)
+            .chain(maintenance)
             .min()
             .map(|due| Duration::from_millis(due.saturating_sub(now))))
     }
 
     fn look_cleanup_maintenance(&mut self) -> Result<()> {
         let now = self.now_ms();
-        let pending = self.adapters.cleanup_maintenance(now)?;
+        let pending = self.adapters.cleanup_maintenance(now);
+        self.record_cleanup_maintenance(pending)
+    }
+
+    fn record_cleanup_maintenance(
+        &mut self,
+        pending: crate::executor::CleanupMaintenance,
+    ) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
             format!("cleanup-maintenance:{}", snapshot.revision.get()),
             json!({"cleanup_maintenance":true}),
             &snapshot,
         );
-        for (upstream, owners) in pending {
+        for (upstream, report) in pending {
+            let error = report.as_ref().err().cloned();
+            let owners = report.unwrap_or_else(|_| vec!["adapter-maintenance".into()]);
             let outstanding: std::collections::BTreeSet<_> = owners
                 .iter()
                 .map(|owner| {
@@ -616,6 +627,7 @@ impl Controller {
                 if incident.signature.upstream == upstream
                     && incident.signature.class == "runtime_cleanup"
                     && incident.open
+                    && error.is_none()
                     && !outstanding.contains(&incident.id)
                 {
                     incident.open = false;
@@ -636,9 +648,14 @@ impl Controller {
                     open: true,
                     needs_rob: false,
                     blocking: false,
-                    summary: format!(
-                        "Runtime cleanup for {owner} remains unproven. Dispatch stays held; bounded cleanup will retry in 300 seconds."
-                    ),
+                    summary: match &error {
+                        Some(error) => format!(
+                            "Maintenance for {upstream:?} failed: {error}. Other Looks continue; retry in 300 seconds."
+                        ),
+                        None => format!(
+                            "Runtime maintenance for {owner} needs attention. Cleanup debt remains until positive stop evidence; inspect the durable maintenance-errors journal for failed cleanup or held dispatch."
+                        ),
+                    },
                     signature: IncidentSignature {
                         upstream,
                         class: "runtime_cleanup".into()
@@ -676,7 +693,9 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
-        self.look_cleanup_maintenance()?;
+        if let Err(error) = self.look_cleanup_maintenance() {
+            eprintln!("cannot persist cleanup maintenance incidents: {error}");
+        }
         self.look_memory_probe(force, key)?;
         self.retry_input_incident_posts()?;
         let mut snapshot = self.store.load()?;

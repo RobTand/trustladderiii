@@ -188,6 +188,41 @@ impl Shared {
         }
         Ok(jobs)
     }
+    fn maintenance_jobs(&self, now: u64) -> Result<(Vec<Job>, Vec<String>)> {
+        let mut jobs = Vec::new();
+        let mut failed = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            if !path.extension().is_some_and(|extension| extension == "job") {
+                continue;
+            }
+            let key = path
+                .file_stem()
+                .and_then(|key| key.to_str())
+                .unwrap_or("invalid-name");
+            let result = self
+                .load(key)
+                .and_then(|job| job.ok_or(Error::Invalid("check journal disappeared")));
+            match result {
+                Ok(job) => {
+                    durable::clear_maintenance_failure(&self.root, key).map_err(adapter_error)?;
+                    jobs.push(job);
+                }
+                Err(error) => {
+                    durable::maintenance_failure(
+                        &self.root,
+                        key,
+                        &error.to_string(),
+                        now.saturating_add(300_000),
+                    )
+                    .map_err(adapter_error)?;
+                    failed.push(format!("check-journal:{key}"));
+                }
+            }
+        }
+        Ok((jobs, failed))
+    }
+
     fn fence(&self, incoming: i64) -> Result<()> {
         let path = self.root.join("epoch.fence");
         let accepted: i64 = match fs::symlink_metadata(&path) {
@@ -365,8 +400,19 @@ impl Adapter {
             options,
             root: root.to_owned(),
         });
-        let recovered = shared
-            .transaction(|| Ok(shared.jobs()?.into_iter().map(|job| job.owner()).collect()))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let recovered = shared.transaction(|| {
+            Ok(shared
+                .maintenance_jobs(now)?
+                .0
+                .into_iter()
+                .map(|job| job.owner())
+                .collect())
+        })?;
         let finishing = shared.clone();
         let progressing = shared.clone();
         let (handle, source) = backend_watch::Source::new(
@@ -412,28 +458,65 @@ impl Adapter {
 }
 impl Executor for Adapter {
     fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
-        self.shared
+        let backend = self
+            .shared
             .backend
             .next_cleanup_maintenance_ms()
-            .map_err(adapter_error)
+            .map_err(adapter_error)?;
+        let failures = durable::maintenance_failures(&self.shared.root).map_err(adapter_error)?;
+        Ok(backend
+            .into_iter()
+            .chain(failures.iter().map(|failure| failure.next_attempt_ms))
+            .min())
     }
 
     fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<Vec<String>> {
-        let pending = self
+        let was_due = self
             .shared
             .backend
-            .cleanup_maintenance(now_ms)
-            .map_err(adapter_error)?;
-        // Reattach after cleanup or held submission recovery for terminal and
-        // scratch reconciliation. No shared journal lock covers backend I/O.
-        let jobs = self.shared.transaction(|| self.shared.jobs())?;
-        for job in jobs.into_iter().filter(|job| job.terminal.is_none()) {
-            self.handle.watch(job.owner())?;
+            .next_cleanup_maintenance_ms()
+            .is_ok_and(|due| due.is_some_and(|due| due <= now_ms));
+        let mut pending = match self.shared.backend.cleanup_maintenance(now_ms) {
+            Ok(owners) => {
+                durable::clear_maintenance_failure(&self.shared.root, "backend")
+                    .map_err(adapter_error)?;
+                owners
+                    .into_iter()
+                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                    .collect::<Vec<_>>()
+            }
+            Err(error) => {
+                durable::maintenance_failure(
+                    &self.shared.root,
+                    "backend",
+                    &error.to_string(),
+                    now_ms.saturating_add(300_000),
+                )
+                .map_err(adapter_error)?;
+                vec!["backend-maintenance".into()]
+            }
+        };
+        // A malformed check record cannot block maintenance of other owners.
+        let (jobs, errors) = self
+            .shared
+            .transaction(|| self.shared.maintenance_jobs(now_ms))?;
+        pending.extend(errors);
+        if was_due {
+            for job in jobs.into_iter().filter(|job| job.terminal.is_none()) {
+                if let Err(error) = self.handle.watch(job.owner()) {
+                    let key = format!("watch:{}", job.intent.correlation);
+                    durable::maintenance_failure(
+                        &self.shared.root,
+                        &key,
+                        &error.to_string(),
+                        now_ms.saturating_add(300_000),
+                    )
+                    .map_err(adapter_error)?;
+                    pending.push(key);
+                }
+            }
         }
-        Ok(pending
-            .into_iter()
-            .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
-            .collect())
+        Ok(pending)
     }
 
     fn watch_wait(
