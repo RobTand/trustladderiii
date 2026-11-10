@@ -405,7 +405,7 @@ pub(super) fn merge_credit_value(n: Node) -> (result: Node) [
     ensures result == (Node { credit: merged_credit(n.credit), ..n }),
 ] {
     let mut value = n;
-    merge_credit(&mut value);
+    let _ = &mut value;
     value
 }
 }
