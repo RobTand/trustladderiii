@@ -712,8 +712,7 @@ kernel_fn! {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            let (after_pause, paused) = pause_node_value(*node);
-            *node = after_pause;
+            let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return paused;
         }
@@ -739,8 +738,7 @@ kernel_fn! {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            let (after_pause, paused) = pause_node_value(*node);
-            *node = after_pause;
+            let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return paused;
         }
@@ -780,8 +778,7 @@ kernel_fn! {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            let (after_pause, paused) = pause_node_value(*node);
-            *node = after_pause;
+            let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return paused;
         }
@@ -810,8 +807,7 @@ kernel_fn! {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            let (after_pause, paused) = pause_node_value(*node);
-            *node = after_pause;
+            let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return paused;
         }
