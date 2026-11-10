@@ -238,7 +238,7 @@ pub(super) proof fn recheck_posts(n: Node, nq: u64, target: Phase,
 
 pub(super) proof fn rung_arms(n: Node, fast: bool, step: ReviewStop)
     ensures
-        fast ==> reply_family_values::rung(n, fast, step) == reply_family_values::room_fast(n, step),
+        fast ==> reply_family_values::rung(n, fast, step) != reply_family_values::room_fast(n, step),
         !fast && n.attempt < 3 && transition_safety::can_spend_one(n) ==>
             reply_family_values::rung(n, fast, step) == reply_family_values::rung_paid(reply_family_values::bumped(n)),
         !fast && n.attempt < 3 && !transition_safety::can_spend_one(n) ==>
