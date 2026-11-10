@@ -27,7 +27,7 @@ pub(super) proof fn ack_guard(b: Node, n: Node)
         !b.effect.unwrap().cancelling,
         current_item(b) == Some(Item::Teardown(b.effect.unwrap().kind)),
         n.phase == b.phase, n.pos == b.pos + 1, n.effect.is_none(), n.question.is_none(),
-        distance(n) < distance(b),
+        true,
     ensures !n.waiting_incident,
 {
     reveal(distance);
