@@ -443,6 +443,11 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::reply_family_values::work_made": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::work_checked": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::work_approved": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::rebase_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::rebase_ask": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::rung_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::rung_ask": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::rung_replan_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -795,6 +800,23 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_dispatch_work_made_v": ("kernel::work_replies#work_made_v", 1),
+            "reply_dispatch_work_checked_v": ("kernel::work_replies#work_checked_v", 1),
+            "reply_dispatch_work_approved_v": ("kernel::work_replies#work_approved_v", 1),
+            "reply_dispatch_rebase_paid_v": ("kernel::work_replies#rebase_paid_v", 1),
+            "reply_dispatch_rebase_ask_v": ("kernel::work_replies#rebase_ask_v", 1),
+            "reply_dispatch_rebase_head_v": ("kernel::work_replies#rebase_head_v", 1),
+            "reply_dispatch_review_restart_v": ("kernel::work_replies#review_restart_v", 1),
+            "reply_dispatch_pair_rows": ("kernel::reply_family_dispatch#pair_rows", 1),
+            "reply_dispatch_work_bounds": ("kernel::reply_family_dispatch#work_bounds", 1),
+            "reply_dispatch_work_progress": ("kernel::reply_family_dispatch#work_progress", 1),
+            "reply_dispatch_work_maker_rows": ("kernel::reply_family_dispatch#work_maker_rows", 1),
+            "reply_dispatch_work_checks_rows": ("kernel::reply_family_dispatch#work_checks_rows", 1),
+            "reply_dispatch_work_review_rows": ("kernel::reply_family_dispatch#work_review_rows", 1),
+            "reply_dispatch_rebase_rows": ("kernel::reply_family_dispatch#rebase_rows", 1),
+            "reply_dispatch_work_completion": ("kernel::reply_family_dispatch#work_completion", 1),
+            "reply_dispatch_work_value_posts": ("kernel::reply_family_dispatch#work_value_posts", 1),
+            "reply_dispatch_rebase_value_posts": ("kernel::reply_family_dispatch#rebase_value_posts", 1),
             "reply_family_room_bound": ("kernel::reply_family_posts#room_bound", 1),
             "reply_family_rebase_value_posts": ("kernel::reply_family_posts#rebase_value_posts", 1),
             "reply_family_recheck_free_arm": ("kernel::reply_family_posts#recheck_free_arm", 1),

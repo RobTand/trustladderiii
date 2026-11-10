@@ -84,6 +84,9 @@ mod reply_family_safety;
 #[path = "../verus/reply_family_posts.rs"]
 mod reply_family_posts;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_dispatch.rs"]
+mod reply_family_dispatch;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/reply_family_facts.rs"]
 mod reply_family_facts;
 #[cfg(verus_keep_ghost)]
