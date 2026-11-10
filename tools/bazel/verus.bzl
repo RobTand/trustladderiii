@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::command_frames::command_frame_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::command_frames::command_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::held_answer": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_held": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -771,6 +773,13 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "command_frames_command_frame_rows_intro": ("kernel::command_frames#command_frame_rows_intro", 1),
+            "command_frames_command_rows_intro": ("kernel::command_frames#command_rows_intro", 1),
+            "command_frames_reveal_command_frame_rows_reveal": ("kernel::command_frames_reveal#command_frame_rows_reveal", 1),
+            "command_frames_reveal_command_rows_project": ("kernel::command_frames_reveal#command_rows_project", 1),
+            "command_frame_producers_stop_frame_value": ("kernel::command_frame_producers#stop_frame_value", 1),
+            "command_frame_producers_cr_frame_value": ("kernel::command_frame_producers#cr_frame_value", 1),
+            "command_frame_producers_pause_frame_value": ("kernel::command_frame_producers#pause_frame_value", 1),
             "answer_rules_rules_incident": ("kernel::answer_rules#rules_incident", 1),
             "answer_rules_rules_after_last_cmd": ("kernel::answer_rules#rules_after_last_cmd", 1),
             "apply_command_safety_command_step_last_cmd": ("kernel::apply_command_safety#command_step_last_cmd", 1),
