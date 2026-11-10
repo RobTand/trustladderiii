@@ -120,7 +120,7 @@ pub(super) proof fn ci_fail_fast(n: Node, nq: u64, fast: bool, infra: bool, i: u
 }
 
 pub(super) proof fn ci_node_rows(n: Node, nq: u64, fast: bool, infra: bool, i: usize)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires node_headroom(n), true, nq < u64::MAX,
     ensures facts_family_values::node_rows(n,
         reply_family_values::finish(nq, ci_change(n, fast, infra)), fast, i,
         Fact::CiFailed { infra }),
