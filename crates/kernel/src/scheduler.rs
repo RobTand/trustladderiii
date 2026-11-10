@@ -342,6 +342,31 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && old(w).nodes@[older].ticket.is_some()
             && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
             ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
+        old(w).nodes@[i as int].holds
+            && !old(w).nodes@[i as int].paused
+            && (old(w).nodes@[i as int].phase == Phase::Making
+                || old(w).nodes@[i as int].phase == Phase::Rebasing)
+            ==> final(w).nodes@[i as int].holds,
+        ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && (match current_item(old(w).nodes@[i as int]) { Some(Item::Teardown(k)) => advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
+    ==> result && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
+        && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq
+        && final(w).nodes@[i as int].pool == (old(w).nodes@[i as int].pool && current_item(old(w).nodes@[i as int]) != Some(Item::Teardown(EffectKind::StopRun))),
+        ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && (match current_item(old(w).nodes@[i as int]) { Some(Item::Teardown(k)) => !advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
+    ==> result && final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == old(w).nodes@[i as int].next_seq
+        && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(final(w).nodes@[i as int].effect.unwrap().kind)) && !final(w).nodes@[i as int].effect.unwrap().cancelling
+        && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq + 1 && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
+        && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree,
+        ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && current_item(old(w).nodes@[i as int]) == Some(Item::Release))
+    ==> result && !final(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].effect.is_none()
+        && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && current_item(old(w).nodes@[i as int]).is_none())
+    ==> result && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == 0
+        && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase == Phase::Closed(o), _ => true }),
+        ((old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none()) && current_item(old(w).nodes@[i as int]).is_some())
+    ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
+        && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
+        && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
+        && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
     checking::accepted(*old(w)) ==> advance_family_post::step_rows(*old(w), *final(w), i as int),
     transition_safety::transition_safety(*old(w), *final(w),
         transition_safety::Transition::Advance { node: i, moved: result },
@@ -354,41 +379,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         && old(w).nodes@[i as int].ticket.is_some()
         && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity && oldest_waiter(*old(w), i as int)
         ==> result && final(w).nodes@[i as int].pool && final(w).nodes@[i as int].ticket.is_none(),
-    // E5.6 REQ R11 (v2.22, lead ruling, owner advance; advance G5-REST-PLAN.md section 3): a slot holder that is
-    // making its change or rebasing keeps the slot unless it is paused.
-    old(w).nodes@[i as int].holds
-        && !old(w).nodes@[i as int].paused
-        && (old(w).nodes@[i as int].phase == Phase::Making
-            || old(w).nodes@[i as int].phase == Phase::Rebasing)
-        ==> final(w).nodes@[i as int].holds,
-    // v2.48 (lead's premise sweep, STAGED pending lead ruling): E11.3 (a)-(d) and framing gain node_rules(old, b).
-    // E11.3 REQ R26 (a): a teardown step whose resource is already gone is skipped.
-    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && (match current_item(old(w).nodes@[i as int]) {
-        Some(Item::Teardown(k)) => advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
-        ==> result && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].effect.is_none()
-            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq
-            && final(w).nodes@[i as int].pool == (old(w).nodes@[i as int].pool && current_item(old(w).nodes@[i as int]) != Some(Item::Teardown(EffectKind::StopRun))),
-    // E11.3 REQ R26 (b): a teardown step whose resource is present issues one cleanup request.
-    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && (match current_item(old(w).nodes@[i as int]) {
-        Some(Item::Teardown(k)) => !advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
-        ==> result && final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == old(w).nodes@[i as int].next_seq
-            && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(final(w).nodes@[i as int].effect.unwrap().kind))
-            && !final(w).nodes@[i as int].effect.unwrap().cancelling && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq + 1
-            && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
-            && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree,
-    // E11.3 REQ R26 (c): the Release step gives up the slot.
-    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]) == Some(Item::Release))
-        ==> result && !final(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase
-            && final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
-    // E11.3 REQ R26 (d): with every teardown step done, the item closes with its outcome.
-    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]).is_none())
-        ==> result && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == 0
-            && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase == Phase::Closed(o), _ => true }),
-    // E11.3 framing (v2.7): every teardown or Release step keeps counters, question, credit, generation, ticket.
-    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]).is_some())
-        ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
-            && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
-            && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
     // E5.8 / G20 framing (v2.32, owner advance; TRUSTED-FROZEN): a new slot goes only to a Ready node with a
     // ticket. Node-level source PROVEN: ranks::advance_node ensures grant_facts (ranks.rs:1345).
     !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
