@@ -1,14 +1,14 @@
 {
-  "source_head": "56affc0fa0dbfb177ae70afb0be69dc3a8994604",
+  "source_head": "d56adc56a4145e4d1da92194a14322a612d61646",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "d0052681f6188c0a93e0edd4fcaa6a6c818c73c7fcbaee94ead044d319085e7f",
+  "source_sha256": "14801bcc6516770b86e2d11c0c9a6b05bbe7cc4d77e5b76f6af8160cd5554aa7",
   "groups": 849,
-  "obligations": 1055,
+  "obligations": 1057,
   "selections": [
     {
       "target": "//crates/kernel:verus_liveness_witness",
       "selector": "kernel::liveness_witness",
-      "expected": 2
+      "expected": 4
     },
     {
       "target": "//crates/kernel:verus_liveness_bounds_reserves",
