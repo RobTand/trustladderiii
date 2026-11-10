@@ -335,7 +335,7 @@ pub(super) fn run_failed_value(n: Node) -> (result: ReplyChange) [
     let mut note: Option<Notice> = None;
     node = failed_prefix(node);
     kernel_proof! { reply_family_posts::failed_arms(n); }
-    if node.run_failures >= 2 {
+    if node.run_failures >= 3 {
         return run_failed_incident(node);
     }
     run_failed_restart(node)
