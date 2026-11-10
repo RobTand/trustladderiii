@@ -439,7 +439,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident)),
         // E2.N4c (CONTRACTS.md v2.41; lead-approved v2.42).
         ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
-            ==> dependencies::prerequisites_delivered(*old(w), NodeId(i as u64)) || dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
+            ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_command_world = *w }
     on_answer(w, i, question, answer, out);
