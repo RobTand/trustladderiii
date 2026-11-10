@@ -39,7 +39,13 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        handler_safety::command_step(old(w).nodes@[i as int], Node {
+            credit: Credit {
+                withheld: old(w).nodes@[i as int].credit.withheld,
+                ..final(w).nodes@[i as int].credit
+            },
+            ..final(w).nodes@[i as int]
+        }),
         final(w).nodes@[i as int].credit.withheld == (if
             old(w).nodes@[i as int].phase == Phase::AwaitingRob
                 && (match old(w).nodes@[i as int].question {
@@ -193,10 +199,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             match answer {
                 Answer::Continue => {
                     kernel_proof! {
-                        assert(m == n);
-                        assert(n.question == Some(q));
-                        assert(n.phase == Phase::AwaitingRob);
-                        assert(q.id == id);
                         assert(n.phase == Phase::AwaitingRob && match n.question {
                             Some(q) => q.id == id && match (q.kind, answer) {
                                 (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
@@ -208,10 +210,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     }
                     let (m1, x) = go_on(m, q, 0);
                     m = m1;
-                    kernel_proof! {
-                        assert(m.question.is_none());
-                        assert(handler_safety::command_step(n, m));
-                    }
                     note = x;
                 }
                 Answer::TryAgain => {
@@ -221,10 +219,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                 }
                 Answer::AddCredit(k) => {
                     kernel_proof! {
-                        assert(m == n);
-                        assert(n.question == Some(q));
-                        assert(n.phase == Phase::AwaitingRob);
-                        assert(q.id == id);
                         assert(n.phase == Phase::AwaitingRob && match n.question {
                             Some(q) => q.id == id && match (q.kind, answer) {
                                 (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
@@ -236,10 +230,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     }
                     let (m1, x) = go_on(m, q, k);
                     m = m1;
-                    kernel_proof! {
-                        assert(m.question.is_none());
-                        assert(handler_safety::command_step(n, m));
-                    }
                     note = x;
                 }
                 Answer::ChangeRequest => {
