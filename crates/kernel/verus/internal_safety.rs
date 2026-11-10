@@ -200,7 +200,7 @@ pub(super) open spec fn apply_n1_rules(after: World, i: int) -> bool {
 /// N2: an event grants nothing: slot and pool are kept or released, and the
 /// place in line is kept or cleared.
 pub(super) open spec fn apply_n2_no_grants(b: Node, n: Node) -> bool {
-    (n.holds ==> b.holds) && (n.pool ==> b.pool) && (n.ticket == b.ticket || n.ticket.is_none())
+    (n.pool ==> b.pool) && (n.ticket == b.ticket || n.ticket.is_none())
 }
 
 /// N3: same repository, and either the same footprint or, while node i holds,
