@@ -771,8 +771,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
-            "apply_command_safety_held_answer_is": ("kernel::apply_command_safety#held_answer_is", 1),
-            "apply_command_safety_answer_mid_world": ("kernel::apply_command_safety#answer_mid_world", 1),
+            "apply_command_safety_answer_world_f": ("kernel::apply_command_safety#answer_world_f", 1),
             "apply_command_safety_answer_pair_last_cmd": ("kernel::apply_command_safety#answer_pair_last_cmd", 1),
             "apply_command_safety_held_withheld": ("kernel::apply_command_safety#held_withheld", 1),
             "apply_command_safety_answer_pair_row": ("kernel::apply_command_safety#answer_pair_row", 1),
@@ -808,7 +807,6 @@ def verus_proofs():
             "apply_command_safety_stop_world": ("kernel::apply_command_safety#stop_world", 1),
             "apply_command_safety_change_request_world": ("kernel::apply_command_safety#change_request_world", 1),
             "apply_command_safety_pause_world": ("kernel::apply_command_safety#pause_world", 1),
-            "answers_on_answer_exact": ("kernel::answers#on_answer_exact", 1),
             "apply_command_safety_last_cmd_shift": ("kernel::apply_command_safety#last_cmd_shift", 1),
             "apply_command_safety_pause_facts": ("kernel::apply_command_safety#pause_facts", 1),
             "apply_command_safety_nodes_rewrite_frame": ("kernel::apply_command_safety#nodes_rewrite_frame", 1),
