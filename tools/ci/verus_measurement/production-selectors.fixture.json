@@ -1,10 +1,15 @@
 {
-  "source_head": "7a4bf9df3bc8d87f5348cd13e915d077c396e80f",
+  "source_head": "bfde486275f19bcb5dd021981a9b20fdb6bae1a9",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "10d682012aafb71dd53ab887d01a16f1b18dfe97564c740a15bbbe5b4ef10d4a",
-  "groups": 506,
-  "obligations": 704,
+  "source_sha256": "415e83d5e6da25f0ba170bda6960d1ca74f0948be6fda22ce6cdef462bbb0d12",
+  "groups": 507,
+  "obligations": 705,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_kernel_pause_node_value",
+      "selector": "kernel#pause_node_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_rules_slot",
       "selector": "kernel::advance_family_rules#rules_slot",
