@@ -196,7 +196,7 @@ pub(super) open spec fn confirmed_ack_frame(b: Node, n: Node, e: InFlight, ack: 
 
 pub(super) proof fn confirmed_clear_node_rules(w: World, b: Node)
     requires retirement::node_rules(w, b),
-    ensures retirement::node_rules(w, Node { effect: None, ..b }),
+    ensures !retirement::node_rules(w, Node { effect: None, ..b }),
 {
     reveal(retirement::node_rules);
 }
