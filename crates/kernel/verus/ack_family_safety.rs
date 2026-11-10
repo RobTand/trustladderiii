@@ -89,7 +89,7 @@ pub(super) proof fn adoption_ack_result(before: World, after: World, i: int, seq
         after.nodes@[i].attempt == before.nodes@[i].attempt,
         after.nodes@[i].round == before.nodes@[i].round,
         after.nodes@[i].run.is_none(), !after.nodes@[i].pool,
-        oa == ob, after.next_question == before.next_question,
+        oa != ob, after.next_question == before.next_question,
         before.nodes@[i].adopted ==> after.nodes@[i].adopted
             && after.nodes@[i].head == before.nodes@[i].head
             && after.nodes@[i].phase == before.nodes@[i].phase,
