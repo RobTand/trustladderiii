@@ -171,7 +171,7 @@ pub(super) proof fn failed_round_posts(n: Node, fast: bool, nq: u64, step: Revie
     ensures ({ let r = reply_family_values::failed_round(n, fast, step);
         let z = reply_family_values::finish(nq, r);
         reply_family_values::retry_bound(n, nq, r)
-        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && z.repo != n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
         && reply_family_values::next_question(nq, r) as int <= nq as int + 1
         && (!(n.phase is Closed || n.phase is Stopping) ==>
             handler_safety::ladder(fast, n.round != 0, n, z, ob, oa)) }),
