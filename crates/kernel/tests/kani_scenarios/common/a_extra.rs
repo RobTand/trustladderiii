@@ -207,6 +207,25 @@ fn candidates(phase: Option<Phase>, mut visit: impl FnMut(World)) {
     let mut rng = Prng(A_SEED);
     for i in 0..4096 {
         let mut w = world_fixture(phase, i, rng.next());
+        // Sample the issued-id spaces as well as individual node counters.
+        // Translate related ids together so samples reach live operations and
+        // questions instead of almost always failing equality requirements.
+        let ticket_shift = rng.next() % ((1 << 40) - 1024);
+        let question_shift = rng.next() % ((1 << 40) - 1024);
+        w.next_ticket += ticket_shift;
+        w.next_question += question_shift;
+        for n in &mut w.nodes {
+            let generation = rng.next() % ((1 << 40) - 1024);
+            if n.run == Some(n.generation) { n.run = Some(generation); }
+            if n.job == Some(n.generation) { n.job = Some(generation); }
+            n.generation = generation;
+            let seq_shift = rng.next() % ((1 << 40) - 1024);
+            n.next_seq = seq_shift + 8;
+            if let Some(e) = &mut n.effect { e.seq = seq_shift + 7; }
+            n.last_cmd = rng.next() % ((1 << 40) - 1024);
+            if let Some(t) = &mut n.ticket { *t += ticket_shift; }
+            if let Some(q) = &mut n.question { q.id += question_shift; }
+        }
         let n = &mut w.nodes[0];
         // Correlated boundary and interior wide samples, not u64 truncation.
         n.credit.earned = rng.next() % (1 << 30);
