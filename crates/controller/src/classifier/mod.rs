@@ -31,16 +31,38 @@ fn classification_violations(c: Classification) -> Vec<&'static str> {
         || (c.kind == Kind::Answer && c.answer == Answer::ChangeRequest);
     [
         (!c.selected_matches, SelectedAnswer),
-        (change && c.has_applicable && !c.supersedes_present, MissingSupersedes),
+        (
+            change && c.has_applicable && !c.supersedes_present,
+            MissingSupersedes,
+        ),
         (!c.supersedes_applicable, InapplicableDecision),
-        (c.kind == Kind::Restart && !c.restartable, RestartUnavailable),
-        (c.closed && !matches!(c.kind, Kind::Restart | Kind::Complaint | Kind::Remark | Kind::Unsure), Closed),
+        (
+            c.kind == Kind::Restart && !c.restartable,
+            RestartUnavailable,
+        ),
+        (
+            c.closed
+                && !matches!(
+                    c.kind,
+                    Kind::Restart | Kind::Complaint | Kind::Remark | Kind::Unsure
+                ),
+            Closed,
+        ),
         (c.kind == Kind::Answer && !c.question_current, Question),
-        (c.kind == Kind::Answer && c.answer != Answer::Unclear && !c.answer_offered, UnofferedAnswer),
-        (c.kind == Kind::Answer && c.answer == Answer::AddCredit && !c.credit_integer, Credit),
+        (
+            c.kind == Kind::Answer && c.answer != Answer::Unclear && !c.answer_offered,
+            UnofferedAnswer,
+        ),
+        (
+            c.kind == Kind::Answer && c.answer == Answer::AddCredit && !c.credit_integer,
+            Credit,
+        ),
         (c.kind == Kind::Complaint && !c.closed, Complaint),
         (change && !c.text_nonblank, EmptyChange),
-    ].into_iter().filter_map(|(failed, rule)| failed.then(|| rule.message())).collect()
+    ]
+    .into_iter()
+    .filter_map(|(failed, rule)| failed.then(|| rule.message()))
+    .collect()
 }
 
 fn parse(inputs: &Value, reply: &Value) -> crate::Result<Classification> {
@@ -145,8 +167,12 @@ pub fn check_reply(role: Option<&str>) -> crate::Result<()> {
         return Ok(());
     }
     let result = match role {
-        Some("reviewer") => crate::reviewer::reply_violations(&request["inputs"], &request["reply"]),
-        Some("postmortem") => crate::postmortems::check_reply(&request["reply"]).map(|()| Vec::new()),
+        Some("reviewer") => {
+            crate::reviewer::reply_violations(&request["inputs"], &request["reply"])
+        }
+        Some("postmortem") => {
+            crate::postmortems::check_reply(&request["reply"]).map(|()| Vec::new())
+        }
         _ => reply_violations(&request["inputs"], &request["reply"]),
     };
     let violations = match result {
@@ -169,22 +195,47 @@ mod diagnostic_tests {
 
     #[test]
     fn all_diagnostics_preserve_the_authoritative_first_decision() {
-        for kind in [Kind::ChangeRequest, Kind::Answer, Kind::Restart, Kind::Complaint,
-                     Kind::Remark, Kind::Unsure, Kind::Stop, Kind::Pause, Kind::Resume, Kind::Reconcile] {
-            for answer in [Answer::ChangeRequest, Answer::AddCredit, Answer::Unclear, Answer::Other] {
+        for kind in [
+            Kind::ChangeRequest,
+            Kind::Answer,
+            Kind::Restart,
+            Kind::Complaint,
+            Kind::Remark,
+            Kind::Unsure,
+            Kind::Stop,
+            Kind::Pause,
+            Kind::Resume,
+            Kind::Reconcile,
+        ] {
+            for answer in [
+                Answer::ChangeRequest,
+                Answer::AddCredit,
+                Answer::Unclear,
+                Answer::Other,
+            ] {
                 for bits in 0u16..4096 {
                     let flag = |bit| bits & (1 << bit) != 0;
                     let c = Classification {
-                        kind, answer,
-                        reconcile_issue: flag(0), assessments_exact: flag(1),
-                        selected_matches: flag(2), has_applicable: flag(3),
-                        supersedes_present: flag(4), supersedes_applicable: flag(5),
-                        closed: flag(6), restartable: flag(7),
-                        question_current: flag(8), answer_offered: flag(9),
-                        credit_integer: flag(10), text_nonblank: flag(11),
+                        kind,
+                        answer,
+                        reconcile_issue: flag(0),
+                        assessments_exact: flag(1),
+                        selected_matches: flag(2),
+                        has_applicable: flag(3),
+                        supersedes_present: flag(4),
+                        supersedes_applicable: flag(5),
+                        closed: flag(6),
+                        restartable: flag(7),
+                        question_current: flag(8),
+                        answer_offered: flag(9),
+                        credit_integer: flag(10),
+                        text_nonblank: flag(11),
                     };
-                    assert_eq!(classification_violations(c).first().copied(),
-                               decide(c).err().map(|v| v.message()), "{c:?}");
+                    assert_eq!(
+                        classification_violations(c).first().copied(),
+                        decide(c).err().map(|v| v.message()),
+                        "{c:?}"
+                    );
                 }
             }
         }

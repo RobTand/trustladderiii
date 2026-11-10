@@ -1,8 +1,8 @@
 //! One reviewer validator for controller acceptance and worker repair.
 mod decision;
+use crate::adapters::workers::review::{BlockingFinding, CitationKind};
 use decision::{Finding, Verdict};
 use serde_json::Value;
-use crate::adapters::workers::review::{BlockingFinding, CitationKind};
 
 /// Validate the wire boundary before reducing evidence to finite reviewer facts.
 pub fn validate(inputs: &Value, reply: &Value) -> crate::Result<()> {
@@ -20,8 +20,9 @@ pub(crate) fn reply_violations(inputs: &Value, reply: &Value) -> crate::Result<V
         violations.push(rule.message());
     }
     if verdict != Verdict::OutOfRoom {
-        let findings: Vec<BlockingFinding> = serde_json::from_value(reply["blocking_findings"].clone())
-            .map_err(|_| crate::Error::Invalid("invalid worker reply field"))?;
+        let findings: Vec<BlockingFinding> =
+            serde_json::from_value(reply["blocking_findings"].clone())
+                .map_err(|_| crate::Error::Invalid("invalid worker reply field"))?;
         for finding in &findings {
             if let Err(rule) = decision::finding(finding_facts(inputs, finding)) {
                 violations.push(rule.message());
@@ -68,19 +69,19 @@ fn finding_facts(inputs: &Value, finding: &BlockingFinding) -> Finding {
         .as_str()
         .unwrap_or_default();
     let entries = match finding.citation.kind {
-            CitationKind::Goal => &inputs["goals"],
-            CitationKind::StandingRule => &inputs["standing_rules"],
-        };
-        let scope = finding.citation.kind == CitationKind::StandingRule
-            && finding.citation.id == crate::adapters::workers::review::SCOPE_RULE;
+        CitationKind::Goal => &inputs["goals"],
+        CitationKind::StandingRule => &inputs["standing_rules"],
+    };
+    let scope = finding.citation.kind == CitationKind::StandingRule
+        && finding.citation.id == crate::adapters::workers::review::SCOPE_RULE;
     Finding {
-            known: entries.as_array().is_some_and(|entries| {
-                entries
-                    .iter()
-                    .any(|entry| entry["id"] == finding.citation.id)
-            }),
-            scope,
-            quoted: !scope || quotes_changed_hunk(diff, &finding.evidence),
+        known: entries.as_array().is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry["id"] == finding.citation.id)
+        }),
+        scope,
+        quoted: !scope || quotes_changed_hunk(diff, &finding.evidence),
     }
 }
 
