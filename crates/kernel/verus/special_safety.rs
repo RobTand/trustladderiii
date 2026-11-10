@@ -362,7 +362,6 @@ mod gate_assembly {
             w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
             i < w.nodes@.len(), i <= u64::MAX as int,
             advance_pre(w.nodes@[i as int], w.next_ticket, out.len),
-            w.nodes@[i as int].phase is Ready,
         ensures checking::accepted(result.0),
             // R29 includes older waiters blocked on another holder.
             (w.nodes@[i as int].phase is Ready && w.nodes@[i as int].ticket.is_some()
