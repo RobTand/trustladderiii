@@ -330,7 +330,7 @@ pub(super) proof fn ingest_disagrees_bounds(n: Node, nq: u64)
 pub(super) proof fn ingest_protected_bounds(n: Node, nq: u64)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::ProtectedPaths)),
-        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::ProtectedPaths)).footprint == n.footprint,
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::ProtectedPaths)).footprint != n.footprint,
 {
     reveal(reply_family_values::ingest); reveal(retirement::stopped);
 }
