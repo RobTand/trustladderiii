@@ -235,4 +235,47 @@ pub(super) proof fn recheck_posts(n: Node, nq: u64, target: Phase,
     reveal_with_fuel(phase_rank, 3);
     reveal(continuation_rank);
 }
+
+pub(super) proof fn rung_arms(n: Node, fast: bool, step: ReviewStop)
+    requires node_headroom(n),
+    ensures
+        (fast) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::room_fast(n, step) && reply_family_values::callable(reply_family_values::room_fast(n, step))),
+        (!fast && n.attempt < 3 && transition_safety::can_spend_one(n)) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::rung_paid(Node { attempt: (n.attempt + 1) as u8, review_restarted: false, round: 0, ..n }) && reply_family_values::callable(reply_family_values::rung_paid(Node { attempt: (n.attempt + 1) as u8, review_restarted: false, round: 0, ..n }))),
+        (!fast && n.attempt < 3 && !transition_safety::can_spend_one(n)) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::rung_ask(Node { attempt: (n.attempt + 1) as u8, review_restarted: false, round: 0, ..n }) && reply_family_values::callable(reply_family_values::rung_ask(Node { attempt: (n.attempt + 1) as u8, review_restarted: false, round: 0, ..n }))),
+        (!fast && n.attempt >= 3 && !n.replanned && transition_safety::can_spend_one(n)) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::rung_replan_paid(Node { replanned: true, holds: false, ..n }) && reply_family_values::callable(reply_family_values::rung_replan_paid(Node { replanned: true, holds: false, ..n }))),
+        (!fast && n.attempt >= 3 && !n.replanned && !transition_safety::can_spend_one(n)) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::rung_replan_ask(Node { replanned: true, holds: false, ..n }) && reply_family_values::callable(reply_family_values::rung_replan_ask(Node { replanned: true, holds: false, ..n }))),
+        (!fast && n.attempt >= 3 && n.replanned) ==> (reply_family_values::rung(n, fast, step) == reply_family_values::rung_cant_meet(n) && reply_family_values::callable(reply_family_values::rung_cant_meet(n))),
+{
+    reveal(reply_family_values::rung);
+}
+
+pub(super) proof fn failed_round_arms(n: Node, fast: bool, step: ReviewStop)
+    requires node_headroom(n),
+    ensures
+        (n.round == 0) ==> (reply_family_values::failed_round(n, fast, step) == reply_family_values::round_free(n) && reply_family_values::callable(reply_family_values::round_free(n))),
+        (n.round != 0) ==> (reply_family_values::failed_round(n, fast, step) == reply_family_values::rung(n, fast, step) && reply_family_values::callable(reply_family_values::rung(n, fast, step))),
+{
+    reveal(reply_family_values::failed_round);
+    rung_arms(n, fast, step);
+}
+
+pub(super) proof fn plan_retry_arms(n: Node, fast: bool, cant_meet: bool)
+    requires node_headroom(n),
+    ensures
+        (fast && cant_meet) ==> (reply_family_values::plan_retry(n, fast, cant_meet) == reply_family_values::room_fast(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }, ReviewStop::PlanCantMeet) && reply_family_values::callable(reply_family_values::room_fast(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }, ReviewStop::PlanCantMeet))),
+        (!(fast && cant_meet) && n.plan_retries == 0) ==> (reply_family_values::plan_retry(n, fast, cant_meet) == reply_family_values::plan_again(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }) && reply_family_values::callable(reply_family_values::plan_again(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }))),
+        (!(fast && cant_meet) && n.plan_retries != 0) ==> (reply_family_values::plan_retry(n, fast, cant_meet) == reply_family_values::plan_ask(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }) && reply_family_values::callable(reply_family_values::plan_ask(Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n }))),
+{
+    reveal(reply_family_values::plan_retry);
+}
+
+pub(super) proof fn recheck_arms(n: Node, target: Phase)
+    requires node_headroom(n),
+    ensures
+        ((Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }).rechecks <= FREE_RECHECKS) ==> (reply_family_values::recheck(n, target) == reply_family_values::recheck_free(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target) && reply_family_values::callable(reply_family_values::recheck_free(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target))),
+        (!((Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }).rechecks <= FREE_RECHECKS) && transition_safety::can_spend_one(n)) ==> (reply_family_values::recheck(n, target) == reply_family_values::recheck_paid(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target) && reply_family_values::callable(reply_family_values::recheck_paid(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target))),
+        (!((Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }).rechecks <= FREE_RECHECKS) && !transition_safety::can_spend_one(n)) ==> (reply_family_values::recheck(n, target) == reply_family_values::recheck_ask(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target) && reply_family_values::callable(reply_family_values::recheck_ask(Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n }, target))),
+{
+    reveal(reply_family_values::recheck);
+}
 }

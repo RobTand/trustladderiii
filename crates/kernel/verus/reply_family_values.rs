@@ -131,60 +131,33 @@ pub(super) open spec fn failed_change(n: Node) -> ReplyChange {
 
 #[verifier::opaque]
 pub(super) open spec fn plan_retry(n: Node, fast: bool, cant_meet: bool) -> ReplyChange {
-    let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 }
-        else { 255u8 }, ..n };
-    if fast && cant_meet { ReplyChange::Done { node: retirement::stopped(
-        Node { review_stop: Some(ReviewStop::PlanCantMeet), ..m }, Outcome::Stopped), note: None } }
-    else if m.plan_retries < 2 { ReplyChange::Done {
-        node: retirement::phased(m, m.phase), note: None } }
-    else { ReplyChange::Ask { node: Node { plan_retries: 0, ..m },
-        kind: QKind::CantMeet,
-        cont: Cont::Planning { must_split: matches!(n.phase, Phase::Planning { must_split: true }) },
-        cost: 1 } }
+    let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n };
+    if fast && cant_meet { room_fast(m, ReviewStop::PlanCantMeet) }
+    else if m.plan_retries < 2 { plan_again(m) } else { plan_ask(m) }
 }
 
 #[verifier::opaque]
 pub(super) open spec fn rung(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
-    if fast { ReplyChange::Done { node: retirement::stopped(
-        Node { review_stop: Some(step), ..n }, Outcome::Stopped), note: None } }
+    if fast { room_fast(n, step) }
     else if n.attempt < 3 {
         let m = Node { attempt: (n.attempt + 1) as u8, review_restarted: false, round: 0, ..n };
-        if transition_safety::can_spend_one(n) { ReplyChange::Done {
-            node: retirement::phased(spent(m), if m.holds { Phase::Making }
-                else { Phase::Ready(Resume::Making) }), note: None } }
-        else { ReplyChange::Ask { node: m, kind: QKind::OutOfCredit,
-            cont: Cont::Ready(Resume::Making), cost: 1 } }
+        if transition_safety::can_spend_one(n) { rung_paid(m) } else { rung_ask(m) }
     } else if !n.replanned {
         let m = Node { replanned: true, holds: false, ..n };
-        if transition_safety::can_spend_one(n) { ReplyChange::Done {
-            node: retirement::phased(Node { plan_retries: 0, ..spent(m) },
-                Phase::Planning { must_split: false }), note: Some(Notice::Note(NoteKind::Replanned)) } }
-        else { ReplyChange::Ask { node: m, kind: QKind::OutOfCredit,
-            cont: Cont::Planning { must_split: false }, cost: 1 } }
-    } else { ReplyChange::Ask { node: n, kind: QKind::CantMeet,
-        cont: Cont::Ready(Resume::Making), cost: 1 } }
+        if transition_safety::can_spend_one(n) { rung_replan_paid(m) } else { rung_replan_ask(m) }
+    } else { rung_cant_meet(n) }
 }
 
 #[verifier::opaque]
 pub(super) open spec fn failed_round(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
-    if n.round == 0 { ReplyChange::Done {
-        node: retirement::phased(Node { round: 1, ..n }, if n.holds { Phase::Making }
-            else { Phase::Ready(Resume::Making) }), note: None } }
-    else { rung(n, fast, step) }
+    if n.round == 0 { round_free(n) } else { rung(n, fast, step) }
 }
 
 #[verifier::opaque]
 pub(super) open spec fn recheck(n: Node, target: Phase) -> ReplyChange {
-    let m = Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 }
-        else { 255u8 }, ..n };
-    let free = m.rechecks <= FREE_RECHECKS;
-    if free || transition_safety::can_spend_one(m) {
-        let paid = if free { m } else { spent(m) };
-        ReplyChange::Done { node: retirement::phased(Node {
-            holds: holding(target) && paid.holds, ..paid }, target), note: None }
-    } else { ReplyChange::Ask { node: m, kind: QKind::OutOfCredit,
-        cont: Cont::Ready(if target == Phase::Reviewing { Resume::Reviewing }
-            else { Resume::Checking }), cost: 1 } }
+    let m = Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 } else { 255u8 }, ..n };
+    if m.rechecks <= FREE_RECHECKS { recheck_free(m, target) }
+    else if transition_safety::can_spend_one(m) { recheck_paid(m, target) } else { recheck_ask(m, target) }
 }
 
 pub(super) open spec fn plan(n: Node, fast: bool, reply: Reply) -> ReplyChange {
@@ -290,5 +263,37 @@ pub(super) open spec fn files(n: Node, fast: bool, files: Footprint, fits: bool,
         ReplyChange::Ask { node: files_ask(n, union), kind: QKind::OutOfCredit,
             cont: Cont::Ready(Resume::Making), cost: 1 }
     } else { room(n, fast, ReviewStop::MakerNeedsFiles) }
+}
+
+pub(super) open spec fn rung_paid(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(spent(n), if n.holds { Phase::Making } else { Phase::Ready(Resume::Making) }), note: None }
+}
+pub(super) open spec fn rung_ask(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
+}
+pub(super) open spec fn rung_replan_paid(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { plan_retries: 0, ..spent(n) }, Phase::Planning { must_split: false }), note: Some(Notice::Note(NoteKind::Replanned)) }
+}
+pub(super) open spec fn rung_replan_ask(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: false }, cost: 1 }
+}
+pub(super) open spec fn rung_cant_meet(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::CantMeet, cont: Cont::Ready(Resume::Making), cost: 1 }
+}
+pub(super) open spec fn round_free(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { round: 1, ..n }, if n.holds { Phase::Making } else { Phase::Ready(Resume::Making) }), note: None }
+}
+pub(super) open spec fn plan_again(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(n, n.phase), note: None }
+}
+pub(super) open spec fn plan_ask(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: Node { plan_retries: 0, ..n }, kind: QKind::CantMeet, cont: Cont::Planning { must_split: matches!(n.phase, Phase::Planning { must_split: true }) }, cost: 1 }
+}
+pub(super) open spec fn recheck_free(n: Node, target: Phase) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { holds: holding(target) && n.holds, ..n }, target), note: None }
+}
+pub(super) open spec fn recheck_paid(n: Node, target: Phase) -> ReplyChange { recheck_free(spent(n), target) }
+pub(super) open spec fn recheck_ask(n: Node, target: Phase) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(if target == Phase::Reviewing { Resume::Reviewing } else { Resume::Checking }), cost: 1 }
 }
 }

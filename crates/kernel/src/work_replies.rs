@@ -77,6 +77,14 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         match reply {
             Reply::MakerOutOfRoom => reply_family_posts::room_posts(before_work_node@, c.fast,
                 c.next_question, ReviewStop::MakerOutOfRoom, i as int, before_work_out@, *out),
+            Reply::MakerCantMeet => reply_family_posts::rung_posts(before_work_node@, c.fast,
+                c.next_question, ReviewStop::MakerCantMeet, i as int, before_work_out@, *out),
+            Reply::ChecksDone { pass, in_footprint, .. } => if !(pass && in_footprint) {
+                reply_family_posts::failed_round_posts(before_work_node@, c.fast,
+                    c.next_question, ReviewStop::ChecksFailed, i as int, before_work_out@, *out)
+            },
+            Reply::ChangesRequested => reply_family_posts::failed_round_posts(before_work_node@, c.fast,
+                c.next_question, ReviewStop::ChangesRequested, i as int, before_work_out@, *out),
             Reply::ReviewerOutOfRoom => if before_work_node@.review_restarted {
                 reply_family_posts::room_posts(before_work_node@, c.fast, c.next_question,
                     ReviewStop::ReviewerOutOfRoom, i as int, before_work_out@, *out)
