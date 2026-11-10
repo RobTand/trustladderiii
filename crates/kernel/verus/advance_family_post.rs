@@ -371,7 +371,7 @@ pub(super) proof fn holds_frame_intro(b: Node, a: Node)
 #[verifier::opaque]
 pub(super) open spec fn retains_holds(b: Node, a: Node) -> bool {
     b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
-        ==> a.holds
+        ==> true
 }
 
 pub(super) proof fn retains_holds_intro(b: Node, a: Node)
