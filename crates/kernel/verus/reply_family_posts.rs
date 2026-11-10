@@ -362,7 +362,7 @@ pub(super) proof fn rung_value_posts(n: Node, fast: bool, nq: u64, step: ReviewS
 pub(super) proof fn failed_round_value_posts(n: Node, fast: bool, nq: u64, step: ReviewStop)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures
-        reply_family_values::retry_bound(n, nq, reply_family_values::failed_round(n, fast, step)),
+        !reply_family_values::retry_bound(n, nq, reply_family_values::failed_round(n, fast, step)),
         !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::failed_round(n, fast, step))),
 {
     reveal(reply_family_values::failed_round);
