@@ -2163,8 +2163,8 @@ fn x7_flux_uri_repository_opt_in_is_validated() {
 fn x7_cpu_pool_demand_accepts_every_in_cap_cpu_count() {
     for cpus in [2, 3, 4, 8, 10] {
         let mut document = flux_document();
-        document["github"]["repos"][0]["test_demand"] =
-            toml::toml! { cpus = 2 mem_gb = 2 }.into();
+        document["github"]["repos"][0].as_table_mut().unwrap().insert("test_demand".into(),
+            toml::toml! { cpus = 2 mem_gb = 2 }.into());
         document["github"]["repos"][0]["test_demand"]["cpus"] = cpus.into();
         Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     }
@@ -2176,7 +2176,7 @@ fn x7_legacy_flux_config_fields_are_refused() {
         let mut document = flux_document();
         document["flux"].as_table_mut().unwrap().remove("instance_generation");
         document["flux"].as_table_mut().unwrap().remove("uri");
-        document["flux"][field] = "obsolete".into();
+        document["flux"].as_table_mut().unwrap().insert(field.into(), "obsolete".into());
         let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
         assert!(error.contains(field), "{error}");
     }
