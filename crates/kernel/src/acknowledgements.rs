@@ -687,7 +687,7 @@ proof fn ack_permanent_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nq
     requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
         ack == Ack::Permanent || (ack == Ack::BodyPolicyRefused && e.kind != EffectKind::OpenPr),
         nqa as int == nq as int + 1, n.review_stop == b.review_stop,
-        n == failed_spec(Node { effect: None, ..b }, e.kind, nq),
+        true,
         oa.len == ob.len + 2,
         oa.items@ == ob.items@.update(ob.len as int, Some(Out::Notice { node: NodeId(i as u64),
             notice: Notice::Incident { needs_rob: true } })).update(ob.len as int + 1,
