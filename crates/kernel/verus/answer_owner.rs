@@ -153,4 +153,16 @@ pub(super) proof fn n4c_after_last_cmd(before: World, b: Node, a: Node, n: Node,
     }
 }
 
+
+/// on_answer's withhold step over answer_write's function-form value (on_answer fix 11-10).
+pub(super) proof fn owner_rows_withheld_after(a: Node, table: Seq<Dependency>, node: NodeId, b: Node, id: u64,
+    answer: Answer)
+    ensures owner_rows(a, b, id, answer) ==> owner_rows(handler_safety::unwithheld(a, dependencies::withheld_after(
+        a.credit.withheld, a.planning_started, a.phase, a.credit.ready, table, node)), b, id, answer),
+{
+    reveal(dependencies::withheld_after);
+    owner_rows_unwithheld(a, dependencies::withheld_after(a.credit.withheld, a.planning_started, a.phase,
+        a.credit.ready, table, node), b, id, answer);
+}
+
 }

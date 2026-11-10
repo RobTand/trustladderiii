@@ -71,4 +71,14 @@ pub(super) proof fn rules_after_last_cmd(before: World, after: World, a: Node, n
     }
 }
 
+
+/// A node outside the early phases is unchanged by the dependency withhold (on_answer fix 11-10).
+pub(super) proof fn withhold_same_node(a: Node, table: Seq<Dependency>, node: NodeId)
+    ensures !dependencies::early(a.phase) ==> handler_safety::unwithheld(a, dependencies::withheld_after(
+        a.credit.withheld, a.planning_started, a.phase, a.credit.ready, table, node)) == a,
+{
+    reveal(dependencies::withheld_after);
+    handler_safety::unwithheld_same(a);
+}
+
 }

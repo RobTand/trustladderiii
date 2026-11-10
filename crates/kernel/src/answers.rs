@@ -86,21 +86,18 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
     kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
-    w.nodes[i] = n1;
-    if withhold {
-        kernel_snapshot! { continued = w.nodes@[i as int] }
-        w.withhold_dependency_credit(i);
-        kernel_proof! {
-            let n = w.nodes@[i as int];
-            assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
-            answer_owner::owner_rows_unwithheld(continued@, n.credit.withheld, before_answer@, id, answer);
-            handler_safety::distance_withheld(continued@, n.credit.withheld);
-            if continued@ == before_answer@ {
+    answer_write(w, i, n1, withhold);
+    kernel_proof! {
+        if withhold {
+            answer_owner::owner_rows_withheld_after(n1, w.dependencies@, NodeId(i as u64), before_answer@, id, answer);
+            handler_safety::distance_withheld(n1, dependencies::withheld_after(n1.credit.withheld, n1.planning_started, n1.phase, n1.credit.ready,
+                w.dependencies@, NodeId(i as u64)));
+            if n1 == before_answer@ {
                 // An answer that left the node AwaitingRob withholds nothing.
-                handler_safety::unwithheld_same(before_answer@);
+                answer_rules::withhold_same_node(n1, w.dependencies@, NodeId(i as u64));
             }
             if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
-                apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
+                apply_command_safety::withhold_rules_v(n1, nq1, w.dependencies@, NodeId(i as u64));
             }
         }
     }
@@ -118,6 +115,41 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
             handler_safety::rules_world_update(before_answer_rules@, *w,
                 before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// on_answer's node write and dependency withhold (on_answer fix 11-10, R-inline of on_answer's two
+/// statements): the written node in function form, so on_answer's query holds no whole-Node literal.
+fn answer_write(w: &mut World, i: usize, n: Node, withhold: bool) -> (result: ()) [
+    requires i < old(w).nodes@.len(),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int] == (if withhold {
+            handler_safety::unwithheld(n, dependencies::withheld_after(n.credit.withheld, n.planning_started,
+                n.phase, n.credit.ready, old(w).dependencies@, NodeId(i as u64)))
+        } else { n }),
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+] {
+    w.nodes[i] = n;
+    if withhold {
+        kernel_snapshot! { mid = *w }
+        w.withhold_dependency_credit(i);
+        kernel_proof! {
+            dependencies::prerequisite_definition(mid@, NodeId(i as u64));
+            reveal(dependencies::withheld_after);
+            assert(w.nodes@[i as int] == handler_safety::unwithheld(n, dependencies::withheld_after(
+                n.credit.withheld, n.planning_started, n.phase, n.credit.ready, mid@.dependencies@,
+                NodeId(i as u64))));
         }
     }
 }
