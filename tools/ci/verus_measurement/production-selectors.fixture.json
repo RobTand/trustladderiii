@@ -1,10 +1,70 @@
 {
-  "source_head": "5bb590f55ea5be52fa0b0163a6382a65aa976179",
+  "source_head": "d2b2bf7f2c35dab4867816254cafbb422a0d991f",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "cede4b2714a9416c38e30a8d3e3dd9b2158aa7beec15cd0b3e6312e260d2efd4",
-  "groups": 903,
-  "obligations": 1111,
+  "source_sha256": "90f0262bc25f11100c0956084866a1fbd1bb71fd6945168be2f22c0c3f88feb7",
+  "groups": 915,
+  "obligations": 1123,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_advance_family_post_teardown_missing_rows",
+      "selector": "kernel::advance_family_post#teardown_missing_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_missing_value",
+      "selector": "kernel::ranks#advance_teardown_missing_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_emitting_value",
+      "selector": "kernel::ranks#advance_teardown_emitting_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_release_value",
+      "selector": "kernel::ranks#advance_release_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_teardown_rows_intro",
+      "selector": "kernel::advance_family_post#teardown_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_stopping_items",
+      "selector": "kernel::advance_family_post#stopping_items",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_teardown_rows_reveal",
+      "selector": "kernel::advance_family_rules#teardown_rows_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_rebase_value",
+      "selector": "kernel::ranks#advance_rebase_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_finished_value",
+      "selector": "kernel::ranks#advance_finished_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_retains_holds_intro",
+      "selector": "kernel::advance_family_post#retains_holds_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_holds_phase_items",
+      "selector": "kernel::advance_family_post#holds_phase_items",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_retained_holds",
+      "selector": "kernel::advance_family_rules#retained_holds",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_stop_frames_stop_owner_waiting_frame",
       "selector": "kernel::stop_frames#stop_owner_waiting_frame",
