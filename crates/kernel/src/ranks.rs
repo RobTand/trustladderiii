@@ -884,7 +884,7 @@ kernel_fn! {
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return true;
         }
-        if context.slot {
+        if true {
             let m = &mut *node;
             m.holds = true;
             set_phase(m, r.phase());
