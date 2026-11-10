@@ -1,10 +1,20 @@
 {
-  "source_head": "050eeb40265a98192a5e61acabc2a7e75c324ac6",
+  "source_head": "ddd9395d13d47ace4e83ad1fd268fc0c1ba1e4ae",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "2e39717383822ab06ee3ef2ddae93bc53c4c0d3c03062cbd0bce22ecbed337b0",
-  "groups": 643,
-  "obligations": 841,
+  "source_sha256": "7cc04bdf1c43e3e64e00ab093b691e2960c4b5139db1852c24e6a319f4c3a47e",
+  "groups": 645,
+  "obligations": 843,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_post_intro",
+      "selector": "kernel::answer_owner#owner_post_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_post_unwithheld",
+      "selector": "kernel::answer_owner#owner_post_unwithheld",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_answer_owner_owner_rows_unwithheld",
       "selector": "kernel::answer_owner#owner_rows_unwithheld",
