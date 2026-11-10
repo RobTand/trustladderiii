@@ -147,7 +147,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 || old(w).nodes@[i as int].phase == Phase::Rebasing)
             ==> final(w).nodes@[i as int].holds,
         !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
-            ==> old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some(),
+            ==> !(old(w).nodes@[i as int].phase is Ready) && old(w).nodes@[i as int].ticket.is_some(),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
