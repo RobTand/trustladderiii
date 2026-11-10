@@ -3,7 +3,7 @@ use super::*;
 
 kernel_fn! {
 /// Acknowledgement rows / #771: stale delivery keys stutter; retries stay bounded.
-pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
+pub(super) fn on_ack_proved(w: &mut World, i: usize, seq: u64, ack: Ack,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -70,6 +70,68 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         }
         Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
     }
+}
+}
+
+kernel_fn! {
+/// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E11.2: TRUSTED export wrapper. Contract =
+/// `on_ack_proved`'s, verbatim, plus the frozen E11 clauses (direct). The body only calls the
+/// verified `on_ack_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
+#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && (match old(w).nodes@[i as int].effect {
+                Some(e) => e.seq == seq && (if e.kind == EffectKind::Enqueue {
+                    ack == Ack::DeliveryAccepted
+                } else { ack == Ack::Confirmed }), None => false,
+            }) ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
+            ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
+            ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq as int <= old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+    // E11.2 REQ R27: confirming an action a stop cancelled only clears it.
+    (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false }))
+        ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+    // E11.2 REQ R25: confirming a teardown step releases exactly its resource and moves teardown on.
+    (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect {
+        Some(e) => e.seq == seq && !e.cancelling && transition_safety::teardown_kind(e.kind)
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)),
+        None => false,
+    }))
+        ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question
+            && final(w).nodes@[i as int].run == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { None } else { old(w).nodes@[i as int].run })
+            && final(w).nodes@[i as int].pool == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { false } else { old(w).nodes@[i as int].pool })
+            && final(w).nodes@[i as int].job == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::WithdrawJob { None } else { old(w).nodes@[i as int].job })
+            && final(w).nodes@[i as int].pr_open == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::ClosePr { false } else { old(w).nodes@[i as int].pr_open })
+            && final(w).nodes@[i as int].worktree == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::RemoveWorktree { false } else { old(w).nodes@[i as int].worktree }),
+] {
+    on_ack_proved(w, i, seq, ack, out)
 }
 }
 

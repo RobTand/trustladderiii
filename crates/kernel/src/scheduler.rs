@@ -229,6 +229,28 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
     old(w).nodes@[i as int].holds && (old(w).nodes@[i as int].phase == Phase::Making
         || old(w).nodes@[i as int].phase == Phase::Rebasing) ==> final(w).nodes@[i as int].holds,
+    // E11.3 REQ R26 (a): a teardown step whose resource is already gone is skipped.
+    (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && (match current_item(old(w).nodes@[i as int]) {
+        Some(Item::Teardown(k)) => advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
+        ==> result && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].effect.is_none()
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq
+            && final(w).nodes@[i as int].pool == (old(w).nodes@[i as int].pool && current_item(old(w).nodes@[i as int]) != Some(Item::Teardown(EffectKind::StopRun))),
+    // E11.3 REQ R26 (b): a teardown step whose resource is present issues one cleanup request.
+    (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && (match current_item(old(w).nodes@[i as int]) {
+        Some(Item::Teardown(k)) => !advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
+        ==> result && final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == old(w).nodes@[i as int].next_seq
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(final(w).nodes@[i as int].effect.unwrap().kind))
+            && !final(w).nodes@[i as int].effect.unwrap().cancelling && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq + 1
+            && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
+            && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree,
+    // E11.3 REQ R26 (c): the Release step gives up the slot.
+    (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]) == Some(Item::Release))
+        ==> result && !final(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase
+            && final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+    // E11.3 REQ R26 (d): with every teardown step done, the item closes with its outcome.
+    (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]).is_none())
+        ==> result && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == 0
+            && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase == Phase::Closed(o), _ => true }),
 ] {
     advance_proved(w, i, out, report)
 }

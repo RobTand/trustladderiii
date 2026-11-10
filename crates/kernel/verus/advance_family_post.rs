@@ -304,4 +304,16 @@ pub(super) proof fn step_rows_intro(before: World, after: World, k: int)
     reveal(step_rows);
 }
 
+/// K5 frozen export E11.3 helper (CONTRACTS.md v2.3; owner Advance): transparent, the exact
+/// absent-resource test of advance_teardown.
+pub(super) open spec fn teardown_gone(n: Node, kind: EffectKind) -> bool {
+    match kind {
+        EffectKind::StopRun => n.run.is_none(),
+        EffectKind::WithdrawJob => n.job.is_none(),
+        EffectKind::ClosePr => !n.pr_open,
+        EffectKind::RemoveWorktree => !n.worktree,
+        _ => false,
+    }
+}
+
 }

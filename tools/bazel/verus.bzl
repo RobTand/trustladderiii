@@ -443,6 +443,9 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::command_dispatch::on_command": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.1), external_body; calls the verified on_command_proved; never lands.",
+            "kernel::acknowledgements::on_ack": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.2), external_body; calls the verified on_ack_proved; never lands.",
+            "kernel::advance_family_post::teardown_gone": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::step_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::events::apply": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified apply_proved; never lands.",
             "kernel::settling::settle": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified settle_proved; never lands.",
@@ -1470,7 +1473,7 @@ def verus_proofs():
             "acknowledgements_delivery_failed": ("kernel::acknowledgements#delivery_failed", 1),
             "acknowledgements_effect_failed": ("kernel::acknowledgements#effect_failed", 1),
             "acknowledgements_failed_delivery_node": ("kernel::acknowledgements#failed_delivery_node", 1),
-            "acknowledgements_on_ack": ("kernel::acknowledgements#on_ack", 1),
+            "acknowledgements_on_ack": ("kernel::acknowledgements#on_ack_proved", 1),
             "facts": ("kernel::facts#on_fact", 1),
             "facts_transition": ("kernel::facts#fact_transition", 1),
             "facts_incident_cleared": ("kernel::facts#incident_cleared", 1),
@@ -1486,7 +1489,7 @@ def verus_proofs():
             "facts_ci_infrastructure": ("kernel::facts#ci_infrastructure", 1),
             "facts_merge": ("kernel::facts#pr_merged", 1),
             "facts_merge_open": ("kernel::facts#merge_open", 1),
-            "commands": ("kernel::command_dispatch#on_command", 1),
+            "commands": ("kernel::command_dispatch#on_command_proved", 1),
             "answers": ("kernel::answers#answer_node", 1),
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
