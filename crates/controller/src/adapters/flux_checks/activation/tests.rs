@@ -814,7 +814,7 @@ fn fresh_worlds_have_distinct_effect_markers_and_flux_names() {
         let snapshot = c.snapshot().unwrap();
         let delivery: crate::executor::Delivery = crate::decode_stored(snapshot.pending_effects[0].payload.clone()).unwrap();
         let key = delivery.key.clone();
-        let marker = tl3_github::Client::marker(&key);
+        let marker = tl3_github::GitHub::marker(&key);
         let job = super::super::correlation(&delivery);
         let output = Path::new("/mnt/shared/flux-out/tl3").join(&job);
         (key, marker, job, output)
