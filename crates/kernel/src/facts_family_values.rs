@@ -98,6 +98,23 @@ pub(super) proof fn value_node_rows(b: Node, n: Node, fast: bool, i: usize, fact
     reveal(node_rows);
 }
 
+pub(super) proof fn ordinary_frame(b: Node, n: Node, fact: Fact)
+    requires node_headroom(b), n == retirement::fact_node(b, fact),
+        matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
+            | Fact::Conflict | Fact::IncidentCleared { .. }),
+    ensures n.repo == b.repo, n.footprint == b.footprint,
+        settle_shape(b) ==> settle_shape(n),
+        n.generation as int <= b.generation as int + 1,
+        n.next_seq == b.next_seq, n.credit == b.credit, n.last_cmd == b.last_cmd,
+        b.phase is Closed ==> n.phase is Closed,
+{
+    reveal(retirement::fact_node);
+    match fact {
+        Fact::PrClosedByPerson => { reveal(retirement::stopped); },
+        _ => {},
+    }
+}
+
 pub(super) proof fn ordinary_distance(b: Node, n: Node, fact: Fact)
     requires n == retirement::fact_node(b, fact), arithmetic_consistent(b),
         fact == (Fact::IncidentCleared { by_rob: true }),
@@ -167,8 +184,7 @@ pub(super) fn ordinary_fact_value(n: Node, fast: bool, i: usize, fact: Fact)
             && n.effect.is_none() && (!n.paused || n.phase is Stopping)
             && !(n.phase is Closed) ==> distance(result.0) < distance(n)),
         retirement::notices_only(result.1),
-] proof [reveal(notices); reveal(retirement::fact_node); reveal(empty_outbox);
-    reveal(retirement::stopped); reveal(retirement::notices_only);] {
+] proof [reveal(notices); reveal(empty_outbox); reveal(retirement::notices_only);] {
     let mut value = n;
     let mut notes = Outbox::new();
     let out = &mut notes;
@@ -181,7 +197,13 @@ pub(super) fn ordinary_fact_value(n: Node, fast: bool, i: usize, fact: Fact)
         Fact::PrClosedByPerson => {
             let m = &mut value;
             if !m.pr_open {
-                kernel_proof! { value_node_rows(n, value, fast, i, fact); }
+                kernel_proof! {
+                    assert(value == retirement::fact_node(n, fact)) by {
+                        reveal(retirement::fact_node);
+                    }
+                    ordinary_frame(n, value, fact);
+                    value_node_rows(n, value, fast, i, fact);
+                }
                 return (value, notes);
             }
             m.pr_open = false;
@@ -208,6 +230,10 @@ pub(super) fn ordinary_fact_value(n: Node, fast: bool, i: usize, fact: Fact)
         _ => {}
     }
     kernel_proof! {
+        assert(value == retirement::fact_node(n, fact)) by {
+            reveal(retirement::fact_node);
+        }
+        ordinary_frame(n, value, fact);
         if fact == (Fact::IncidentCleared { by_rob: true }) && n.waiting_incident
             && n.effect.is_none() && (!n.paused || n.phase is Stopping) && !(n.phase is Closed) {
             ordinary_distance(n, value, fact);
@@ -285,7 +311,21 @@ pub(super) fn merge_fact_value(n: Node, fast: bool, i: usize,
         notice(out, i, Notice::Incident { needs_rob: false });
         notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
     }
-    kernel_proof! { value_node_rows(n, value, fast, i, Fact::PrMerged { head, checks_passed }); }
+    kernel_proof! {
+        let prefix = if matches!(n.phase,
+            Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced)) { seq![
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::LateMerge) }),
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
+        ] } else { seq![] };
+        let items = if !approved { prefix + seq![
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::UnapprovedMerge) }),
+        ] } else { prefix };
+        assert(notes.len == items.len());
+        assert(notes.items@ =~= Seq::new(OUTBOX as nat, |k: int|
+            if k < items.len() { items[k] } else { None }));
+        value_node_rows(n, value, fast, i, Fact::PrMerged { head, checks_passed });
+    }
     (value, notes)
 }
 }
@@ -319,6 +359,10 @@ pub(super) fn append_fact_notices(out: &mut Outbox, notes: Outbox, i: usize) -> 
         k += 1;
     } }
     kernel_proof! {
+        if notes.len == 0 {
+            assert(out.items@ =~= before_append@.items@);
+            assert(*out == before_append@);
+        }
         if retirement::unapproved_note(notes, i) {
             let note = Some(Out::Notice { node: NodeId(i as u64),
                 notice: Notice::Note(NoteKind::UnapprovedMerge) });
