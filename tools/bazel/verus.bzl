@@ -443,6 +443,10 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::facts_family_values::infrastructure_retry_arm_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::infrastructure_incident_count_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::infrastructure_incident_arm_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::infrastructure_retry_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::priority_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::closed_pr_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::conflict_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -758,6 +762,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "facts_family_infrastructure_incident_count": ("kernel::facts_family_values#infrastructure_incident_count", 1),
+            "facts_family_infrastructure_retry_arm": ("kernel::facts_family_values#infrastructure_retry_arm", 1),
+            "facts_family_infrastructure_incident_arm": ("kernel::facts_family_values#infrastructure_incident_arm", 1),
+            "facts_family_infrastructure_retry_value": ("kernel::facts_family_values#infrastructure_retry_value", 1),
+            "facts_family_infrastructure_retry_bridge": ("kernel::facts_family_values#infrastructure_retry_bridge", 1),
             "facts_family_priority_fact_arm": ("kernel::facts_family_values#priority_fact_arm", 1),
             "facts_family_closed_pr_fact_arm": ("kernel::facts_family_values#closed_pr_fact_arm", 1),
             "facts_family_conflict_fact_arm": ("kernel::facts_family_values#conflict_fact_arm", 1),
