@@ -66,3 +66,7 @@ fn kani_advance_stopping() {
     a_extra::run_advance(55, "kani_advance_stopping");
 }
 
+#[test]
+fn beyond_bounds_advance() {
+    a_extra::beyond_bounds_advance();
+}

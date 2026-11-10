@@ -464,3 +464,139 @@ pub fn run_advance(h: usize, name: &str) {
     assert!(stats.covers.contains("the phase moves under settle, or waits"), "missing original advance cover: {name}");
     stats.finish(name, A_SEED, start);
 }
+
+const BEYOND_EVENT_SEED: u64 = A_SEED ^ 0xbe70_0001;
+const BEYOND_ADVANCE_SEED: u64 = A_SEED ^ 0xbe70_0002;
+
+fn beyond_world(index: usize, rng: &mut Prng) -> World {
+    let phase = phases()[(rng.next() as usize) % phases().len()];
+    let positions = positions(phase);
+    let pos = if positions.is_empty() { 0 } else { positions[(rng.next() as usize) % positions.len()] };
+    let mut w = anchor(phase, pos);
+    w.gates.push(Gate { w: 3 });
+    let count = if index % 4 == 0 { 72 } else { 6 };
+    while w.nodes.len() < count {
+        let mut n = Node::new(RepoId(2));
+        n.phase = Phase::Closed(Outcome::Stopped);
+        w.nodes.push(n);
+    }
+    let offset = rng.next() % 256;
+    let a = w.intern_footprint((offset..offset + 80).map(FileId));
+    let b = w.intern_footprint((offset + 48..offset + 128).map(FileId));
+    for (i, n) in w.nodes.iter_mut().enumerate() {
+        n.footprint = if i % 2 == 0 { a } else { b };
+    }
+    // All four dependency classes occur in every world. The linked Pending
+    // edge 2 -> 3 is acyclic. Nodes above64 enter the heap graph traversal.
+    for i in [2, 3] {
+        let n = &mut w.nodes[i];
+        n.phase = Phase::Unplanned;
+        n.credit = Credit { ready: true, start: 4, withheld: true, ..Credit::default() };
+        n.waiting_prerequisite = Some(100 + i as u64);
+    }
+    for (owner, target, status, rejected) in [
+        (2, 3, DependencyStatus::Pending, false),
+        (3, 4, DependencyStatus::Abandoned, false),
+        (4, 5, DependencyStatus::Pending, true),
+        (5, 2, DependencyStatus::Delivered, false),
+    ] {
+        push_dependency(&mut w, Dependency { node: NodeId(owner),
+            target: DependencyTarget { kind: PrerequisiteKind::Issue, number: 100 + owner, request: Some(NodeId(target)) },
+            status, rejected });
+    }
+    let (status, rejected) = [(DependencyStatus::Pending, false), (DependencyStatus::Abandoned, false),
+        (DependencyStatus::Pending, true), (DependencyStatus::Delivered, false)][(rng.next() % 4) as usize];
+    let blocked = rejected || status != DependencyStatus::Delivered;
+    let n = &mut w.nodes[0];
+    n.planning_started = false;
+    if blocked && matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
+        n.credit.withheld = true;
+        if phase == Phase::Ingesting && index % 2 == 0 {
+            // Ingest completion must newly withhold the funded ledger.
+            n.credit = Credit::default();
+        }
+    }
+    if phase == Phase::AwaitingRob {
+        n.question = Some(Question { id: 1, kind: QKind::EffectFailed,
+            cont: Cont::Ingesting, cost: 0, clarified: index & 1 != 0 });
+    }
+    if matches!(phase, Phase::Stopping(_)) && index % 2 == 0 {
+        n.question = Some(Question { id: 1, kind: QKind::CleanupFailed,
+            cont: Cont::Nowhere, cost: 0, clarified: false });
+    }
+    if matches!(phase, Phase::Unplanned) && blocked {
+        n.waiting_prerequisite = Some(9001);
+    }
+    w.fail_fast = rng.next() & 1 != 0;
+    for kind in effects() {
+        if at_effect(&w.nodes[0], kind) {
+            w.nodes[0].effect = Some(InFlight { seq: 7, kind, cancelling: index % 7 == 0 });
+            if kind == EffectKind::OpenPr && index % 7 != 0 {
+                w.nodes[0].pr_open = true; w.nodes[0].had_pr = true;
+            }
+            break;
+        }
+    }
+    push_dependency(&mut w, Dependency { node: NodeId(0),
+        target: DependencyTarget { kind: PrerequisiteKind::Issue, number: 9001, request: None }, status, rejected });
+    w
+}
+
+pub fn beyond_bounds_event() {
+    assert_source_identity();
+    let seed = BEYOND_EVENT_SEED;
+    let start = Instant::now();
+    let mut rng = Prng(seed);
+    let mut stats = Stats::default();
+    let mut case = 0;
+    for sample in 0..512 {
+        let w = beyond_world(sample, &mut rng);
+        for h in (6..=43).chain([56]) {
+            for mode in 0..2 {
+                let mut e = event(h, &w, sample % payload_count(h), mode);
+                // Interned payloads reach union_footprints, including overlap.
+                if let Event::Reply { reply, .. } = &mut e {
+                    match reply {
+                        Reply::PlanLeaf { footprint, .. } => *footprint = w.nodes[5].footprint,
+                        Reply::MakerNeedsFiles { files, .. } => *files = w.nodes[5].footprint,
+                        _ => {},
+                    }
+                }
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    stats.case(case, seed, Some(w.clone()), vec![], || {
+                        let before = assert_apply(e);
+                        if h == 29 { body_policy_refused(&before, e); }
+                    });
+                }));
+                if let Err(payload) = result {
+                    eprintln!("BEYOND_FAILURE family=event sample={sample} case={case} seed={seed:#x} H={h} step={e:?}");
+                    std::panic::resume_unwind(payload);
+                }
+                case += 1;
+            }
+        }
+    }
+    stats.finish("beyond_bounds_event", seed, start);
+    println!("BEYOND_SCOPE family=event worlds=512 nodes=6,72 repos=3 file_sets=2 files_per_set=80 dependencies=5 statuses=Pending,Abandoned,rejected,Delivered");
+}
+
+pub fn beyond_bounds_advance() {
+    assert_source_identity();
+    let seed = BEYOND_ADVANCE_SEED;
+    let start = Instant::now();
+    let mut rng = Prng(seed);
+    let mut stats = Stats::default();
+    for sample in 0..512 {
+        let w = beyond_world(sample, &mut rng);
+        let phase = w.nodes[0].phase;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stats.case(sample, seed, Some(w.clone()), vec![], || assert_advance(phase, phase != Phase::AwaitingDelivery));
+        }));
+        if let Err(payload) = result {
+            eprintln!("BEYOND_FAILURE family=advance sample={sample} seed={seed:#x} node=0 phase={phase:?}");
+            std::panic::resume_unwind(payload);
+        }
+    }
+    stats.finish("beyond_bounds_advance", seed, start);
+    println!("BEYOND_SCOPE family=advance worlds=512 nodes=6,72 repos=3 file_sets=2 files_per_set=80 dependencies=5 statuses=Pending,Abandoned,rejected,Delivered");
+}

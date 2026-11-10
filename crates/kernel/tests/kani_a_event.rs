@@ -201,3 +201,7 @@ fn kani_apply_new_adoption() {
     a_extra::run_event(56, "kani_apply_new_adoption");
 }
 
+#[test]
+fn beyond_bounds_event() {
+    a_extra::beyond_bounds_event();
+}
