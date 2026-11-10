@@ -63,13 +63,15 @@ port. The simulation receiver defaults to `127.0.0.1:8081` when `--github-api`
 enables it without a listen address. A local `cloudflared` process forwards the
 tunnel there. Config does not resolve GitHub identities over the network.
 
-`prismabuild.tools_dir` contains `pbrun.py`, `pbwait.py`, and the other published
-tools. The harness image uses `sha256:<64 lowercase hex digits>` or
+`execution_backend = "flux"` and a `[flux]` table are required: Flux is the only
+executor. Parsing refuses `execution_backend = "prismabuild"`, a missing
+`execution_backend`, any `[prismabuild]` table and `[allowances.prismabuild]`;
+the check allowances live in `[allowances.checks]`. The harness image uses `sha256:<64 lowercase hex digits>` or
 `repository@sha256:<64 lowercase hex digits>`, matching `harness.Container`.
-PB's `content:sha256:` form is not a harness image reference.
+A `content:sha256:` form is not a harness image reference.
 
 Set `test_demand = { cpus = 4, mem_gb = 12 }` in a `[[github.repos]]`
-entry to reserve that repository's PrismaBuild test resources. Both values
+entry to reserve that repository's test resources. Both values
 are required positive integers: `cpus` is at most 16 and `mem_gb` is at most
 64 GiB. Unknown fields, including `gpu`, are rejected. Omitting the key keeps
 1 CPU and 2 GiB. The demand follows the repository's owner, name and
@@ -80,7 +82,7 @@ base and head runs), and the maker's configured `run_generator` actions. A maker
 `mem_gb` per pytest worker, with at least `cpus` total reserved CPUs. Native
 thread limits follow `cpus`; parallel maker runs divide that budget among
 pytest workers. The harness forwards these limits into its test containers.
-PrismaBuild still decides admission and placement. Manual image and generator
+Flux decides admission and placement. Manual image and generator
 qualification tools run inside an already admitted action; they do not submit
 repository request actions.
 
@@ -287,13 +289,13 @@ all leaves finish.
 ## Repository check images
 
 Each `[[github.repos]]` entry accepts an optional `container_image`. Omission
-uses `[prismabuild] container_image`. Both settings require an immutable image
+uses `[flux] container_image`. Both settings require an immutable image
 ID or manifest digest in the formats above. Repository overrides match the
 owner and name without regard to ASCII case, and the installation ID exactly.
 The controller stages the selected image into the harness request and seals
-that same image as the PrismaBuild placement requirement.
+that same image as the Flux run's placement requirement.
 
-For example, keep the sandbox on the global image and set the PB override:
+For example, keep the sandbox on the global image and set a repository override:
 
 ```toml
 [[github.repos]]

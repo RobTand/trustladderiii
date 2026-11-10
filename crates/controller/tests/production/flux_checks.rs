@@ -338,6 +338,38 @@ fn setup(
     (adapter, backend, attached, options)
 }
 
+/// #785 review: a disconnected capability must not create or recover the check journal.
+#[test]
+fn lost_claim_prevents_flux_checks_journal_setup() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let settings = database.create("lost_flux_checks_claim");
+    let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+    super::startup::terminate_claim(&settings);
+    let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+    let (entered, _attached) = mpsc::channel();
+    let backend = Arc::new(Backend {
+        state: Mutex::new(State::default()),
+        changed: Condvar::new(),
+        attached: entered,
+        records: root.path().join("journal"),
+    });
+    let result = Adapter::new(
+        backend.clone(),
+        production::flux_options(&super::flux_options::flux(root.path())),
+        &backend.records,
+        Staging,
+        &mut ownership,
+    );
+    assert!(result.is_err(), "lost ownership must abort startup");
+    assert!(
+        !backend.records.exists(),
+        "the check journal was created after claim loss"
+    );
+    drop((result, successor, ownership));
+    database.stop();
+}
+
 /// FX / #850: a busy eligible host stays healthy; unknown and incompatible cannot clear an incident.
 #[test]
 fn flux_checks_probe_uses_submission_placement_and_keeps_busy_healthy() {

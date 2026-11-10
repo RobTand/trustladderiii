@@ -1,5 +1,4 @@
 use super::Kind;
-use crate::adapters::prismabuild::Job;
 #[cfg(test)]
 use crate::findings::MAX_MESSAGE_CHARS;
 use crate::{
@@ -11,15 +10,9 @@ use crate::{
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, clipped},
 };
-#[cfg(test)]
-use judge_tests::recorded_io::File;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-#[cfg(not(test))]
-use std::fs::File;
-use std::io::Read;
 use tl3_harness_core::{judge as core_judge, phase as core_phase};
-use tl3_prismabuild::{ActionKey, Tool};
 
 pub(super) const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -36,18 +29,6 @@ trait ReportJob {
     fn report_context(&self) -> ReportContext<'_>;
 }
 
-impl ReportJob for Job {
-    fn report_context(&self) -> ReportContext<'_> {
-        ReportContext {
-            delivery: &self.delivery,
-            run: &self.run,
-            changed_paths: &self.changed_paths,
-            selected_tests: self.selected_tests,
-            always_tests: &self.always_tests,
-        }
-    }
-}
-
 impl ReportJob for ReportContext<'_> {
     fn report_context(&self) -> ReportContext<'_> {
         ReportContext {
@@ -60,47 +41,6 @@ impl ReportJob for ReportContext<'_> {
     }
 }
 
-#[derive(Deserialize)]
-struct Endings {
-    schema: String,
-    complete: bool,
-    endings: Vec<Ending>,
-}
-#[derive(Deserialize)]
-struct Ending {
-    action_key: ActionKey,
-    status: String,
-    succeeded: bool,
-    exit_code: Option<i32>,
-    result: Option<Evidence>,
-    #[serde(default)]
-    diagnostics: Diagnostics,
-}
-#[derive(Default, Deserialize)]
-struct Diagnostics {
-    returncode: Option<i32>,
-    resource_profile: Option<ResourceProfile>,
-}
-#[derive(Deserialize)]
-struct ResourceProfile {
-    scope: Option<ResourceScope>,
-}
-#[derive(Deserialize)]
-struct ResourceScope {
-    memory_peak_bytes: Option<u64>,
-}
-#[derive(Deserialize)]
-struct Evidence {
-    verified: bool,
-    receipt_sha256: Option<String>,
-    stdout: Log,
-}
-#[derive(Deserialize)]
-struct Log {
-    path: std::path::PathBuf,
-    bytes: u64,
-    sha256: String,
-}
 // The typed report states each field's shape and bound. The rules below relate fields to
 // each other and to the staged job.
 fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
@@ -134,92 +74,6 @@ fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
         })
 }
 
-pub(crate) async fn ending(
-    tool: &Tool,
-    job: &Job,
-    withdrawal: bool,
-    record: &tl3_prismabuild::RecordRead,
-) -> Result<Option<Completion>> {
-    let output = tokio::process::Command::new(&tool.program)
-        .args(&tool.args)
-        .args([
-            "--endings",
-            "--until",
-            "cleaned",
-            "--wait-s",
-            "0",
-            job.action.as_str(),
-        ])
-        .kill_on_drop(true)
-        .output()
-        .await?;
-    let mut reply: Endings = serde_json::from_slice(&output.stdout)?;
-    if reply.schema != "prismabuild.endings.v1" || reply.endings.len() != 1 {
-        return Err(Error::Invalid("invalid PrismaBuild endings response"));
-    }
-    let ending = reply.endings.remove(0);
-    if ending.action_key != job.action {
-        return Err(Error::Invalid("PrismaBuild ending names another action"));
-    }
-    if !reply.complete || ending.status == "waiting" {
-        return Ok(None);
-    }
-    if !matches!(
-        ending.status.as_str(),
-        "executed" | "cache_hit" | "failed" | "withdrawn" | "refused"
-    ) {
-        return Err(Error::Invalid("unreadable PrismaBuild ending"));
-    }
-    if withdrawal {
-        return Ok(Some(Completion::confirmed(vec![])));
-    }
-    if !ending.succeeded
-        && let tl3_prismabuild::RecordRead::Present(record) = record
-        && record.termination_reason.as_deref() == Some("memory_limit_oom")
-    {
-        let peak = ending
-            .diagnostics
-            .resource_profile
-            .as_ref()
-            .and_then(|profile| profile.scope.as_ref())
-            .and_then(|scope| scope.memory_peak_bytes);
-        let failed = FailedTest {
-            test: "PrismaBuild".into(),
-            message: format!(
-                "memory_limit_oom; action {}; returncode {:?}; memory_peak_bytes {peak:?}",
-                job.action,
-                ending
-                    .exit_code
-                    .or(ending.diagnostics.returncode)
-                    .or(record.returncode)
-            ),
-        };
-        return Ok(Some(completion(job, false, false, vec![], vec![failed])?));
-    }
-    let (report, pass, results, failed_tests, failure, diagnostic) = match evidence(ending, job) {
-        Ok(verdict) => verdict,
-        Err(error @ Error::Io(_)) => return Err(error),
-        Err(error) => {
-            eprintln!("PrismaBuild result {}: {error}", job.action);
-            (false, false, vec![], vec![], None, None)
-        }
-    };
-    let mut completion = completion(job, report, pass, results, failed_tests)?;
-    completion.failure_class = failure.map(Into::into);
-    if let Some(diagnostic) = diagnostic {
-        completion.observations.insert(
-            0,
-            Observation::CheckExecutionFailure {
-                node: job.delivery.node(),
-                generation: job.delivery.generation,
-                action_key: job.action.to_string(),
-                diagnostic,
-            },
-        );
-    }
-    Ok(Some(completion))
-}
-
 /// TL3's trusted harness failures, including parsed test-run infrastructure outcomes.
 /// TL3-side under Q51, not a PrismaBuild failure.
 pub(crate) const HARNESS: &str = "harness";
@@ -238,55 +92,6 @@ pub(crate) type CheckEvidence = (
     Option<&'static str>,
     Option<crate::check_execution::Diagnostic>,
 );
-
-fn evidence(ending: Ending, job: &Job) -> Result<CheckEvidence> {
-    evidence_with_read(ending, job, |log| {
-        let mut raw = Vec::new();
-        File::open(&log.path)?
-            .take(log.bytes + 1)
-            .read_to_end(&mut raw)?;
-        Ok(raw)
-    })
-}
-
-fn evidence_with_read(
-    ending: Ending,
-    job: &Job,
-    read: impl FnOnce(&Log) -> Result<Vec<u8>>,
-) -> Result<CheckEvidence> {
-    let successful = matches!(ending.status.as_str(), "executed" | "cache_hit")
-        && ending.succeeded
-        && ending.exit_code == Some(0);
-    if let Some(evidence) = ending.result {
-        if !evidence.verified
-            || (successful
-                && evidence.receipt_sha256.as_ref().is_none_or(|s| {
-                    s.len() != 64
-                        || !s
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                }))
-            || evidence.stdout.bytes > MAX_RESULT_BYTES as u64
-        {
-            return Err(Error::Invalid(
-                "unverified or oversized PrismaBuild check result",
-            ));
-        }
-        let raw = read(&evidence.stdout)?;
-        if raw.len() as u64 != evidence.stdout.bytes
-            || format!("{:x}", Sha256::digest(&raw)) != evidence.stdout.sha256
-        {
-            return Err(Error::Invalid("PrismaBuild result log changed"));
-        }
-        return judge_payload(&raw, &job.report_context(), successful);
-    } else if matches!(ending.status.as_str(), "executed" | "cache_hit") {
-        // A receipt-only cache hit can outlive its queue record. Missing result evidence is unknown.
-        return Err(Error::Invalid(
-            "successful PrismaBuild ending has no verified result",
-        ));
-    }
-    Ok((false, false, vec![], vec![], None, None))
-}
 
 /// Interpret a verified daytime payload using the same strict identity and semantic judge.
 /// Transport success alone never establishes a report or full-suite membership.
@@ -406,23 +211,6 @@ fn harness_error(raw: &[u8], job: &impl ReportJob) -> bool {
         && serde_json::from_str::<HarnessError>(errors[0]).is_ok_and(|error| {
             error.schema == "tl3.checks.error.v1" && error.effect_key == job.delivery.key
         })
-}
-
-fn completion(
-    job: &Job,
-    report: bool,
-    pass: bool,
-    results: Vec<serde_json::Value>,
-    failed_tests: Vec<FailedTest>,
-) -> Result<Completion> {
-    completion_for(
-        &job.report_context(),
-        job.action.as_str(),
-        report,
-        pass,
-        results,
-        failed_tests,
-    )
 }
 
 fn completion_for(
@@ -1014,7 +802,6 @@ mod selected_failure_tests {
 pub(crate) mod contract_vectors {
     use super::*;
     use serde_json::{Value, json};
-    use std::io::Write;
 
     pub(crate) struct Parsed {
         pub name: String,
@@ -1083,36 +870,39 @@ pub(crate) mod contract_vectors {
         if !request["reviewed"].is_null() {
             run["reviewed_sha"] = request["reviewed"].clone();
         }
-        let job: Job = serde_json::from_value(json!({
-            "action": "a".repeat(64),
-            "delivery": {"key":request["effect_key"], "epoch":1,
-                "output":{"Effect":{"node":0,"kind":"SubmitChecks","seq":1,"head":null}},
-                "generation":1, "head_sha":request["head"],
-                "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
-                "issue":734, "pull_request":null, "paths":[], "attempt":1, "round":0},
-            "run": run,
-            "changed_paths": [],
-            "selected_tests": request["selected_tests"],
-            "always_tests": request.get("always_tests").cloned().unwrap_or(json!([])),
-        }))
-        .unwrap_or_else(|error| panic!("{name}: the vector's request is not a check job: {error}"));
-        // The envelope the trusted action prints around result_json (action.py).
+        let not_a_job = |error: serde_json::Error| -> ! {
+            panic!("{name}: the vector's request is not a check job: {error}")
+        };
+        let delivery: crate::executor::Delivery = serde_json::from_value(json!({
+            "key":request["effect_key"], "epoch":1,
+            "output":{"Effect":{"node":0,"kind":"SubmitChecks","seq":1,"head":null}},
+            "generation":1, "head_sha":request["head"],
+            "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
+            "issue":734, "pull_request":null, "paths":[], "attempt":1, "round":0}))
+        .unwrap_or_else(|error| not_a_job(error));
+        let run: super::super::CheckRun =
+            serde_json::from_value(run).unwrap_or_else(|error| not_a_job(error));
+        let always_tests: Vec<String> =
+            serde_json::from_value(request.get("always_tests").cloned().unwrap_or(json!([])))
+                .unwrap_or_else(|error| not_a_job(error));
+        let context = ReportContext {
+            delivery: &delivery,
+            run: &run,
+            changed_paths: &[],
+            selected_tests: serde_json::from_value(request["selected_tests"].clone())
+                .unwrap_or_else(|error| not_a_job(error)),
+            always_tests: &always_tests,
+        };
+        // The envelope the trusted action prints around result_json (action.py), judged
+        // as a verified successful run.
         let line = format!(
             "TL3_CHECKS {}\n",
             json!({"schema":version, "effect_key":request["effect_key"],
                 "base":request["base"], "head":request["head"], "reviewed":request["reviewed"],
                 "results":vector["results"]})
         );
-        let mut log = tempfile::NamedTempFile::new().unwrap();
-        log.write_all(line.as_bytes()).unwrap();
-        let ending: Ending = serde_json::from_value(json!({
-            "action_key": "a".repeat(64), "status":"executed", "succeeded":true, "exit_code":0,
-            "result": {"verified":true, "receipt_sha256":"b".repeat(64), "stdout": {
-                "path":log.path(), "bytes":line.len(),
-                "sha256":format!("{:x}", Sha256::digest(line.as_bytes()))}},
-        }))
-        .unwrap();
-        let (report, pass, results, failed_tests, failure, _) = evidence(ending, &job).unwrap();
+        let (report, pass, results, failed_tests, failure, _) =
+            judge_payload(line.as_bytes(), &context, true).unwrap();
         assert_eq!(failure, (!report).then_some(HARNESS), "{name}: Q51");
         Parsed {
             name,

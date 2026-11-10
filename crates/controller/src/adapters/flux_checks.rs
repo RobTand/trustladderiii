@@ -1,5 +1,6 @@
 //! Controller delivery journal and check executor over the shared execution transport.
 use super::backend_watch;
+mod fake;
 use crate::checks::{CheckRun, results};
 use crate::run_backend::{self as backend, durable};
 use crate::{
@@ -7,6 +8,7 @@ use crate::{
     cli::Input,
     executor::{Completion, Delivery, Executor, Output, Reconciliation},
 };
+pub use fake::Fake;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},

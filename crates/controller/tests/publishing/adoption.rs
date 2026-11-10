@@ -178,7 +178,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Upstream::GitHub,
         server.adapter(&root.path().join("github"), 0),
     );
-    registry.register(Upstream::PrismaBuild, pb(root.path()));
+    registry.register(Upstream::PrismaBuild, checks(root.path()));
     if fixing {
         fs::write(root.path().join("queue/mode"), "check_fail").unwrap();
     }

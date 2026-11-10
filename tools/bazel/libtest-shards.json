@@ -664,7 +664,6 @@
   "MakerCiFailure": 10.028,
   "MakerCleanup": 0.0,
   "MakerControllerRestart": 5.245,
-  "MakerDeclaredWait": 54.037,
   "MakerFixKilled": 73.042,
   "MakerKilledAfterCommit": 6.361,
   "MakerLegacySession": 14.773,

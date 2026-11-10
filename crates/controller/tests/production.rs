@@ -2,7 +2,6 @@
 mod backend_watch;
 #[path = "production/flux_options.rs"]
 mod flux_options;
-mod prismabuild_fixture;
 #[path = "production/startup.rs"]
 mod startup;
 #[path = "../../store/tests/support/mod.rs"]
