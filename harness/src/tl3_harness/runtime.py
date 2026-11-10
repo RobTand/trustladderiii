@@ -2,7 +2,6 @@
 import json
 import os
 import stat
-import tempfile
 import uuid
 import atexit
 import threading
@@ -13,11 +12,9 @@ from .model import NATIVE_THREAD_ENVIRONMENT
 
 
 def launch_context():
-    selected = os.environ.get('TL3_EXECUTION_BACKEND', 'prismabuild')
-    if selected == 'prismabuild':
-        return None
-    if selected != 'flux':
-        raise RuntimeError('unknown execution backend')
+    # Flux is the only executor (PB-REMOVAL): a missing or other backend is refused.
+    if os.environ.get('TL3_EXECUTION_BACKEND') != 'flux':
+        raise RuntimeError('unknown execution backend; Flux is the only executor')
     return backend_request({
         'op': 'launch_context', 'owner': os.environ['TL3_RUN_OWNER'],
         'correlation': os.environ['TL3_RUN_CORRELATION'], 'job': os.environ['FLUX_JOB_ID'],
@@ -65,8 +62,6 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
 
 def evidence_sink(container):
     context = launch_context()
-    if context is None:
-        return None
     return Evidence(context['output_dir'], container, context=context)
 
 
@@ -260,7 +255,7 @@ def _backend_request(command, *, bounds=None):
     if cleanup:
         if (not isinstance(limits, dict) or any(type(value) is not int or value <= 0 for value in limits.values())
                 or not limits['helper_budget_seconds'] < limits['native_timeout_seconds'] < limits['idle_timeout_seconds']
-                or binding is None or binding['owner'] != command['owner']
+                or binding['owner'] != command['owner']
                 or binding['correlation'] != command['correlation']):
             raise RuntimeError('invalid Rust cleanup transport limits or binding')
     bound = limits['max_response_bytes'] if cleanup else (
@@ -522,8 +517,6 @@ def _collect_host_payload(command, *, timeout, operation):
     if not command or not 0 < timeout <= 86400:
         raise ValueError('bounded host payload command required')
     context = launch_context()
-    if context is None:
-        raise RuntimeError('host collector requires explicit Flux bootstrap')
     if operation not in ('collect_runner', 'collect_worker'):
         raise ValueError('unsupported Rust collector operation')
     bounds = context['output_bounds']
@@ -841,17 +834,11 @@ _uncertain_containers = set()
 
 
 def cache_owner():
-    context = launch_context()
-    if context is not None:
-        run = context['run']
-        return run['backend'], run['uri'], run['instance'], run['job']
-    return ('prismabuild', os.environ.get('PRISMABUILD_QUEUE_ROOT', ''),
-            os.environ['PRISMABUILD_CONTAINER_OWNER'])
+    run = launch_context()['run']
+    return run['backend'], run['uri'], run['instance'], run['job']
 
 
 def _action_record(context, name, facts):
-    if context is None:
-        return
     with (Path(context['output_dir']) / name).open('x') as retained:
         json.dump(facts, retained, sort_keys=True)
         retained.flush()
@@ -883,18 +870,13 @@ def cancellation_unwind():
 
 
 def temporary_root():
-    context = launch_context()
-    return Path(context['scratch']['leaf']) if context is not None else None
+    return Path(launch_context()['scratch']['leaf'])
 
 
 @contextmanager
 def workspace(prefix):
     root = temporary_root()
     context = launch_context()
-    if root is None:
-        with tempfile.TemporaryDirectory(prefix=prefix) as directory:
-            yield directory
-        return
     from .scratch import private_directory, release_directory
     identity = root.lstat()
     directory = private_directory(root, prefix=prefix)
@@ -918,8 +900,6 @@ def workspace(prefix):
 
 def journal_path(path):
     context = launch_context()
-    if context is None:
-        return path
     return Path(context['output_dir']) / f'{path.stem}-{uuid.uuid4().hex}.jsonl'
 
 
@@ -949,10 +929,7 @@ def prepare_scratch():
 
 
 def no_progress_seconds():
-    context = launch_context()
-    if context is not None:
-        return context['progress']['no_progress_seconds']
-    return json.loads(os.environ.get('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{}')).get('tests', 120)
+    return launch_context()['progress']['no_progress_seconds']
 
 
 def container_pending(name):

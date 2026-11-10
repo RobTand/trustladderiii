@@ -6,9 +6,15 @@ import pytest
 
 from tl3_harness import execution
 from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
+from conftest import flux_context
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 IMAGE = execution.Container('sha256:' + '1' * 64)
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
+
 
 
 class Progress:
@@ -31,11 +37,14 @@ def test_collection_above_64_kib_has_a_normal_report(tmp_path, monkeypatch):
     assert len(collection) > 65_536
 
 
-def test_large_selection_does_not_become_one_large_exec_argument(tmp_path, monkeypatch):
-    monkeypatch.setattr(execution, "scratch_directory", lambda: tmp_path)
+def test_large_selection_does_not_become_one_large_exec_argument(tmp_path):
+    from tl3_harness.runtime import podman_command
+
+    # The selection reaches the runner on stdin; the Flux container argv never carries it.
     tests = tuple(f'test_many.py::test_{i}_' + 'x' * 90 for i in range(2000))
-    command = execution.container_command(tmp_path, IMAGE, tests)
+    command = podman_command(tmp_path, IMAGE.image, tmp_path, 1, mode='in_job')
     assert max(len(arg.encode()) for arg in command) < 131_072
+    assert not any(test in arg for arg in command for test in tests[:3])
 
 
 def test_report_record_count_stays_bounded(tmp_path, monkeypatch):

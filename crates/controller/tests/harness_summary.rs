@@ -152,7 +152,6 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
         "stage-file-close",
         "selection-close",
         "fsync",
-        "rename",
         "proof-is-file",
         "proof-read",
         "stdout-write",

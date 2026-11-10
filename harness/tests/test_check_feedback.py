@@ -10,6 +10,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, Proof, Kind, Outcome, Verdict
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 BASE_PRODUCT = 'PROFILES = {"json": 1}\n\n\ndef profile(name):\n    return PROFILES[name]\n'
@@ -85,7 +86,7 @@ def round_repo(tmp_path, monkeypatch):
     head = save(repo, 'head')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     return repo, base, head
 
 

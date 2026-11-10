@@ -70,9 +70,6 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
     # report parsing and judging all execute inside the outer admitted PB job.
     runner = Path(execution.__file__).with_name("runner.py")
     monkeypatch.setattr(execution, "require_admission", lambda: None)
-    monkeypatch.setenv("PRISMABUILD_CONTAINER_OWNER", str(tmp_path))
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_PATH", str(tmp_path / "progress.json"))
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_TOKEN", "fixture-token")
     observed = {}
     def command(staged, container, tests):
         observed[staged.name] = _git(root, "hash-object", str(staged / "test_code.py")).strip()

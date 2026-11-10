@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""PB-only served-input regression through the generated Checking action.
+"""Served-input regression through the generated Checking action on a fixture Flux launch context.
 
-Only the container command is replaced with the real runner subprocess, as in
-harness/tests/test_red_message.py. No runtime, admission or judgment is replaced.
-This creates temporary test inputs, never a canary packet or native request.
+Flux is the only executor (PB-REMOVAL). The Rust run backend normally supplies the
+harness's launch context; here a FIXTURE context stands in for it: a private job
+scratch leaf, an output directory with the progress journal, and (only when the
+caller provides none) a private job-owned XDG_RUNTIME_DIR. Nothing else is replaced:
+the harness admission and rootless checks, action.py, the real runner subprocess
+(the container command is the runner, as in harness/tests/test_red_message.py) and
+judgment all run for real. This creates temporary test inputs, never a canary packet
+or native request, and it exercises no Rust admission or binding.
 """
 import hashlib
 import json
@@ -19,11 +24,40 @@ import time
 SOURCE = Path(__file__).resolve().parents[1]
 BASE = '5dd6443393f8d1a6be6fd4ad7aaebc8e1af7f436'
 NODE = 'test_value.py::test_value'
+CONTEXT_ENV = 'FX_FIXTURE_FLUX_CONTEXT'
+
+
+def fixture_job(root, name):
+    """Create one fixture Flux job: the launch context the Rust backend would hand the harness."""
+    job = root / name
+    job.mkdir(mode=0o700)
+    output = job / 'output'
+    output.mkdir(mode=0o700)
+    runtime_dir = job / 'xdg-runtime'
+    runtime_dir.mkdir(mode=0o700)
+    context = {'run': {'backend': 'flux', 'uri': 'local:///fixture/served', 'instance': 'fixture',
+                       'job': 'f' + hashlib.sha256(str(job).encode()).hexdigest()[:12]},
+               'scratch': {'leaf': str(job / 'scratch')},
+               'progress': {'journal': str(output / 'progress.jsonl'), 'no_progress_seconds': 120},
+               'output_dir': str(output)}
+    path = job / 'context.json'
+    path.write_text(json.dumps({'context': context, 'xdg_runtime_dir': str(runtime_dir)}))
+    return path
+
+
+def install_job(runtime, path):
+    """Select Flux and give the harness this fixture job's launch context; nothing else changes."""
+    job = json.loads(Path(path).read_text())
+    os.environ['TL3_EXECUTION_BACKEND'] = 'flux'
+    os.environ.setdefault('XDG_RUNTIME_DIR', job['xdg_runtime_dir'])
+    runtime.launch_context = lambda: job['context']
+    return job['context']
 
 
 def action(staged, evidence):
     sys.path.insert(0, str(staged / 'trusted'))
-    from tl3_harness import execution
+    from tl3_harness import execution, runtime
+    context = install_job(runtime, os.environ[CONTEXT_ENV])
     execution.require_admission()
     runner = Path(execution.__file__).with_name('runner.py')
     execution.container_command = lambda tree, container, tests: [
@@ -33,8 +67,12 @@ def action(staged, evidence):
 
     def capture(tree, container, tests, report, *args, **kwargs):
         started = time.monotonic()
+        output = Path(context['output_dir'])
+        before = set(output.glob(f'{report.stem}-*.jsonl'))
         outcomes = actual(tree, container, tests, report, *args, **kwargs)
-        records = report.read_bytes()
+        # Under Flux the harness journals each report into the job's output_dir.
+        journal, = set(output.glob(f'{report.stem}-*.jsonl')) - before
+        records = journal.read_bytes()
         target = evidence / f'{len(runs)}-{report.name}'
         target.write_bytes(records)
         runs.append({'report': target.name, 'seconds': time.monotonic() - started,
@@ -50,8 +88,10 @@ def action(staged, evidence):
 def verify(root):
     from unittest.mock import patch
     sys.path.insert(0, str(SOURCE / 'harness/src'))
+    from tl3_harness import runtime
     from tl3_harness.execution import require_admission
     from tl3_harness.trees import git
+    install_job(runtime, fixture_job(root, 'verify-flux-job'))
     require_admission()
     evidence = Path(os.environ['FX_FIXTURE_EVIDENCE'])
     evidence.mkdir(parents=True, exist_ok=False)
@@ -104,7 +144,8 @@ def verify(root):
                 (retained / f'{side}-{file}').write_bytes(git(repo, 'show', f'{revision}:{file}'))
         started = time.monotonic()
         child = subprocess.run([sys.executable, __file__, '--action', str(staged), str(retained)],
-                               capture_output=True, timeout=55)
+                               capture_output=True, timeout=55,
+                               env={**os.environ, CONTEXT_ENV: str(fixture_job(root, f'{name}-flux-job'))})
         elapsed = time.monotonic() - started
         (retained / 'stdout.log').write_bytes(child.stdout)
         (retained / 'stderr.log').write_bytes(child.stderr)

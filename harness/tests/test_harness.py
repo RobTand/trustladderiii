@@ -13,6 +13,7 @@ from tl3_harness.model import Check, Proof, FailureNotes, Custody, Kind, Outcome
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.proof import assemble_proof
 from tl3_harness.trees import added_names, export, git, changed_configuration
+from conftest import flux_context
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -199,41 +200,18 @@ def test_setup_error_is_not_an_assertion(trees):
 
 
 @pytest.mark.durability
-def test_progress_is_atomic_cumulative_and_contains_no_test_secrets(tmp_path, monkeypatch):
-    target = tmp_path / "progress.json"
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_PATH", str(target))
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_TOKEN", "sentinel")
+def test_progress_is_cumulative_raw_journal_with_no_backend_claim(monkeypatch):
+    context = flux_context(monkeypatch)
+    journal = Path(context["progress"]["journal"])
     progress = Progress()
     progress.commit("first")
-    assert json.loads(target.read_text())["units_completed"] == 1
     progress.commit("second")
-    record = json.loads(target.read_text())
-    assert record["schema"] == "prismabuild.action_progress.v1"
-    assert record["units_completed"] == 2
-    assert record["phase"] == "tests"
+    assert progress.units == 2
     resumed = Progress()
+    assert resumed.units == 2
     resumed.commit("third")
-    assert json.loads(target.read_text())["units_completed"] == 3
-
-
-def test_container_has_only_explicit_mounts_and_no_host_environment(tmp_path, monkeypatch):
-    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path / "scratch")
-    (tmp_path / "scratch").mkdir()
-    command = container_command(tmp_path, Container(IMAGE), ("tests/test_x.py::test_x",))
-    assert command[:2] == ["docker", "run"]
-    for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--pull=never"):
-        assert flag in command
-    mounts = [command[index + 1] for index, value in enumerate(command) if value == "--mount"]
-    assert len(mounts) == 3 and sum(mount.endswith(",readonly") for mount in mounts) == 2
-    assert not any("/mnt/shared" in mount or "docker.sock" in mount for mount in mounts)
-    assert "--cpuset-cpus" not in command
-
-
-def test_container_reaps_orphans(tmp_path, monkeypatch):
-    monkeypatch.setattr('tl3_harness.execution.scratch_directory', lambda: tmp_path / 'scratch')
-    command = container_command(tmp_path, Container(IMAGE), ('test_orphans.py::test_x',))
-    assert '--init' in command[:command.index(IMAGE)]
-    assert '--pids-limit=128' in command
+    assert [json.loads(line) for line in journal.read_text().splitlines()] == [
+        "first", "second", "third"]
 
 
 def test_verification_suite_reaps_orphans(monkeypatch):
@@ -259,10 +237,15 @@ def test_verification_suite_reaps_orphans(monkeypatch):
     assert '--pids-limit=128' in commands[0]
 
 
-def test_requires_pb_admission(tmp_path, monkeypatch):
-    monkeypatch.delenv("PRISMABUILD_CONTAINER_OWNER", raising=False)
-    with pytest.raises(RuntimeError, match="admitted"):
-        run_checks(tmp_path, "base", "head", (), container=Container(IMAGE))
+def test_requires_a_flux_launch_context(tmp_path, monkeypatch):
+    # PB-REMOVAL: no PrismaBuild admission path remains; without Flux nothing runs.
+    for backend in (None, "prismabuild"):
+        if backend is None:
+            monkeypatch.delenv("TL3_EXECUTION_BACKEND", raising=False)
+        else:
+            monkeypatch.setenv("TL3_EXECUTION_BACKEND", backend)
+        with pytest.raises(RuntimeError, match="execution backend"):
+            run_checks(tmp_path, "base", "head", (), container=Container(IMAGE))
 
 
 @pytest.mark.parametrize("test", ["-k", "../test.py::test_x", "/test.py::test_x", "test.py::"])
@@ -369,19 +352,6 @@ def test_reproducing_verdicts(trees, name, expected):
     assert result.verdict == expected, asdict(result)
     assert result.custody == Custody.IN_PROCESS
     assert not result.tests[0].pre_existing
-
-
-@pytest.mark.parametrize("cpus", [None, "4"])
-def test_container_preserves_admitted_native_thread_bounds(tmp_path, monkeypatch, cpus):
-    names = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
-    for name in names:
-        monkeypatch.delenv(name, raising=False)
-        if cpus is not None:
-            monkeypatch.setenv(name, cpus)
-    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
-    command = container_command(tmp_path, Container(IMAGE), ())
-    for name in names:
-        assert f"{name}={cpus or '1'}" in command
 
 
 def test_added_names_include_new_module_constants(tmp_path):

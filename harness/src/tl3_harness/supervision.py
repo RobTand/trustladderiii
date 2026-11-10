@@ -126,7 +126,7 @@ class Supervised:
         self.stderr_withheld = False
         command = list(command)
         run_index = 2 if command[1:2] == ['--cgroup-manager=systemd'] else 1
-        if len(command) > run_index and Path(command[0]).name in ('docker', 'podman') and command[run_index] == 'run':
+        if len(command) > run_index and Path(command[0]).name == 'podman' and command[run_index] == 'run':
             self.runtime = command[0]
             self.container = 'tl3-test-' + uuid.uuid4().hex
             command[run_index + 1:run_index + 1] = ['--name', self.container]
@@ -134,16 +134,16 @@ class Supervised:
 
     def __enter__(self):
         phase = 'host_evidence'
-        if self.runtime and Path(self.runtime).name == 'podman':
+        # Flux is the only executor (PB-REMOVAL): every container launch is durable.
+        if self.runtime:
             try:
                 self.evidence = runtime.evidence_sink(self.container)
-                if self.evidence is not None and self.evidence.context is not None:
-                    phase = 'allocation'
-                    runtime.prepare_allocation(self.evidence)
+                phase = 'allocation'
+                runtime.prepare_allocation(self.evidence)
             except (OSError, RuntimeError, ValueError, StopIteration, KeyError, TypeError) as error:
                 # No command bytes have reached any runtime client.
                 raise self.prelaunch_failure(error, phase, 'prelaunch_refused') from error
-        durable = self.evidence is not None and self.evidence.context is not None
+        durable = self.evidence is not None
         launch_command = ([sys.executable, '-I', '-B', str(Path(runtime.__file__).with_name('runtime_launcher.py'))]
                           if durable else self.command)
         try:
@@ -191,9 +191,6 @@ class Supervised:
                     if isinstance(error, Exception):
                         raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'container_start', 'launch_refused') from error
                 raise
-
-        if self.runtime and Path(self.runtime).name == 'podman' and not durable:
-            runtime.container_pending(self.container)
 
         return self
 
@@ -379,7 +376,7 @@ class Supervised:
             self.child.stdin.close()
         self.child.stdout.close()
         self.child.stderr.close()
-        if self.evidence is not None and self.evidence.context is not None:
+        if self.evidence is not None:
             context = self.evidence.context
             runtime_stopped = False
             try:
@@ -426,29 +423,3 @@ class Supervised:
             if not self.cleanup_confirmed:
                 raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'cleanup', 'container_cleanup_unconfirmed')
             return
-        if self.container is not None:
-            try:
-                subprocess.run([self.runtime, 'rm', '--force', self.container], stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=self.cleanup_seconds, check=False)
-                if Path(self.runtime).name == 'podman':
-                    absent = subprocess.run([self.runtime, 'container', 'exists', self.container],
-                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.DEVNULL, timeout=self.cleanup_seconds, check=False)
-                    self.cleanup_confirmed = absent.returncode == 1
-                    if self.evidence is not None:
-                        self.cleanup_confirmed = self.cleanup_confirmed and runtime.processes_stopped(
-                            self.process_handles, self.cleanup_seconds)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            for handle in self.process_handles:
-                os.close(handle)
-            if self.cleanup_confirmed:
-                runtime.container_stopped(self.container, self.command)
-            if self.evidence is not None:
-                if len(args) > 1 and isinstance(args[1], ExecutionFailure):
-                    self.evidence.record('execution_failure', args[1].as_json())
-                self.evidence.record('cleanup', {'confirmed': self.cleanup_confirmed})
-            if Path(self.runtime).name == 'podman' and not self.cleanup_confirmed:
-                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'cleanup',
-                                   'container_cleanup_unconfirmed')

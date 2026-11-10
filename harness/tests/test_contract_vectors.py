@@ -20,6 +20,7 @@ import pytest
 from tl3_harness import execution, proof, test_tool
 from tl3_harness.execution import result_json, run_checks
 from tl3_harness.model import Check, Forcing, Kind, Proof
+from conftest import flux_context
 
 
 VECTORS = Path(__file__).resolve().parents[1] / 'test-vectors/contracts'
@@ -183,15 +184,13 @@ def produce(tmp_path, monkeypatch):
         monkeypatch.setattr(module, 'require_admission', lambda: None)
         monkeypatch.setattr(module, 'container_command', command)
     monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    flux_context(monkeypatch)
 
     def run(name):
         scenario = SCENARIOS[name]
         repo = tmp_path / 'served'
         repo.mkdir()
         subprocess.run(['git', 'init', '-q', '--template=', '-b', 'main', str(repo)], check=True, capture_output=True)
-        monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
         base = commit(repo, {'pyproject.toml': CONFIG, **scenario['base']}, 'base')
         head = commit(repo, scenario['head'], 'head')
         request = {'effect_key': f'checks:{name}', 'base': base, 'head': head, 'reviewed': None,

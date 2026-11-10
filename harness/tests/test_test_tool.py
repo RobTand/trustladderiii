@@ -5,7 +5,8 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness import test_tool
+from tl3_harness import runtime, test_tool
+from conftest import flux_context
 
 
 @pytest.fixture
@@ -35,8 +36,7 @@ def test_setup(broken):
     pass
 ''')
     monkeypatch.setattr(test_tool, "require_admission", lambda: None)
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_PATH", str(tmp_path / "progress.json"))
-    monkeypatch.setenv("PRISMABUILD_ACTION_PROGRESS_TOKEN", "fixture")
+    flux_context(monkeypatch)
     monkeypatch.setattr(test_tool, "container_command", lambda tree, container, tests: [
         sys.executable, "-I", "-B", str(Path(execution.__file__).with_name("runner.py")),
         json.dumps(tests), str(tree),
@@ -50,7 +50,8 @@ def test_whole_suite_reports_each_outcome_and_progress(fixture):
     assert result["totals"] == {"passed": 1, "failed": 1, "error": 2, "skipped": 1}
     assert len(result["tests"]) == 5
     assert "Truncated" in result["note"]
-    assert json.loads((fixture / "progress.json").read_text())["units_completed"] == 5
+    journal = Path(runtime.launch_context()["progress"]["journal"])
+    assert len(journal.read_text().splitlines()) == 5
 
 
 @pytest.mark.parametrize("selectors,passed", [(('test_value.py::test_pass',), 1), (('test_value.py',), 1)])
@@ -186,7 +187,8 @@ def pytest_configure(config):
     assert [run["run"] for run in result["runs"]] == [1, 2, 3, 4, 5]
     assert all(run["status"] == "completed" and run["totals"]["passed"] == 1 for run in result["runs"])
     assert result["totals"] == {"passed": 1, "failed": 0, "error": 0, "skipped": 0}
-    assert json.loads((fixture / "progress.json").read_text())["units_completed"] == 5
+    journal = Path(runtime.launch_context()["progress"]["journal"])
+    assert len(journal.read_text().splitlines()) == 5
 
 
 def test_repeat_keeps_any_failing_run(fixture):
@@ -358,7 +360,7 @@ def test_repeat_with_many_long_failures_retains_facts_for_the_worker(fixture):
 @pytest.mark.parametrize('hang', ['body', 'cleanup', 'descendant', 'session_cleanup'])
 def test_unproven_hang_stays_unknown_with_bounded_cleanup(fixture, monkeypatch, hang):
     import time
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    flux_context(monkeypatch, no_progress_seconds=3)
     source = '''import signal, time, subprocess, sys
 signal.alarm(8)
 def test_hang():
@@ -407,27 +409,11 @@ def pytest_unconfigure(config):
 
 
 def test_pretest_hang_is_setup_infrastructure(fixture, monkeypatch):
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    flux_context(monkeypatch, no_progress_seconds=3)
     (fixture / 'conftest.py').write_text('import signal, time\nsignal.alarm(8)\nwhile True: time.sleep(1)\n')
     result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
     assert result['status'] == 'infrastructure_error'
     assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
-    assert result['execution']['test_started'] is False
-
-
-def test_real_missing_container_runtime_stays_infrastructure(fixture, monkeypatch):
-    # Invoke the real container launcher with a PATH that cannot contain Docker.
-    # No test process can start, even on a worker that happens to have a daemon.
-    monkeypatch.setenv('PATH', str(fixture / 'no-container-runtime'))
-    monkeypatch.setattr(execution, 'scratch_directory', lambda: fixture)
-    monkeypatch.setattr(test_tool, 'container_command', execution.container_command)
-    try:
-        result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
-    except OSError:
-        result = {'status': 'uncaught_container_start_failure'}
-    assert result['status'] == 'infrastructure_error', result
-    assert result['execution']['outcome'] == 'setup_failure'
-    assert result['execution']['phase'] == 'container_start'
     assert result['execution']['test_started'] is False
 
 
@@ -443,7 +429,7 @@ def test_incomplete_report_has_explicit_unknown_ownership(fixture):
 def test_independent_checking_unproven_hang_never_supplies_assertion_red(fixture, monkeypatch, kind):
     from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
     monkeypatch.setattr(execution, 'container_command', test_tool.container_command)
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    flux_context(monkeypatch, no_progress_seconds=3)
     (fixture / 'test_value.py').write_text('import signal, time\nsignal.alarm(8)\ndef test_hang():\n    while True: time.sleep(1)\n')
     tests = ('test_value.py::test_hang',)
     messages = {}
@@ -458,7 +444,7 @@ def test_independent_checking_unproven_hang_never_supplies_assertion_red(fixture
 
 @pytest.mark.parametrize('access', ['plugin_manager', 'gc'])
 def test_forged_test_start_during_collection_cannot_prove_owned_timeout(fixture, monkeypatch, access):
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    flux_context(monkeypatch, no_progress_seconds=3)
     if access == 'plugin_manager':
         (fixture / 'conftest.py').write_text('''import signal, time
 signal.alarm(8)
@@ -490,7 +476,7 @@ def test_pass():
 def test_clean_runner_exit_followed_by_container_wait_stall_is_infrastructure(
         fixture, monkeypatch, tmp_path, report_pipe):
     import time
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 3}')
+    flux_context(monkeypatch, no_progress_seconds=3)
     (fixture / 'test_value.py').write_text('def test_pass():\n    assert True\n')
     runner = Path(execution.__file__).with_name('runner.py')
     # This wrapper is outside the pytest process. Its wait() observes the actual

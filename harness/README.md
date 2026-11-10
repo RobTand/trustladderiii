@@ -1,7 +1,7 @@
 # Pytest check harness
 
 This package runs a check plan on a base commit and a head commit in one
-PrismaBuild action. Install it outside the served checkout. The controller
+Flux job (Flux is the only executor; PB-REMOVAL). Install it outside the served checkout. The controller
 adapter is a separate ticket.
 
 ## Interface
@@ -24,11 +24,10 @@ results = run_checks(
 )
 ```
 
-The process must already be inside an admitted PrismaBuild action. Declare
-the image with `--container-image`, a `tests` progress phase with an allowance
-appropriate to the suite, CPU and memory demand, and native thread limits.
-Do not set a total-duration timeout. Use `--anywhere`. The image must already
-be local on an eligible worker. Python 3.14 and pytest must be in the image.
+The process must already run inside a Flux job that the Rust run backend
+launched: `TL3_EXECUTION_BACKEND=flux` and its launch context supply the image,
+scratch leaf, progress journal, no-progress allowance and native thread limits.
+Without them the harness refuses to run. Python 3.14 and pytest must be in the image.
 The trusted outer process needs Python 3.14 and Git.
 
 `run_checks` returns immutable `Result` objects. Each contains the check's name,
@@ -378,9 +377,9 @@ privilege escalation. Use a trusted image without embedded secrets.
 
 The plugin emits JSON events through stdout. The runner suppresses pytest and
 test output. The outer process journals each event and parses it outside the
-container. After each test's teardown report is durable, it atomically writes
-PB's progress record. Counts remain cumulative across trees and invocations
-inside the same action. The PB progress token never enters a container.
+container. After each test's teardown report is durable, it appends one raw
+completion line to the launch context's progress journal. Counts remain
+cumulative across trees and invocations inside the same job.
 
 PB #2403 remains open. The published runtime offers managed containers and
 resource containment, but no enforced `hostile-v1` submission profile or
@@ -545,26 +544,19 @@ so cooperating subprocesses use the same scratch. Module and session fixtures
 retain their separately owned temporary directories for their scope.
 Cleanup is best effort: a file recreated by a background writer must not turn a
 passing test into a teardown error. Any residue and session data stay under the
-PB-owned action leaf until PB removes the containers and finalizes scratch.
+job scratch leaf until the run backend's cleanup removes the containers and
+finalizes scratch.
 
 ## Disk scratch
 
-Every pytest container gets a fresh private child of the action's registered
-`scratch-lifetime-v1` leaf, bind-mounted at `/tmp`. The leaf lives under
-`/home/rob/tmp`. Maker, rehearsal and Checking all use `container_command`.
-The submissions declare 512 MiB of scratch for admission accounting, rounded
-up by PB to 1 GiB of spool demand. This is not an enforced filesystem quota.
-There is no tmpfs memory surcharge or `exec_scratch` option. Mount flags are
-inherited from the host, and the container uses the leaf owner's UID:GID.
+Every pytest container gets a fresh private child of the job scratch leaf that
+the Rust Flux launch context names (`scratch.leaf`), bind-mounted at `/tmp`.
+Maker, rehearsal and Checking all use `container_command`. There is no tmpfs
+memory surcharge or `exec_scratch` option. Mount flags are inherited from the
+host, and the container uses the leaf owner's UID:GID. Flux is the only
+executor: without `TL3_EXECUTION_BACKEND=flux` and its launch context the
+harness refuses to run (PB-REMOVAL).
 See the [policy decision and threat model](../docs/design/executable-scratch.md).
-
-`tools/verify_disk_scratch.py IMAGE` runs the untouched disk-backed specimen
-through Checking and maker test paths. Its `setup-failure` and `cancel` modes
-leave mode-0700 session data for PB cleanup. Submit it through PrismaBuild
-with the same four scratch environment variables returned by
-`tl3_harness.scratch.environment()`, the existing image pin, and a `tests`
-progress phase. Read terminal records, logs and CAS receipts after cleanup;
-a submission acknowledgement alone is not a result.
 
 ## Subject and observer proof
 

@@ -523,15 +523,15 @@ from tl3_harness import test_tool
 from tl3_harness import execution
 import json
 execution.require_admission = test_tool.require_admission = lambda: None
-import os
-os.environ['PRISMABUILD_ACTION_PROGRESS_PATH'] = str(Path('progress.json').resolve())
-os.environ['PRISMABUILD_ACTION_PROGRESS_TOKEN'] = 'fixture'
+FLUX_JOB_CHILD
 test_tool.container_command = lambda tree, container, tests: [sys.executable, '-I', '-B', '-c', RUNNER,
     str(Path(execution.__file__).with_name('runner.py')), '-', str(tree)]
 sys.argv = ['action.py', *json.loads(sys.argv[1])]
 test_tool.main()
 '''
-        script = script.replace('RUNNER', repr(REHEARSAL_RUNNER))
+        script = script.replace('RUNNER', repr(REHEARSAL_RUNNER)).replace(
+            'FLUX_JOB_CHILD', shared.FLUX_JOB_CHILD.format(
+                context=json.dumps(shared.flux_job_context(Path(staged).parent / (Path(staged).name + '-flux-job')))))
         child = subprocess.run([sys.executable, '-c', script, json.dumps([IMAGE, *document['arguments']])],
                                cwd=staged, capture_output=True, text=True, check=True)
         return shared.action_payload(child.stdout)
