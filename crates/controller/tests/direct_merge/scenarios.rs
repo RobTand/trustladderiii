@@ -1806,3 +1806,63 @@ fn m4_lost_reply_retains_landed_commit_and_saved_base() {
     assert!(m4_notices(&mut controller).is_empty());
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
+
+struct M4BaseChecks {
+    inner: adapters::flux_checks::Fake,
+    base: String,
+    moved_base: Option<String>,
+    api: Arc<Mutex<State>>,
+}
+impl Executor for M4BaseChecks {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        let mut completion = self.inner.execute(delivery)?;
+        if matches!(delivery.output, Out::Effect { kind: EffectKind::SubmitChecks, .. }) {
+            completion.observations = vec![tl3_controller::executor::Observation::Checks {
+                node: delivery.node(), generation: delivery.generation,
+                sha: delivery.head_sha.clone().unwrap(), changed_paths: vec![], failed_tests: vec![],
+                report: true, pass: true, results: vec![], base_sha: self.base.clone(),
+                action_key: format!("base-check:{}", delivery.key),
+            }];
+            if let Some(base) = &self.moved_base {
+                self.api.lock().unwrap().pull["base"]["sha"] = json!(base);
+            }
+        }
+        Ok(completion)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        self.inner.reconcile(delivery)
+    }
+}
+fn m4_base_record_case(moved: bool) {
+    let mut database = support::Database::start();
+    let settings = database.create(if moved {"m4_base_moved"} else {"m4_base_ordinary"});
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let checked_base = "4".repeat(40);
+    let merge_base = if moved {"5".repeat(40)} else {checked_base.clone()};
+    fixture.api.state.lock().unwrap().pull["base"]["sha"] = json!(checked_base);
+    let mut registry = adapters::simulation(fixture.root.path()).unwrap();
+    registry.register(Upstream::Delivery, fixture.adapter(&settings));
+    registry.register(Upstream::PrismaBuild, M4BaseChecks {
+        inner: adapters::flux_checks::Fake::new(fixture.root.path()), base: checked_base.clone(),
+        moved_base: moved.then(|| merge_base.clone()), api: fixture.api.state.clone(),
+    });
+    let controller = Controller::open_with_clock(Store::open(&settings).unwrap(), registry, bootstrap(), fixture.clock.clone()).unwrap();
+    let (mut controller, _) = fixture.start_controller(&settings, controller);
+    let before = controller.snapshot().unwrap();
+    let report = before.rows.iter().find(|row| row.table == "check_reports").expect("passing check report is persisted before merge closure");
+    assert_eq!(report.value["base_sha"], checked_base);
+    assert_eq!(report.value["pass"], true);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["checked_base"], checked_base, "checked base must come from the passing check report");
+    assert_eq!(record["landed"]["merge_base"], merge_base, "merge base must come from the final PR read");
+    assert_eq!(record["landed"]["base_moved"], moved);
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "base audit fields must not change the merge decision");
+    assert!(m4_notices(&mut controller).is_empty(), "base movement alone is record-only in M-4");
+}
+#[test]
+fn m4_base_moved_records_checked_and_merge_bases() { m4_base_record_case(true); }
+#[test]
+fn m4_base_ordinary_records_no_movement() { m4_base_record_case(false); }
