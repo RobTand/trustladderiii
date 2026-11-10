@@ -1,10 +1,35 @@
 {
-  "source_head": "dc3e7e470305a300dc042c40a25f5365d7c77850",
+  "source_head": "2eef546108a6751d4284caaea5531a6e69699f2c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e86a049b7c7ffa592bbeff41b4d16c66d7ca767ca6b25b6d4426c637fd1d6846",
-  "groups": 546,
-  "obligations": 744,
+  "source_sha256": "1412bcace5dd8be1672d2af0b06837c18ea55dce9f3fc5b38ed0666d2aa6cb4a",
+  "groups": 551,
+  "obligations": 749,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_advance_rebase_value",
+      "selector": "kernel::ranks#advance_rebase_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_finished_value",
+      "selector": "kernel::ranks#advance_finished_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_retains_holds_intro",
+      "selector": "kernel::advance_family_post#retains_holds_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_holds_phase_items",
+      "selector": "kernel::advance_family_post#holds_phase_items",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_retained_holds",
+      "selector": "kernel::advance_family_rules#retained_holds",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_rules_slot_resume_from_grant",
       "selector": "kernel::advance_family_rules#slot_resume_from_grant",
