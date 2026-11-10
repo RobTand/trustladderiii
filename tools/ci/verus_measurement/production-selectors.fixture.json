@@ -1,10 +1,165 @@
 {
-  "source_head": "e78926c9722eed18fa33d87109ae49e05eec53ce",
+  "source_head": "220e41b293dcdeb0eb545e1fdddbc2d434091c2f",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "86838c2dd7e02c0dff79f5f23f5e4ca02f7495ef4d36af2db255996481952cf0",
-  "groups": 640,
-  "obligations": 838,
+  "source_sha256": "9bffffa0e2b26e357af93f37cda6c37de0aebf4dbed7e0f604e028ce55b56bde",
+  "groups": 671,
+  "obligations": 870,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_count",
+      "selector": "kernel::facts_family_values#infrastructure_incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_arm",
+      "selector": "kernel::facts_family_values#infrastructure_retry_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_arm",
+      "selector": "kernel::facts_family_values#infrastructure_incident_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_value",
+      "selector": "kernel::facts_family_values#infrastructure_retry_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_bridge",
+      "selector": "kernel::facts_family_values#infrastructure_retry_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_priority_fact_arm",
+      "selector": "kernel::facts_family_values#priority_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_closed_pr_fact_arm",
+      "selector": "kernel::facts_family_values#closed_pr_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_conflict_fact_arm",
+      "selector": "kernel::facts_family_values#conflict_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_cleared_fact_arm",
+      "selector": "kernel::facts_family_values#cleared_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_credit_value",
+      "selector": "kernel::facts_family_values#merge_credit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merged_fact_arm",
+      "selector": "kernel::facts_family_values#merged_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_fact_value_bridge",
+      "selector": "kernel::facts_family_values#fact_value_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_outputs",
+      "selector": "kernel::facts_family_values#ordinary_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_frame",
+      "selector": "kernel::facts_family_values#merge_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_distance",
+      "selector": "kernel::facts_family_values#merge_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_outputs",
+      "selector": "kernel::facts_family_values#merge_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_frame",
+      "selector": "kernel::facts_family_values#ordinary_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_step",
+      "selector": "kernel::facts_family_values#value_node_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_fail_fast",
+      "selector": "kernel::facts_family_values#value_fail_fast",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_event_rules",
+      "selector": "kernel::facts_family_values#value_event_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_distance",
+      "selector": "kernel::facts_family_values#ordinary_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_empty_merge_notices",
+      "selector": "kernel::facts_family_values#empty_merge_notices",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_rows",
+      "selector": "kernel::facts_family_values#value_node_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_value",
+      "selector": "kernel::facts_family_values#ordinary_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_fact_value",
+      "selector": "kernel::facts_family_values#merge_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_append_fact_notices",
+      "selector": "kernel::facts_family_values#append_fact_notices",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_entry",
+      "selector": "kernel::facts_family_values#ordinary_fact_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_dependency_entry",
+      "selector": "kernel::facts_family_values#fact_dependency_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_on_fact_rows",
+      "selector": "kernel::facts_family_lemmas#on_fact_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_notices_outputs",
+      "selector": "kernel::facts_family_lemmas#notices_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_selected_apply_rows",
+      "selector": "kernel::facts_family_lemmas#selected_apply_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
       "selector": "kernel::footprint#disjoint_under_table_growth",
