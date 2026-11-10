@@ -803,7 +803,7 @@ fn recheck_paid(n: Node, target: Phase) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::recheck_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node = spent_v(node);
+    node = node;
     node = held_v(node, target);
     node = set_phase_v(node, target);
     ReplyChange::Done { node, note }
