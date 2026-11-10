@@ -252,6 +252,20 @@ pub(super) open spec fn slot_grant(n: Node, a: Node, c: AdvanceContext, changed:
         && a.repo == n.repo && a.footprint == n.footprint
         && a.pool == n.pool && a.run == n.run)
     && (!c.slot ==> a == n)
+    && (c.slot ==> a.pos == 0 && a.paused == n.paused)
+}
+
+/// R10: plain rows of the proven Ready-waiter grant contract.
+pub(super) proof fn slot_grant_rows(n: Node, a: Node, c: AdvanceContext, changed: bool)
+    requires slot_grant(n, a, c, changed),
+    ensures changed == c.slot,
+        c.slot ==> a.holds && a.ticket.is_none()
+            && a.phase == resumed_phase(match n.phase { Phase::Ready(r) => r, _ => Resume::Making })
+            && a.repo == n.repo && a.footprint == n.footprint
+            && a.pool == n.pool && a.run == n.run,
+        !c.slot ==> a == n,
+{
+    reveal(slot_grant);
 }
 
 pub(super) proof fn slot_grant_from_value(b: Node, t0: u64, c: AdvanceContext, v: (Node, u64, bool))

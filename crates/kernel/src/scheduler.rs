@@ -122,6 +122,25 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
                 && final(w).nodes@[i as int].ticket.is_none(),
         advance_family_post::holds_item(old(w).nodes@[i as int])
             ==> advance_family_post::holds_frame(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+            ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+                && old(w).nodes@[older].phase is Ready
+                && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+                && old(w).nodes@[older].ticket.is_some()
+                && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+                ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint,
+                    old(w).nodes@[i as int].footprint),
+        (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+            ==> final(w).nodes@[i as int].phase == resumed_phase(
+                match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
+                && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
+    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds)
+        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+            && old(w).nodes@[older].phase is Ready
+            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+            && old(w).nodes@[older].ticket.is_some()
+            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
@@ -161,6 +180,10 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
         reveal(advance_family_post::grant_facts);
         reveal(advance_family_post::pool_grant);
         reveal(advance_family_post::slot_grant);
+        if advance_family_post::ready_unobstructed(before_advance@.nodes@[i as int]) && changed {
+            advance_family_rules::slot_resume_from_grant(before_advance@.nodes@[i as int],
+                w.nodes@[i as int], context, changed);
+        }
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
             before_advance@.next_ticket, w.next_ticket, changed);
