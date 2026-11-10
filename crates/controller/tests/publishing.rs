@@ -384,9 +384,23 @@ impl Respond for Api {
             }));
         }
         if method == "GET" && path.starts_with("/compare/") {
-            let (base, head) = path.strip_prefix("/compare/").unwrap().split_once("...").unwrap();
-            let behind: u64 = git(&self.fixture.remote, &["rev-list", "--count", &format!("{head}..{base}")]).parse().unwrap();
-            let ahead: u64 = git(&self.fixture.remote, &["rev-list", "--count", &format!("{base}..{head}")]).parse().unwrap();
+            let (base, head) = path
+                .strip_prefix("/compare/")
+                .unwrap()
+                .split_once("...")
+                .unwrap();
+            let behind: u64 = git(
+                &self.fixture.remote,
+                &["rev-list", "--count", &format!("{head}..{base}")],
+            )
+            .parse()
+            .unwrap();
+            let ahead: u64 = git(
+                &self.fixture.remote,
+                &["rev-list", "--count", &format!("{base}..{head}")],
+            )
+            .parse()
+            .unwrap();
             let status = match (behind, ahead) {
                 (0, 0) => "identical",
                 (0, _) => "ahead",

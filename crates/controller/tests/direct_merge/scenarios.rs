@@ -292,6 +292,7 @@ fn m3_live_base_moved_with_stale_pr_base_refuses_clean_merge() {
     assert_eq!(record["current_base"], "d".repeat(40));
     assert_eq!(record["pr_base_sha"], "c".repeat(40));
     assert_eq!(record["reason"], format!("base moved: checked {}, current {}", "c".repeat(40), "d".repeat(40)));
+    assert!(fixture.direct.lock().unwrap().comparisons.is_empty(), "a moved live base must bypass the ancestry read");
 }
 
 #[test]

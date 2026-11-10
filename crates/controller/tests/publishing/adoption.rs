@@ -300,8 +300,9 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let d = f.delivery(EffectKind::Push, 100);
     let landed = f.head(&d);
     assert_eq!(
-        git(&f.repo, &["merge-base", &author_head, &landed]),
-        author_head
+        git(&f.repo, &["merge-base", &check_base, &landed]),
+        check_base,
+        "an adopted head must be rebased onto the unchanged checked base before delivery"
     );
     assert_eq!(*maker_runs.lock().unwrap(), usize::from(fixing));
     assert_eq!(c.world().unwrap().nodes[0].credit.balance(), 4);
@@ -310,7 +311,27 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(reviews.len(), 1);
+    assert_eq!(
+        reviews.len(),
+        2,
+        "the adopted head needs fresh review after the clean rebase"
+    );
+    let first_head = reviews[0]["inputs"]["head_sha"].as_str().unwrap();
+    assert_eq!(
+        git(&f.repo, &["merge-base", &author_head, first_head]),
+        author_head
+    );
+    assert_ne!(first_head, landed);
+    assert_eq!(reviews[1]["inputs"]["head_sha"], landed);
+    assert_eq!(reviews[1]["inputs"]["check_base_sha"], check_base);
+    let snapshot = c.snapshot().unwrap();
+    let report = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "check_reports" && row.id == format!("0:{landed}"))
+        .expect("the rebased adopted head needs a fresh passing report");
+    assert_eq!(report.value["base_sha"], check_base);
+    assert_eq!(report.value["pass"], true);
     assert_eq!(reviews[0]["inputs"]["check_base_sha"], check_base);
     let diff = reviews[0]["inputs"]["diff"].as_str().unwrap();
     assert!(diff.contains(if fixing {

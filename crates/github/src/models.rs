@@ -223,9 +223,34 @@ pub struct CheckSuite {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(try_from = "ComparisonResponse")]
 pub struct Comparison {
     pub status: ComparisonStatus,
     pub behind_by: u64,
+}
+
+#[derive(Deserialize)]
+struct ComparisonResponse {
+    status: ComparisonStatus,
+    behind_by: u64,
+}
+
+impl TryFrom<ComparisonResponse> for Comparison {
+    type Error = &'static str;
+
+    fn try_from(response: ComparisonResponse) -> Result<Self, Self::Error> {
+        let contains = matches!(
+            response.status,
+            ComparisonStatus::Ahead | ComparisonStatus::Identical
+        );
+        if contains != (response.behind_by == 0) {
+            return Err("comparison status disagrees with behind_by");
+        }
+        Ok(Self {
+            status: response.status,
+            behind_by: response.behind_by,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

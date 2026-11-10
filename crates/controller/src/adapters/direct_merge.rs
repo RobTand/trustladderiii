@@ -649,7 +649,7 @@ impl Adapter {
             .filter(|base| head(base).is_ok());
         let mut base_moved = None;
         if pull.merged_at.is_none() && pull.state == "open" && head(&pull.head.sha)? == approved {
-            // Pull metadata is not a live branch-tip read. Read the second pull's base last.
+            // Pull metadata can lag; read the live tip after the second pull.
             let branch = self
                 .runtime
                 .block_on(github.branch(&repo, &pull.base.branch))?;
@@ -657,8 +657,8 @@ impl Adapter {
                 .as_ref()
                 .map(|branch| branch.commit.sha.as_str())
                 .filter(|base| head(base).is_ok());
-            if current_base.is_none() || checked_base != current_base {
-                let reason = match (checked_base, current_base) {
+            let reason = if current_base.is_none() || checked_base != current_base {
+                Some(match (checked_base, current_base) {
                     (_, None) => format!(
                         "base moved: live tip unavailable for branch {}",
                         pull.base.branch
@@ -669,7 +669,21 @@ impl Adapter {
                     (None, Some(current)) => format!(
                         "base moved: checked base unavailable for approved head {approved_sha}, current {current}"
                     ),
-                };
+                })
+            } else if let Some(base) = checked_base {
+                let comparison = self
+                    .runtime
+                    .block_on(github.compare(&repo, base, approved_sha))?;
+                (comparison.behind_by > 0).then(|| {
+                    format!(
+                        "head does not contain checked base {base}; behind_by {}",
+                        comparison.behind_by
+                    )
+                })
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
                 base_moved = Some(serde_json::json!({
                     "head": approved_sha,
                     "checked_base": checked_base,

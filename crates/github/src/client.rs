@@ -1377,8 +1377,19 @@ impl GitHub {
         .await
     }
 
-    pub async fn compare(&self, _repo: &str, _base: &str, _head: &str) -> Result<Comparison, Error> {
-        Err(Error::Response)
+    pub async fn compare(&self, repo: &str, base: &str, head: &str) -> Result<Comparison, Error> {
+        self.request(
+            Method::GET,
+            format!(
+                "{}/compare/{}...{}",
+                repo_path(repo)?,
+                segment(base)?,
+                segment(head)?
+            ),
+            vec![],
+            None,
+        )
+        .await
     }
 
     pub async fn branch(&self, repo: &str, branch: &str) -> Result<Option<Branch>, Error> {
