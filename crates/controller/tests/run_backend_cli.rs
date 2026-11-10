@@ -4460,8 +4460,17 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     let due = maintenance_due(&f);
     let backend = maintenance_backend(&f);
     backend.cleanup_maintenance(due).unwrap();
-    assert!(!debt.exists(), "cancel during in-flight cleanup guarantees a maintenance attempt after it finishes");
-    assert_eq!(fs::read_to_string(f.intent.output_dir.join("helper-attempts-second")).unwrap().lines().count(), 2);
+    assert!(
+        !debt.exists(),
+        "cancel during in-flight cleanup guarantees a maintenance attempt after it finishes"
+    );
+    assert_eq!(
+        fs::read_to_string(f.intent.output_dir.join("helper-attempts-second"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
     f.events(&[
         json!({"name":"exception","context":{"type":"cancel","severity":0}}),
         json!({"name":"clean"}),
@@ -6831,11 +6840,19 @@ fn cleanup_maintenance_initial_attempt_is_durable_before_helper_returns() {
     f.cleanup_control(&owned.execution, 1);
     let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", 0);
     recv_within("initial cleanup progress", &receive, Duration::from_secs(5));
-    wait_until("initial helper started", Duration::from_secs(5), || f.intent.output_dir.join("helper-called-initial-claim").exists());
+    wait_until("initial helper started", Duration::from_secs(5), || {
+        f.intent
+            .output_dir
+            .join("helper-called-initial-claim")
+            .exists()
+    });
     let eligible = f.state().cleanup_retry_ms;
     assert!(child.wait().unwrap().success());
     reader.join().unwrap();
-    assert!(eligible.is_some(), "a crash during helper I/O must leave durable retry eligibility");
+    assert!(
+        eligible.is_some(),
+        "a crash during helper I/O must leave durable retry eligibility"
+    );
 }
 
 #[test]
@@ -6847,11 +6864,16 @@ fn cleanup_maintenance_contended_request_is_durable_without_a_helper() {
     let owned = f.cleanup_execution("contended", 'd');
     let backend = maintenance_backend(&f);
     let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
-    let lock = journal.operation_lock(&owned.owner, "cleanup-attempt-lock").unwrap();
+    let lock = journal
+        .operation_lock(&owned.owner, "cleanup-attempt-lock")
+        .unwrap();
     lock.lock().unwrap();
     let result = backend.cleanup_runtime(&owned.owner).unwrap();
     assert!(!result.stopped);
-    assert!(f.state().cleanup_retry_ms.is_some(), "an in-flight lock must not discard a new cleanup request");
+    assert!(
+        f.state().cleanup_retry_ms.is_some(),
+        "an in-flight lock must not discard a new cleanup request"
+    );
     assert!(!f.intent.output_dir.join("helper-called-contended").exists());
     drop(lock);
     backend.cleanup_maintenance(maintenance_due(&f)).unwrap();
@@ -6876,14 +6898,55 @@ fn cleanup_maintenance_owner_limit_leaves_remaining_owners_due() {
     let second = &fixtures[1];
     let dir = first.options.journal_root.join(&second.intent.correlation);
     fs::create_dir(&dir).unwrap();
-    fs::copy(second.options.journal_root.join(&second.intent.correlation).join("state.json"), dir.join("state.json")).unwrap();
+    fs::copy(
+        second
+            .options
+            .journal_root
+            .join(&second.intent.correlation)
+            .join("state.json"),
+        dir.join("state.json"),
+    )
+    .unwrap();
     let due = fixtures.iter().map(maintenance_due).max().unwrap();
-    let backend = maintenance_backend(first).with_cleanup_maintenance_limits(1, Duration::from_secs(5));
+    let backend =
+        maintenance_backend(first).with_cleanup_maintenance_limits(1, Duration::from_secs(5));
     backend.cleanup_maintenance(due).unwrap();
-    assert_eq!(fixtures.iter().filter(|f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("helper-called-"))).count(), 1, "one owner per pass");
-    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next <= due), "unattempted owners remain due");
+    assert_eq!(
+        fixtures
+            .iter()
+            .filter(
+                |f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("helper-called-"))
+            )
+            .count(),
+        1,
+        "one owner per pass"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next <= due),
+        "unattempted owners remain due"
+    );
     backend.cleanup_maintenance(due).unwrap();
-    assert_eq!(fixtures.iter().filter(|f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("helper-called-"))).count(), 2, "next pass reaches remaining owner");
+    assert_eq!(
+        fixtures
+            .iter()
+            .filter(
+                |f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("helper-called-"))
+            )
+            .count(),
+        2,
+        "next pass reaches remaining owner"
+    );
 }
 
 #[test]
@@ -6898,14 +6961,29 @@ fn cleanup_maintenance_time_budget_stops_between_executions() {
     f.cleanup_facts(&second, false);
     f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
     for owned in [&first, &second] {
-        fs::remove_file(f.intent.output_dir.join(format!("helper-called-{}", owned.execution))).unwrap();
+        fs::remove_file(
+            f.intent
+                .output_dir
+                .join(format!("helper-called-{}", owned.execution)),
+        )
+        .unwrap();
         f.cleanup_control(&owned.execution, 2);
     }
-    let backend = maintenance_backend(&f).with_cleanup_maintenance_limits(4, Duration::from_millis(500));
+    let backend =
+        maintenance_backend(&f).with_cleanup_maintenance_limits(4, Duration::from_millis(500));
     let started = Instant::now();
     backend.cleanup_maintenance(maintenance_due(&f)).unwrap();
-    assert!(started.elapsed() < Duration::from_secs(2), "maintenance native calls share the pass deadline");
-    assert!(!f.intent.output_dir.join("helper-called-budget-second").exists(), "budget exhaustion must not start another helper");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "maintenance native calls share the pass deadline"
+    );
+    assert!(
+        !f.intent
+            .output_dir
+            .join("helper-called-budget-second")
+            .exists(),
+        "budget exhaustion must not start another helper"
+    );
     assert!(!cleanup_debts(&f).is_empty());
 }
 
@@ -6915,12 +6993,20 @@ fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
     let owned = f.cleanup_execution("held-maintenance", 'd');
     f.cleanup_facts(&owned, false);
     f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
-    fs::copy(f.intent.output_dir.join("original-jobspec.json"), f.root.path().join("jobspec-fABC.json")).unwrap();
+    fs::copy(
+        f.intent.output_dir.join("original-jobspec.json"),
+        f.root.path().join("jobspec-fABC.json"),
+    )
+    .unwrap();
     let mut intent = f.intent.clone();
     intent.owner = "held-maintenance-owner".into();
     intent.correlation = format!("{}-held", f.intent.correlation);
     intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
-    assert!(maintenance_backend(f).submit(f.request.clone(), intent.clone()).is_err());
+    assert!(
+        maintenance_backend(f)
+            .submit(f.request.clone(), intent.clone())
+            .is_err()
+    );
     f.cleanup_facts(&owned, true);
     intent
 }
@@ -6930,7 +7016,11 @@ fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
 fn cleanup_maintenance_failed_held_request_is_reported_and_durable() {
     let mut f = Fixture::new();
     let intent = hold_maintenance_request(&mut f);
-    let path = f.options.journal_root.join(&intent.correlation).join("state.json");
+    let path = f
+        .options
+        .journal_root
+        .join(&intent.correlation)
+        .join("state.json");
     let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let spec = PathBuf::from(state["jobspec"]["path"].as_str().unwrap());
     fs::write(spec, b"changed staged jobspec").unwrap();
@@ -6939,9 +7029,27 @@ fn cleanup_maintenance_failed_held_request_is_reported_and_durable() {
     let backend = maintenance_backend(&f);
     let due = maintenance_due(&f);
     let pending = backend.cleanup_maintenance(due).unwrap();
-    assert!(pending.iter().any(|owner| owner.correlation == intent.correlation), "unresumable request must raise an incident");
-    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due));
-    assert!(f.options.journal_root.join("maintenance-errors").read_dir().unwrap().next().is_some());
+    assert!(
+        pending
+            .iter()
+            .any(|owner| owner.correlation == intent.correlation),
+        "unresumable request must raise an incident"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due)
+    );
+    assert!(
+        f.options
+            .journal_root
+            .join("maintenance-errors")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
     let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert_eq!(state["dispatched"], false);
     fs::remove_dir_all(&intent.output_dir).unwrap();
@@ -6961,10 +7069,62 @@ fn cleanup_maintenance_held_dispatch_requires_upstream_authorization() {
     };
     let backend = maintenance_backend(&f);
     let pending = backend.cleanup_maintenance_fenced(due, &authorize).unwrap();
-    assert_eq!(calls.get(), 1, "resuming a held request must visit the upstream fence");
-    assert!(pending.iter().any(|owner| owner.correlation == intent.correlation));
-    let state: Value = serde_json::from_slice(&fs::read(f.options.journal_root.join(&intent.correlation).join("state.json")).unwrap()).unwrap();
+    assert_eq!(
+        calls.get(),
+        1,
+        "resuming a held request must visit the upstream fence"
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|owner| owner.correlation == intent.correlation)
+    );
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            f.options
+                .journal_root
+                .join(&intent.correlation)
+                .join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(state["dispatched"], false);
-    assert_eq!(fs::read_to_string(f.root.path().join("calls")).unwrap().lines().filter(|line| line.starts_with("job submit ")).count(), 1);
+    assert_eq!(
+        fs::read_to_string(f.root.path().join("calls"))
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        1
+    );
     fs::remove_dir_all(&intent.output_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_terminal_debt_is_loud_without_a_noop_timer() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("terminal-debt", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let path = f.options.journal_root.join(&f.intent.correlation).join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    state["terminal"] = json!(Terminal {
+        ending: Ending::InfraLost,
+        reason: "fixture committed infrastructure loss with unresolved cleanup".into(),
+        receipt: BlobRef { path: f.intent.output_dir.join("terminal-receipt.json"), sha256: "a".repeat(64), bytes: 1 },
+    });
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    let backend = maintenance_backend(&f);
+    assert_eq!(backend.cleanup_maintenance(due).unwrap(), vec![owned.owner.clone()]);
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none(), "immutable terminal cleanup cannot make progress through retries");
+    let failures = f.options.journal_root.join("maintenance-errors").read_dir().unwrap().collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1);
+    let failure: Value = serde_json::from_slice(&fs::read(failures[0].as_ref().unwrap().path()).unwrap()).unwrap();
+    assert!(failure["message"].as_str().unwrap().contains("terminal cleanup is immutable"));
+    assert!(!cleanup_debts(&f).is_empty());
 }
