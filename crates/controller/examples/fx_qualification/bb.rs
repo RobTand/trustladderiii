@@ -255,7 +255,7 @@ pub fn build(
                 "fx-x3-qualify".into()
             },
             "--timeout".into(),
-            "60".into(),
+            "44".into(),
             "--max-wait".into(),
             "50".into(),
             "--log-file".into(),

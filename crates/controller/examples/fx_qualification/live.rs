@@ -402,6 +402,8 @@ fn collect_inner(
         let (binding, interpreter, absent, mut proofs) =
             absent_binding.ok_or("missing absent interpreter binding")?;
         cause &= binding;
+        proofs.push(receipt.report.as_ref().ok_or("launch failure report missing")?.clone());
+        proofs.extend(report.payload.iter().cloned());
         for failure in &report.launch_failures {
             let events = flushed_events(&durable::checked_blob(
                 &failure.process_record,
@@ -463,10 +465,31 @@ fn collect_inner(
 }
 
 fn launch_failure_report(report: &api::RunnerReport, root: &Path) -> Result<bool> {
+    use tl3_controller::contracts::report::{CheckReport, Outcome, ReportSchema, Verdict};
+    let diagnostic = match &report.payload {
+        None => true,
+        Some(reference) => {
+            let raw = durable::checked_blob(reference, root)?;
+            let Ok(payload) = serde_json::from_slice::<CheckReport>(&raw) else {
+                return Ok(false);
+            };
+            payload.schema == ReportSchema::V3
+                && !payload.results.is_empty()
+                && payload.results.iter().all(|result| {
+                    result.verdict == Verdict::InfrastructureFailure
+                        && result.tests.iter().all(|test| {
+                            test.base == Outcome::NoReport
+                                && test.head == Outcome::NoReport
+                                && !test.passed
+                        })
+                })
+        }
+    };
     let mut cause = report.outcome == api::ReportOutcome::PostBeginLaunchFailure
         && report.worker_payload.is_none()
-        && report.payload.is_none()
-        && !report.launch_failures.is_empty();
+        && diagnostic
+        && report.launch_failures.len() == 2
+        && report.launch_failures[0].execution != report.launch_failures[1].execution;
     for failure in &report.launch_failures {
         let events = flushed_events(&durable::checked_blob(&failure.process_record, root)?)?;
         cause &= absent_interpreter_failure(&events);
@@ -490,6 +513,8 @@ fn absent_interpreter_failure(events: &[Value]) -> bool {
         && events.iter().any(|e| {
             e["event"] == "launcher_exit"
                 && e["exit_code"] == 1
+                && e["natural_exit"] == true
+                && e["command_released"] == true
                 && e["stderr_tail"]
                     == "ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"
         })

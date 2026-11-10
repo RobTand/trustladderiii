@@ -101,11 +101,15 @@ fn collect_lifecycle(
 ) -> Result<()> {
     for kind in ["launch_failure", "cancel", "success"] {
         let result = collect(kind)?;
-        retain_canary(&mut state.canaries, result.clone());
+        let pending = result.job.is_some() && result.terminal_receipt.is_none();
+        retain_canary(&mut state.canaries, result);
         save(&inputs.out, state)?;
-        if result.status != "PASS" {
-            return Err(format!("{kind} canary did not pass; no following job dispatched").into());
+        if pending {
+            return Err("lifecycle job not terminal; slot B retained".into());
         }
+    }
+    if lifecycle_canaries(&state.canaries)?.iter().any(|result| result.status != "PASS") {
+        return Err("lifecycle canaries did not pass; no D8 inputs generated".into());
     }
     Ok(())
 }
