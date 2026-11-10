@@ -1042,4 +1042,29 @@ pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
     }
 }
 
+
+/// E11.1 (CONTRACTS.md v2.7, rule 6): the Stop rows over the literal stopped node, own group.
+pub(super) proof fn stop_e11(b: Node, id: u64)
+    requires node_headroom(b),
+    ensures ({ let n = retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped);
+        (!(b.phase is Closed || b.phase is Stopping) ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
+            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
+            && n.holds == b.holds && n.pool == b.pool
+            && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
+            && n.next_seq == b.next_seq && n.last_cmd == id
+            && n.run_failures == b.run_failures && n.run_incidents == b.run_incidents
+            && n.fx_failures == b.fx_failures && n.fx_incidents == b.fx_incidents
+            && n.credit == b.credit && n.generation as int == b.generation as int + 1
+            && (match b.effect {
+                None => n.effect.is_none(),
+                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
+                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
+            }))
+        && (b.phase is Stopping ==> n.phase == b.phase && n.pos == b.pos && n.holds == b.holds && n.pool == b.pool
+            && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
+            && n.effect == b.effect && n.next_seq == b.next_seq && n.question == b.question) }),
+{
+    reveal(retirement::stopped);
+}
+
 }

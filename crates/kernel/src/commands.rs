@@ -54,6 +54,25 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E11.1 REQ R24 (fresh Stop of a live item) and E11.1b framing (item already stopping).
+        (!(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping)
+            ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
+            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
+            && final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
+            && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
+            && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit && final(w).nodes@[i as int].generation as int == old(w).nodes@[i as int].generation as int + 1
+            && (match old(w).nodes@[i as int].effect {
+                None => final(w).nodes@[i as int].effect.is_none(),
+                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
+                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
+            })),
+        (old(w).nodes@[i as int].phase is Stopping
+            ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].effect == old(w).nodes@[i as int].effect && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -63,6 +82,7 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
     kernel_proof! {
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::stop_world(before_rules_world@, *w, i, id);
+        apply_command_safety::stop_e11(before_rules_world@.nodes@[i as int], id);
     }
 }
 }
