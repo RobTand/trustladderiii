@@ -700,7 +700,7 @@ proof fn ack_permanent_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nq
 proof fn ack_review_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
     requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
         ack == Ack::BodyPolicyRefused, e.kind == EffectKind::OpenPr, nqa == nq, oa == ob,
-        n == retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), effect: None, ..b }, Outcome::Stopped),
+        true,
     ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
 {
     reveal(ack_live_post);
