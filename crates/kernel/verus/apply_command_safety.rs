@@ -590,6 +590,9 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
 
 /// L1 re-stack: the node on_answer_exact leaves, i.e. the answered node and then L1's guarded
 /// withholding (withhold_dependency_credit's exact post, over the answered node's fields).
+/// Opaque so that answer_command's query holds it as one term (revealed by on_answer_exact and
+/// the held_* row lemmas only).
+#[verifier::opaque]
 pub(super) open spec fn held_answer(n: Node, nq: u64, id: u64, answer: Answer, table: Seq<Dependency>,
     node: NodeId) -> Node {
     let x = apply_answer_values::answered(n, nq, id, answer).0;
@@ -611,8 +614,6 @@ pub(super) proof fn answered_held_parts(b: Node, nq: u64, id: u64, question: u64
     table: Seq<Dependency>, node: NodeId)
     ensures answered_held(b, nq, id, question, answer, table, node)
             == held_answer(Node { last_cmd: id, ..b }, nq, question, answer, table, node),
-        handler_safety::answer_withholds(Node { last_cmd: id, ..b }, question, answer)
-            == handler_safety::answer_withholds(b, question, answer),
 {
     reveal(answered_held);
 }
@@ -634,6 +635,7 @@ pub(super) proof fn held_fields(b: Node, nq: u64, id: u64, question: u64, answer
         && distance(v) == distance(x) }),
 {
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     let x = apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0;
     if handler_safety::answer_withholds(Node { last_cmd: id, ..b }, question, answer) {
@@ -652,6 +654,7 @@ pub(super) proof fn held_same(b: Node, nq: u64, id: u64, question: u64, answer: 
         ==> answered_held(b, nq, id, question, answer, table, node) == answered_node(b, nq, id, question, answer),
 {
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     reveal(dependencies::withheld_after);
     let x = apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0;
@@ -679,6 +682,7 @@ pub(super) proof fn answer_held_rules(w: World, b: Node, id: u64, question: u64,
 {
     answer_node_rules(w, b, id, question, answer);
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     let a = Node { last_cmd: id, ..b };
     let x = apply_answer_values::answered(a, w.next_question, question, answer).0;
@@ -700,6 +704,7 @@ pub(super) proof fn held_withheld(b: Node, nq: u64, id: u64, question: u64, answ
 {
     let a = Node { last_cmd: id, ..b };
     reveal(answered_held);
+    reveal(held_answer);
     apply_answer_safety::answer_step(a, nq, question, answer);
     handler_safety::step_withheld(a, apply_answer_values::answered(a, nq, question, answer).0);
 }
