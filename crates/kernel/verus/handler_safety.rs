@@ -138,23 +138,20 @@ pub(super) proof fn unwithheld_same(n: Node)
 }
 
 /// K5-L1: on_answer's write-back then guarded withholding gives the pair.
-/// Only the rows command_step reads are carried from the answered node.
+/// The final node is the answered node with only its flag changed, so the
+/// restored node is the answered node itself and command_step carries over.
 pub(super) proof fn answer_pair_intro(b: Node, answered: Node, n: Node, question: u64,
     answer: Answer, table: Seq<Dependency>, node: NodeId)
     requires command_step(b, answered), answered.credit.withheld == b.credit.withheld,
-        n.proposed == answered.proposed, n.adopted == answered.adopted,
-        n.phase == answered.phase, n.review_stop == answered.review_stop,
-        n.attempt == answered.attempt, n.replanned == answered.replanned,
-        n.question == answered.question,
-        n.credit.merge_credited == answered.credit.merge_credited,
+        n == unwithheld(answered, n.credit.withheld),
         n.credit.withheld == (if answer_withholds(b, question, answer) {
             dependencies::withheld_after(b.credit.withheld, n.planning_started, n.phase,
                 n.credit.ready, table, node)
         } else { b.credit.withheld }),
     ensures answer_pair(b, n, true, question, answer, table, node),
 {
+    assert(unwithheld(n, b.credit.withheld) == answered);
     reveal(answer_pair);
-    reveal(command_step);
 }
 
 /// K5-L1: answer_command records the command id before on_answer; the pair
