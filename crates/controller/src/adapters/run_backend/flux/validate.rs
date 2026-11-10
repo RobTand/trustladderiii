@@ -9,7 +9,10 @@ pub(super) fn options(options: &Options) -> Result<()> {
         || !absolute(&options.journal_root)
         || !absolute(&options.bootstrap.cli)
         || !absolute(&options.bootstrap.config)
-        || options.instance_file.as_ref().is_some_and(|path| !absolute(path))
+        || options
+            .instance_file
+            .as_ref()
+            .is_some_and(|path| !absolute(path))
         || (options.instance_file.is_none() && !options.uri.starts_with("local:///"))
         || options.uri.chars().any(char::is_control)
         || options.arguments.len() > 32
@@ -62,7 +65,9 @@ pub(super) fn reservation(reservation: &Reservation) -> Result<()> {
         ));
     }
     if reservation.cpus.get() > 10 || reservation.memory_bytes.get() > (24_u64 << 30) {
-        return Err(BackendError::invalid("request exceeds dl380g10 plain limit of 10 cores / 24 GiB"));
+        return Err(BackendError::invalid(
+            "request exceeds dl380g10 plain limit of 10 cores / 24 GiB",
+        ));
     }
     Ok(())
 }
@@ -169,8 +174,16 @@ pub(super) fn request(
         ));
     }
     validate_request_environment(&request.environment)?;
-    if request.pass_flux_uri && !request.repo.rsplit('/').next().is_some_and(|name| name.eq_ignore_ascii_case("prismaquant")) {
-        return Err(BackendError::invalid("pass_flux_uri is supported only for PrismaQuant"));
+    if request.pass_flux_uri
+        && !request
+            .repo
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("prismaquant"))
+    {
+        return Err(BackendError::invalid(
+            "pass_flux_uri is supported only for PrismaQuant",
+        ));
     }
 
     if request.runner.arguments.iter().any(|s| {

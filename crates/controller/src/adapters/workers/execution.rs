@@ -11,14 +11,20 @@ pub use waits::Waits;
 /// The worker tests executor. Flux is the only one. Without a selected Flux executor every
 /// run that needs worker tests is refused; nothing is defaulted (PrismaBuild is retired).
 #[derive(Clone)]
-pub(super) struct Selected(Option<Box<tl3_config::Flux>>, crate::adapters::images::Images);
+pub(super) struct Selected(
+    Option<Box<tl3_config::Flux>>,
+    crate::adapters::images::Images,
+);
 
 impl Selected {
     pub(super) fn new(config: &tl3_config::Config) -> Result<Self> {
-        Ok(Self(match config.selected_execution()? {
-            tl3_config::SelectedExecution::Flux(flux) => Some(Box::new(flux.clone())),
-            tl3_config::SelectedExecution::PrismaBuild(_) => None,
-        }, crate::adapters::images::Images::new(&config.github.repos)))
+        Ok(Self(
+            match config.selected_execution()? {
+                tl3_config::SelectedExecution::Flux(flux) => Some(Box::new(flux.clone())),
+                tl3_config::SelectedExecution::PrismaBuild(_) => None,
+            },
+            crate::adapters::images::Images::new(&config.github.repos),
+        ))
     }
 
     fn flux(&self) -> Result<&tl3_config::Flux> {

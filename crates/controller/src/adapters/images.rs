@@ -63,7 +63,8 @@ impl Images {
     }
 
     pub(super) fn pass_flux_uri(&self, repo: &Repository) -> bool {
-        self.settings(repo).is_some_and(|settings| settings.pass_flux_uri)
+        self.settings(repo)
+            .is_some_and(|settings| settings.pass_flux_uri)
     }
 
     pub(super) fn test_demand(&self, repo: &Repository) -> Option<tl3_config::TestDemand> {

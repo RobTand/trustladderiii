@@ -267,7 +267,9 @@ fn absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_onl
     let mut options = crate::production::flux_options(&fixture.flux);
     options.instance_generation = "after-reboot".into();
     options.uri = "local:///replacement".into();
-    options.environment.insert("FLUX_URI".into(), options.uri.clone());
+    options
+        .environment
+        .insert("FLUX_URI".into(), options.uri.clone());
     activation.validate_options(&options).unwrap();
 }
 
@@ -543,24 +545,39 @@ fn x7_activation_survives_broker_identity_changes() {
     let cli = root.path().join("cli");
     fs::write(&cli, "unchanged tool").unwrap();
     let mut options = backend::Options {
-        executable: cli.clone(), arguments: vec![], environment: BTreeMap::new(),
+        executable: cli.clone(),
+        arguments: vec![],
+        environment: BTreeMap::new(),
         instance_file: None,
-        instance_generation: "before".into(), uri: "local:///before".into(),
+        instance_generation: "before".into(),
+        uri: "local:///before".into(),
         journal_root: root.path().join("journal"),
-        bootstrap: backend::HostBootstrap { cli, config: root.path().join("options.json") },
+        bootstrap: backend::HostBootstrap {
+            cli,
+            config: root.path().join("options.json"),
+        },
     };
     let record = DeploymentRecord {
-        schema: "tl3.fx_activation.v2".into(), qualification_sha256: qualification_sha256(),
-        producer_commit: "a".repeat(40), backend_options_sha256: options_identity(&options).unwrap(),
+        schema: "tl3.fx_activation.v2".into(),
+        qualification_sha256: qualification_sha256(),
+        producer_commit: "a".repeat(40),
+        backend_options_sha256: options_identity(&options).unwrap(),
         backend_cli_sha256: executable_sha256(&options.bootstrap.cli).unwrap(),
         executable_sha256: executable_sha256(&options.executable).unwrap(),
-        staging_root_sha256: identity(&root.path()).unwrap(), container_mode: ContainerMode::InJob,
-        acceptance_scope: AcceptanceScope::PlannedFreshInit, profiles: vec![],
+        staging_root_sha256: identity(&root.path()).unwrap(),
+        container_mode: ContainerMode::InJob,
+        acceptance_scope: AcceptanceScope::PlannedFreshInit,
+        profiles: vec![],
     };
-    let activation = RuntimeActivation { record, qualification: serde_json::from_slice(PIN).unwrap() };
+    let activation = RuntimeActivation {
+        record,
+        qualification: serde_json::from_slice(PIN).unwrap(),
+    };
     options.instance_generation = "after/reboot".into();
     options.uri = "local:///after/run/local-0".into();
-    options.environment.insert("FLUX_URI".into(), options.uri.clone());
+    options
+        .environment
+        .insert("FLUX_URI".into(), options.uri.clone());
     activation.validate_options(&options).unwrap();
     fs::write(&options.executable, "changed tool").unwrap();
     assert!(activation.validate_options(&options).is_err());

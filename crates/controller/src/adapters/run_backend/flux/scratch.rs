@@ -256,9 +256,8 @@ impl Flux {
             Ok(value) => value,
             Err(_) => return Ok(None),
         };
-        let bounded_observation = |g: &Generation| {
-            g.stdout.len() <= 16384 && g.stderr.len() <= 16384
-        };
+        let bounded_observation =
+            |g: &Generation| g.stdout.len() <= 16384 && g.stderr.len() <= 16384;
         if !reply.success
             || observed.schema != "tl3.scratch_cleanup.v1"
             || observed.run != binding.id

@@ -89,11 +89,17 @@ pub fn identity<T: Serialize>(value: &T) -> Result<String> {
 
 /// Deployment policy and tool access stay bound; fleet identity is observed at execution.
 pub fn options_identity(options: &backend::Options) -> Result<String> {
-    let mut value = serde_json::to_value(options).map_err(|_| invalid("flux.activation.identity"))?;
-    let fields = value.as_object_mut().ok_or_else(|| invalid("flux.activation.identity"))?;
+    let mut value =
+        serde_json::to_value(options).map_err(|_| invalid("flux.activation.identity"))?;
+    let fields = value
+        .as_object_mut()
+        .ok_or_else(|| invalid("flux.activation.identity"))?;
     fields.remove("instance_generation");
     fields.remove("uri");
-    if let Some(environment) = fields.get_mut("environment").and_then(serde_json::Value::as_object_mut) {
+    if let Some(environment) = fields
+        .get_mut("environment")
+        .and_then(serde_json::Value::as_object_mut)
+    {
         environment.remove("FLUX_URI");
         environment.remove("FLUX_VANILLA_RUN");
     }

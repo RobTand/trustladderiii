@@ -121,10 +121,16 @@ fn root(profile: &Profile, call: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backend::Reservation> {
-    if parallel == 0 || parallel > 4 || cpus == 0 || mem_gb == 0
+    if parallel == 0
+        || parallel > 4
+        || cpus == 0
+        || mem_gb == 0
         || cpus.checked_mul(parallel).is_none_or(|total| total > 10)
-        || mem_gb.checked_mul(parallel).is_none_or(|total| total > 24) {
-        return Err(Error::Invalid("worker demand exceeds dl380g10 plain limit of 10 cores / 24 GiB or parallel 1..=4"));
+        || mem_gb.checked_mul(parallel).is_none_or(|total| total > 24)
+    {
+        return Err(Error::Invalid(
+            "worker demand exceeds dl380g10 plain limit of 10 cores / 24 GiB or parallel 1..=4",
+        ));
     }
     let cpus = cpus * parallel;
     let memory = u64::from(mem_gb)
@@ -141,10 +147,7 @@ pub(crate) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backe
             .map_err(|_| Error::Invalid("positive worker memory required"))?,
         memory_guarantee: backend::MemoryGuarantee::DeclaredOnly,
         parallelism: parallel.try_into().expect("positive parallelism"),
-        native_threads: (cpus / parallel)
-            .max(1)
-            .try_into()
-            .expect("positive native threads"),
+        native_threads: 1.try_into().expect("one native thread per process"),
     })
 }
 
@@ -696,7 +699,7 @@ mod tests {
         let demand = reservation(2, 2, 4).unwrap();
         assert_eq!(demand.cpus.get(), 8);
         assert_eq!(demand.memory_bytes.get(), 8 << 30);
-        assert_eq!(demand.native_threads.get(), 2);
+        assert_eq!(demand.native_threads.get(), 1);
         assert!(reservation(3, 2, 4).is_err());
         assert!(reservation(2, 8, 4).is_err());
         assert!(reservation(1, 0, 0).is_err());

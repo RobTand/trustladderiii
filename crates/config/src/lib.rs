@@ -662,7 +662,10 @@ impl Flux {
                 return Err(invalid("flux.activation", "record and sha256"));
             }
         }
-        let locator = self.instance_file.as_ref().ok_or_else(|| invalid("flux.instance_file", "runtime INSTANCE locator required"))?;
+        let locator = self
+            .instance_file
+            .as_ref()
+            .ok_or_else(|| invalid("flux.instance_file", "runtime INSTANCE locator required"))?;
         absolute("flux.instance_file", locator)?;
         if self.runtime_bundles.is_empty() {
             return Err(invalid(
@@ -1155,25 +1158,46 @@ impl Config {
                 if !(1..=10).contains(&demand.cpus) {
                     return Err(invalid(
                         format!("{field}.test_demand.cpus"),
-                        format!("repository {}/{}: use 1 to 10 CPUs; dl380g10 plain limit is 10 cores / 24 GiB", repo.owner, repo.name),
+                        format!(
+                            "repository {}/{}: use 1 to 10 CPUs; dl380g10 plain limit is 10 cores / 24 GiB",
+                            repo.owner, repo.name
+                        ),
                     ));
                 }
                 if !(1..=24).contains(&demand.mem_gb) {
                     return Err(invalid(
                         format!("{field}.test_demand.mem_gb"),
-                        format!("repository {}/{}: use 1 to 24 GiB; dl380g10 plain limit is 10 cores / 24 GiB", repo.owner, repo.name),
+                        format!(
+                            "repository {}/{}: use 1 to 24 GiB; dl380g10 plain limit is 10 cores / 24 GiB",
+                            repo.owner, repo.name
+                        ),
                     ));
                 }
             }
             if repo.pass_flux_uri && !repo.name.eq_ignore_ascii_case("prismaquant") {
-                return Err(invalid(format!("{field}.pass_flux_uri"), format!("repository {}/{}: pass_flux_uri is supported only for PrismaQuant", repo.owner, repo.name)));
+                return Err(invalid(
+                    format!("{field}.pass_flux_uri"),
+                    format!(
+                        "repository {}/{}: pass_flux_uri is supported only for PrismaQuant",
+                        repo.owner, repo.name
+                    ),
+                ));
             }
             if self.execution_backend == ExecutionBackend::Flux {
                 let demand = repo.test_demand.unwrap_or_default();
                 if demand.cpus.checked_mul(4).is_none_or(|cpus| cpus > 10)
-                    || demand.mem_gb.checked_mul(4).is_none_or(|memory| memory > 24) {
-                    return Err(invalid(format!("{field}.test_demand"), format!(
-                        "repository {}/{}: test_demand at parallel 4 exceeds dl380g10 plain limit of 10 cores / 24 GiB; choose a fitting demand without reducing requested parallelism", repo.owner, repo.name)));
+                    || demand
+                        .mem_gb
+                        .checked_mul(4)
+                        .is_none_or(|memory| memory > 24)
+                {
+                    return Err(invalid(
+                        format!("{field}.test_demand"),
+                        format!(
+                            "repository {}/{}: test_demand at parallel 4 exceeds dl380g10 plain limit of 10 cores / 24 GiB; choose a fitting demand without reducing requested parallelism",
+                            repo.owner, repo.name
+                        ),
+                    ));
                 }
             }
             if let Some(timeout) = repo.generator_timeout_s

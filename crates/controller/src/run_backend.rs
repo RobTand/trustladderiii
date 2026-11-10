@@ -279,17 +279,32 @@ pub enum Suite {
 }
 
 /// Caller inputs are separate from the controller-owned dispatch environment.
-pub fn validate_request_environment(environment: &std::collections::BTreeMap<String, String>) -> Result<()> {
+pub fn validate_request_environment(
+    environment: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
     if !environment.contains_key("PATH") {
-        return Err(BackendError::invalid("explicit job environment PATH required"));
+        return Err(BackendError::invalid(
+            "explicit job environment PATH required",
+        ));
     }
     for (name, value) in environment {
         if !matches!(name.as_str(), "HOME" | "XDG_RUNTIME_DIR" | "PATH") {
-            let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(128).collect();
-            return Err(BackendError::invalid(&format!("unsupported job environment name: {name}; controller-owned names cannot be supplied by callers")));
+            let name: String = name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(128)
+                .collect();
+            return Err(BackendError::invalid(&format!(
+                "unsupported job environment name: {name}; controller-owned names cannot be supplied by callers"
+            )));
         }
-        if value.len() > 4096 || value.chars().any(char::is_control) || durable::safe(value)? != *value {
-            return Err(BackendError::invalid(&format!("invalid job environment value for {name}; value withheld")));
+        if value.len() > 4096
+            || value.chars().any(char::is_control)
+            || durable::safe(value)? != *value
+        {
+            return Err(BackendError::invalid(&format!(
+                "invalid job environment value for {name}; value withheld"
+            )));
         }
     }
     Ok(())
@@ -616,20 +631,36 @@ pub struct Options {
 
 impl Options {
     pub fn resolved_uri(&self) -> Result<String> {
-        let Some(locator) = &self.instance_file else { return Ok(self.uri.clone()); };
+        let Some(locator) = &self.instance_file else {
+            return Ok(self.uri.clone());
+        };
         let raw = durable::read(locator)?;
-        if raw.len() > 4096 { return Err(BackendError::invalid("INSTANCE locator exceeds bound")); }
-        let text = std::str::from_utf8(&raw).map_err(|_| BackendError::invalid("invalid INSTANCE locator"))?;
+        if raw.len() > 4096 {
+            return Err(BackendError::invalid("INSTANCE locator exceeds bound"));
+        }
+        let text = std::str::from_utf8(&raw)
+            .map_err(|_| BackendError::invalid("invalid INSTANCE locator"))?;
         let parts: Vec<_> = text.split_whitespace().collect();
         if parts.len() != 2 || !absolute(std::path::Path::new(parts[0])) || !token(parts[1]) {
-            return Err(BackendError::invalid("INSTANCE requires an absolute prefix and run name"));
+            return Err(BackendError::invalid(
+                "INSTANCE requires an absolute prefix and run name",
+            ));
         }
         let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")?;
         let rank = match hostname.trim() {
-            "dl380g10" => 0, "sparky" => 1, "sparklina" => 2,
-            _ => return Err(BackendError::invalid("no native Flux broker on coordinator host")),
+            "dl380g10" => 0,
+            "sparky" => 1,
+            "sparklina" => 2,
+            _ => {
+                return Err(BackendError::invalid(
+                    "no native Flux broker on coordinator host",
+                ));
+            }
         };
-        Ok(format!("local://{}/runs/{}/run/local-{rank}", parts[0], parts[1]))
+        Ok(format!(
+            "local://{}/runs/{}/run/local-{rank}",
+            parts[0], parts[1]
+        ))
     }
 }
 

@@ -22,12 +22,12 @@ bundle and preflight hashes and full image identity. Rust's existing bundle
 reader verifies canonical addressing, full inventory, actual bytes, modes,
 ownership, and cleanup presence. Its existing preflight validator checks the
 image inventory, identity, and mode prerequisites. None of these offline
-checks claims a live image or fleet observation. The backend's existing native
-generation guard remains authoritative at execution.
+checks claims a live image or fleet observation. At execution, the backend resolves INSTANCE and verifies each retained job against
+its original jobspec before adopting its ID. Broker observations are receipt evidence.
 
 `[flux.activation]` carries an absolute `record` path and its `sha256`.
 `DeploymentRecord` in `src/adapters/flux_checks/activation.rs` defines the JSON
-format. The schema is `tl3.fx_activation.v1`. `qualification_sha256` is the
+format. The schema is `tl3.fx_activation.v2`. `qualification_sha256` is the
 SHA256 of the compiled pin. `producer_commit` is the frozen deploy candidate
 used by ops to publish the new profile bundles, and must match each bundle.
 Before provisioning, ops must compare `producer_commit` with the exact
@@ -36,8 +36,11 @@ against that same SHA. Retain that equality in the deploy runbook. Refuse
 provisioning on a mismatch. It does not replace qualification by exact code equality.
 
 `identity` hashes the UTF-8 bytes from Rust `serde_json::to_vec` for each field.
-The generation, endpoint, staging root, and complete effective `Options` have
-separate hashes. Options include explicit environment, arguments, executable,
+The staging root and stable `Options` policy have separate hashes.
+Use `options_identity` for `backend_options_sha256`. It excludes `instance_generation`,
+`uri`, and the access environment names `FLUX_URI` and `FLUX_VANILLA_RUN`.
+Version 2 removes `instance_generation_sha256` and `endpoint_sha256`.
+Options still bind the resolver location, environment policy, arguments, executable,
 bootstrap CLI/config paths, and journal root. CLI fields hash actual binary
 bytes without executing them. The record contains identities and hashes only;
 backend access settings and private configuration values do not belong in it.
@@ -58,7 +61,7 @@ have already run successfully. Ops publishes bundles only at the frozen
 candidate, records the publisher's returned canonical locators, and provisions
 the immutable hash-pinned record. After the released fresh-init acceptance,
 ops retains actual native success and verified cleanup evidence separately,
-bound to the record SHA256, exact profile bundle, candidate, and generation.
+bound to the record SHA256, exact profile bundle, candidate, with observed broker starttime and config hash as receipts.
 The record is never rewritten to add completion fields. Before real volume,
 only profiles with successful completed acceptance belong in approved go-live
 scope. A failed or unexercised profile is not accepted. A later profile requires

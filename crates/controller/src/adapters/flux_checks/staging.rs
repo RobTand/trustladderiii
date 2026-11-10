@@ -121,10 +121,8 @@ impl Stager {
             .flat_map(|run| &run.plan)
             .filter_map(|check| Some(check.declared_symptom.as_ref()?.parallel.get()))
             .max()
-            .unwrap_or(1)
-            .clamp(1, 4) as u32;
+            .unwrap_or(1) as u32;
         super::super::workers::execution::reservation(demand.cpus, demand.mem_gb, parallel)
-
     }
 
     /// Build immutable input and shared runtime identities without launching native work.

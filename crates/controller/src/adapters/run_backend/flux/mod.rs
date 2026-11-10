@@ -42,7 +42,11 @@ impl Flux {
     pub fn prepare_intent(&self, request: &Request, owner: &Owner) -> Result<SubmissionIntent> {
         let intent = SubmissionIntent {
             backend: BackendTag::Flux,
-            instance: if self.options.instance_file.is_some() { "runtime".into() } else { self.options.instance_generation.clone() },
+            instance: if self.options.instance_file.is_some() {
+                "runtime".into()
+            } else {
+                self.options.instance_generation.clone()
+            },
             uri: self.options.resolved_uri()?,
             owner: owner.owner.clone(),
             correlation: owner.correlation.clone(),
@@ -114,9 +118,17 @@ impl Flux {
     fn instance(&self, record: &Record) -> Result<()> {
         if let Some(binding) = &record.binding {
             binding.id.validate()?;
-            let original = self.capture(&["job", "info", "--original", &binding.id.job, "jobspec"])?;
-            if !original.success || !self.matches(record, &serde_json::from_slice(&original.stdout)?)? {
-                return Err(BackendError::unknown("retained job original jobspec unavailable or mismatched; no adoption"));
+            if record.terminal.is_some() {
+                return Ok(());
+            }
+            let original =
+                self.capture(&["job", "info", "--original", &binding.id.job, "jobspec"])?;
+            if !original.success
+                || !self.matches(record, &serde_json::from_slice(&original.stdout)?)?
+            {
+                return Err(BackendError::unknown(
+                    "retained job original jobspec unavailable or mismatched; no adoption",
+                ));
             }
         }
         Ok(())
@@ -362,14 +374,28 @@ impl RunBackend for Flux {
         let start = self.capture(&["getattr", "broker.starttime"]);
         let config = self.capture(&["config", "get"]);
         let observation = InstanceObservation {
-            broker_starttime: start.ok().filter(|reply| reply.success)
-                .and_then(|reply| String::from_utf8(reply.stdout).ok()).map(|text| text.trim().to_owned()),
-            loaded_config: config.ok().filter(|reply| reply.success)
-                .map(|reply| blob(&record.intent.output_dir.join("observed-loaded-config.json"), &reply.stdout)).transpose()?,
+            broker_starttime: start
+                .ok()
+                .filter(|reply| reply.success)
+                .and_then(|reply| String::from_utf8(reply.stdout).ok())
+                .map(|text| text.trim().to_owned()),
+            loaded_config: config
+                .ok()
+                .filter(|reply| reply.success)
+                .map(|reply| {
+                    blob(
+                        &record.intent.output_dir.join("observed-loaded-config.json"),
+                        &reply.stdout,
+                    )
+                })
+                .transpose()?,
             config_sha256: None,
         };
         let observation = InstanceObservation {
-            config_sha256: observation.loaded_config.as_ref().map(|blob| blob.sha256.clone()),
+            config_sha256: observation
+                .loaded_config
+                .as_ref()
+                .map(|blob| blob.sha256.clone()),
             ..observation
         };
         self.journal.transaction(&owner, |dir, current| {
@@ -631,11 +657,21 @@ impl RunBackend for Flux {
         }
         let output_bounds = output_bounds(&record.request.suite);
         let coordinator_uri = if record.request.pass_flux_uri {
-            let reference = record.jobspec.as_ref().ok_or_else(|| BackendError::unknown("retained jobspec missing"))?;
-            let spec: serde_json::Value = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-            Some(spec["attributes"]["system"]["environment"]["FLUX_URI"].as_str()
-                .ok_or_else(|| BackendError::unknown("controller-owned FLUX_URI missing"))?.to_owned())
-        } else { None };
+            let reference = record
+                .jobspec
+                .as_ref()
+                .ok_or_else(|| BackendError::unknown("retained jobspec missing"))?;
+            let spec: serde_json::Value =
+                serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+            Some(
+                spec["attributes"]["system"]["environment"]["FLUX_URI"]
+                    .as_str()
+                    .ok_or_else(|| BackendError::unknown("controller-owned FLUX_URI missing"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
         Ok(LaunchContext {
             coordinator_uri,
             output_bounds,

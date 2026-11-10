@@ -215,7 +215,11 @@ impl Flux {
                 "--resources-shape=slot/[core={};memory={}{}]",
                 request.reservation.cpus,
                 request.reservation.memory_bytes.get().div_ceil(1_u64 << 30),
-                if request.reservation.gpus == 0 { String::new() } else { format!(";gpu={}", request.reservation.gpus) },
+                if request.reservation.gpus == 0 {
+                    String::new()
+                } else {
+                    format!(";gpu={}", request.reservation.gpus)
+                },
             ),
             "-t".into(),
             format!("{}s", request.walltime_seconds),
@@ -394,7 +398,8 @@ mod tests {
             "instance_generation":"old","uri":"local:///old",
             "instance_file":instance,"journal_root":root.path().join("journal"),
             "bootstrap":{"cli":"/bin/true","config":root.path().join("options.json")}
-        })).unwrap();
+        }))
+        .unwrap();
         let backend = Flux::new(options).unwrap();
         for run in ["before", "after"] {
             std::fs::write(&instance, format!("{} {run}\n", root.path().display())).unwrap();

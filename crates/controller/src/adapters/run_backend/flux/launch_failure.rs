@@ -252,9 +252,8 @@ fn absence_matches(record: &Record, nonce: &str, observation: &JobUnitAbsence) -
     let Some(binding) = &record.binding else {
         return Ok(false);
     };
-    let bounded_observation = |facts: &GenerationObservation| {
-        facts.stdout.len() <= 16384 && facts.stderr.len() <= 16384
-    };
+    let bounded_observation =
+        |facts: &GenerationObservation| facts.stdout.len() <= 16384 && facts.stderr.len() <= 16384;
     let mut last_local_observation = 0;
     for execution in record.container_launches.keys() {
         let Some(reference) = record.cleanup_evidence.get(execution) else {
