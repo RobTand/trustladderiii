@@ -61,6 +61,12 @@ fn journal_events(path: &Path) -> Result<Vec<Value>> {
     flushed_events(&durable::read(path)?)
 }
 
+pub fn read_identity_proof(value: &Value, root: &Path) -> Result<(api::BlobRef, Vec<u8>)> {
+    let proof: api::BlobRef = serde_json::from_value(value.clone())?;
+    let raw = durable::checked_blob(&proof, root)?;
+    Ok((proof, raw))
+}
+
 fn ready_events(events: &[Value], id: &str, name: &str) -> bool {
     let mut cursor = 0;
     for event in events {
@@ -193,9 +199,8 @@ fn collect_inner(
         let prepared: Value =
             serde_json::from_slice(&durable::read(&prepared_root.join("result.json"))?)?;
         let preflight = &prepared["absent_interpreter_preflight"];
-        let proof: api::BlobRef = serde_json::from_value(preflight["proof"].clone())?;
-        let observed: Value =
-            serde_json::from_slice(&durable::checked_blob(&proof, &prepared_root)?)?;
+        let (proof, raw) = read_identity_proof(&preflight["proof"], &prepared_root)?;
+        let observed: Value = serde_json::from_slice(&raw)?;
         let binding = matches!(&request.runtime.runtime,
             api::ExecutionRuntime::RootlessPodman { image, interpreter, .. }
                 if image == &inputs.test_image && interpreter == &manifest.container_interpreter)

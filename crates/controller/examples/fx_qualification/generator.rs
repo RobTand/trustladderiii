@@ -290,8 +290,8 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
     });
     let prepared: Value =
         serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
-    let rootless: api::BlobRef = serde_json::from_value(prepared["rootless"].clone())?;
-    let rootless_raw = durable::checked_blob(&rootless, &inputs.out.join("prepared"))?;
+    let (rootless, rootless_raw) =
+        live::read_identity_proof(&prepared["rootless"], &inputs.out.join("prepared"))?;
     let rootless_pass = std::str::from_utf8(&rootless_raw)?.trim() == "true";
     let mut observed = true;
     let mut configurations = 0;

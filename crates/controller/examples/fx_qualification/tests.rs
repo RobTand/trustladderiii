@@ -1,5 +1,25 @@
 use super::*;
 
+#[test]
+fn preparation_identity_proofs_round_trip_through_live_reader() {
+    let root = tempfile::tempdir().unwrap();
+    for (name, raw) in [
+        ("absent-interpreter-preflight.stdout", &b"{\"absent\":true}\n"[..]),
+        ("rootless.stdout", &b"true\n"[..]),
+    ] {
+        let path = root.path().join(name);
+        durable::atomic(&path, raw).unwrap();
+        let produced = identity(&path).unwrap();
+        assert!(produced["mode"].is_u64());
+        let (proof, observed) = live::read_identity_proof(&produced, root.path())
+            .expect("preparation identity must be consumable as a checked BlobRef");
+        assert_eq!(proof.path, path);
+        assert_eq!(proof.sha256, durable::digest(raw));
+        assert_eq!(proof.bytes, raw.len() as u64);
+        assert_eq!(observed, raw);
+    }
+}
+
 pub(super) fn inputs(root: &Path) -> Inputs {
     Inputs {
         repo: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
