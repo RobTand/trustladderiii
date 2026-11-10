@@ -803,7 +803,7 @@ fn recheck_paid(n: Node, target: Phase) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::recheck_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node.credit = spend_v(node.credit, 1);
+    node = spent_v(node);
     node = held_v(node, target);
     node = set_phase_v(node, target);
     ReplyChange::Done { node, note }
@@ -898,6 +898,19 @@ fn unheld_v(n: Node) -> (result: Node) [
 ] proof [reveal(reply_family_values::unheld);] {
     let mut m = n;
     m.holds = false;
+    m
+}
+}
+
+kernel_fn! {
+/// Spend one credit unit and return the whole updated node before recheck dispatch.
+fn spent_v(n: Node) -> (result: Node) [
+    requires n.credit.spent < u64::MAX,
+    ensures result == reply_family_values::spent(n),
+        result.generation == n.generation, result.next_seq == n.next_seq,
+] {
+    let mut m = n;
+    m.credit = spend_v(m.credit, 1);
     m
 }
 }
