@@ -1,10 +1,45 @@
 {
-  "source_head": "d1459ba620098ae1b5020f00a163f7af7c353fe6",
+  "source_head": "fd3e97f4e962aeaa62078b0aaff92872cf8d8007",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "08256f4ef761456a032274e7a4fda245fe94a6b9b85d5c683d54bd49226fb07f",
-  "groups": 544,
-  "obligations": 742,
+  "source_sha256": "7bd51f6fb3781f75ab3a648cb6d51a85d157d589d3a151008a9dada534297277",
+  "groups": 551,
+  "obligations": 749,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_out_of_room_fast",
+      "selector": "kernel::retries#out_of_room_fast",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_out_of_room_paid",
+      "selector": "kernel::retries#out_of_room_paid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_out_of_room_ask",
+      "selector": "kernel::retries#out_of_room_ask",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_run_failed_incident",
+      "selector": "kernel::retries#run_failed_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_run_failed_restart",
+      "selector": "kernel::retries#run_failed_restart",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_room_arms",
+      "selector": "kernel::reply_family_posts#room_arms",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_arms",
+      "selector": "kernel::reply_family_posts#failed_arms",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_files_paid",
       "selector": "kernel::reply_admission#reply_files_paid",
