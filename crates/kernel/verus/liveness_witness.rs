@@ -89,6 +89,9 @@ pub(super) fn width_2() -> (w: World)
         assert forall|i: int| 0 <= i < 4 implies liveness_bounds::small(w.nodes@[i], 8) by {
             assert(i == 0 || i == 1 || i == 2 || i == 3);
         }
+        assert(liveness_bounds::context(w, 8));
+        assert(liveness_trace::initial_young(w, 2, 0));
+        assert(liveness_trace::initial_young(w, 3, 0));
         assert(liveness_trace::initial(w, 0));
     }
     w
@@ -189,6 +192,9 @@ pub(super) fn width_3() -> (w: World)
         assert forall|i: int| 0 <= i < 4 implies liveness_bounds::small(w.nodes@[i], 8) by {
             assert(i == 0 || i == 1 || i == 2 || i == 3);
         }
+        assert(liveness_bounds::context(w, 8));
+        assert(liveness_trace::initial_young(w, 2, 0));
+        assert(liveness_trace::initial_young(w, 3, 0));
         assert(liveness_trace::initial(w, 0));
     }
     w
