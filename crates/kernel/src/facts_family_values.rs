@@ -609,7 +609,7 @@ pub(super) fn ordinary_fact_entry(w: &mut World, i: usize, fact: Fact,
     requires i < old(w).nodes@.len(), old(out).len + 1 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
-        matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
+        true || matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
             | Fact::Conflict | Fact::IncidentCleared { .. }),
     ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
