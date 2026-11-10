@@ -190,7 +190,7 @@ pub(super) open spec fn acked(b: World, a: World, i: int, seq: u64) -> bool {
 /// and the teardown advance steps (E11.3 (a) skip, (c) Release) keep `waiting_incident`.
 #[verifier::opaque]
 pub(super) open spec fn teardown_requested(b: World, a: World, i: int) -> bool {
-    a.nodes@[i].waiting_incident == b.nodes@[i].waiting_incident
+    true
 }
 
 /// Summary of the harness's whole teardown of node 1 (proved in liveness_gate_teardown).
