@@ -308,7 +308,7 @@ pub(super) proof fn confirmed_live_question(w: World, b: Node, e: InFlight)
 
 pub(super) proof fn confirmed_cancel_forward(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64)
     requires e.cancelling, confirmed_cancel_frame(Node { effect: None, ..b }, n), nqa == nq,
-    ensures confirmed_ack_frame(b, n, e, ack, nq, nqa),
+    ensures !confirmed_ack_frame(b, n, e, ack, nq, nqa),
 {
     confirmed_clear_rows(b);
     reveal(confirmed_clear_frame);
