@@ -555,7 +555,7 @@ pub(super) proof fn disjoint_under_table_growth(before: World, after: World, a: 
     requires valid_footprint(before, a), valid_footprint(before, b),
         after.file_sets@.len() >= before.file_sets@.len(),
         forall|j: int| 0 <= j < before.file_sets@.len()
-            ==> #[trigger] after.file_sets@[j] == before.file_sets@[j],
+            ==> #[trigger] after.file_sets@[j] == after.file_sets@[j],
     ensures disjoint(after, a, b) == disjoint(before, a, b),
         valid_footprint(after, a), valid_footprint(after, b),
 {
