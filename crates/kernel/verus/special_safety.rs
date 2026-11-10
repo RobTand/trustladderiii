@@ -62,6 +62,125 @@ pub(super) proof fn gate_planning_holds_nothing(w: World, i: int, after: Node,
 }
 }
 
+mod pool_assembly {
+    use super::*;
+
+    verus! {
+    /// G20: the real pool step, including the priority and ticket order checked
+    /// by pool_grant_is_priority_ordered. E5 supplies R7/R8; E7 supplies acceptance.
+    fn pool_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
+        -> (result: (World, Outbox, Report, bool))
+        requires checking::accepted(w), scheduling_safe(w),
+            w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
+            i < w.nodes@.len(), i <= u64::MAX as int,
+            advance_pre(w.nodes@[i as int], w.next_ticket, out.len),
+            match current_item(w.nodes@[i as int]) { Some(Item::Start(_)) => true, _ => false },
+            !(w.nodes@[i as int].phase is Closed), !w.nodes@[i as int].waiting_incident,
+            w.nodes@[i as int].effect.is_none(), !w.nodes@[i as int].paused,
+            w.nodes@[i as int].ticket.is_some(), !w.nodes@[i as int].pool,
+        ensures checking::accepted(result.0),
+            // R7: a new pool grant needs capacity and the first place in line.
+            !w.nodes@[i as int].pool && result.0.nodes@[i as int].pool
+                ==> pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity
+                    && oldest_waiter(w, i as int),
+            // R8: an eligible first waiter with room receives the pool place.
+            (match current_item(w.nodes@[i as int]) { Some(Item::Start(_)) => true, _ => false })
+                && !(w.nodes@[i as int].phase is Closed) && !w.nodes@[i as int].waiting_incident
+                && w.nodes@[i as int].effect.is_none() && !w.nodes@[i as int].paused
+                && w.nodes@[i as int].ticket.is_some()
+                && pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity && oldest_waiter(w, i as int)
+                ==> result.3 && result.0.nodes@[i as int].pool
+                    && result.0.nodes@[i as int].ticket.is_none(),
+            result.0.nodes@[i as int].pool ==> result.0.nodes@[i as int].ticket.is_none()
+                && forall|j: int| 0 <= j < w.nodes@.len()
+                    && !(w.nodes@[j].phase is Ready) && w.nodes@[j].ticket.is_some()
+                    ==> !(priority_number(w.nodes@[j].priority) < priority_number(w.nodes@[i as int].priority)
+                        || (w.nodes@[j].priority == w.nodes@[i as int].priority
+                            && w.nodes@[j].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap())),
+            result.3 ==> 4 * node_distance(result.0.nodes@[i as int]) + pending_rank(result.0.nodes@[i as int])
+                < 4 * node_distance(w.nodes@[i as int]) + pending_rank(w.nodes@[i as int]),
+            transition_safety::transition_safety(w, result.0,
+                transition_safety::Transition::Advance { node: i, moved: result.3 },
+                transition_safety::emitted(out, result.1)),
+    {
+        let ghost before = w;
+        let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
+        proof {
+            advance_family_frames::step_premises_lift(before, w, i as int);
+            internal_safety::step_preserves_accepted_full(before, w, i as int);
+            assert(!(before.nodes@[i as int].phase is Ready));
+            pool_line_order(before, i as int);
+            advance_projection::settle_rank(before.nodes@[i as int], w.nodes@[i as int],
+                before.next_ticket, w.next_ticket, changed);
+        }
+        (w, out, report, changed)
+    }
+    }
+}
+
+mod command_projection {
+    use super::*;
+
+    verus! {
+    /// Resume changes paused/last_cmd, neither of which is a dependency endpoint.
+    /// Project the owner's opaque Resume contract outside the consumer's group.
+    pub(super) proof fn resume_dependencies(before: World, after: World, i: int, id: u64)
+        requires checking::accepted(before), 0 <= i < before.nodes@.len(),
+            after.dependencies@ == before.dependencies@,
+            after.nodes@.len() == before.nodes@.len(),
+            forall|j: int| 0 <= j < before.nodes@.len() && j != i
+                ==> after.nodes@[j] == before.nodes@[j],
+            progress_gate_apply::resume_post(before.nodes@[i], after.nodes@[i], id, Command::Resume),
+        ensures dependencies::rules_ok(after),
+    {
+        checking::accepted_parts(before);
+        reveal(progress_gate_apply::resume_post);
+        reveal(progress_gate_apply::resumed);
+        assert forall|j: int| 0 <= j < before.nodes@.len()
+            implies dependencies::same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]) by {
+            if j != i { assert(after.nodes@[j] == before.nodes@[j]); }
+        }
+        dependencies::frame_preserves(before, after);
+    }
+    }
+}
+
+mod resume_assembly {
+    use super::*;
+
+    verus! {
+    /// R28 for the real Resume command entry, including repeated command IDs.
+    /// Apply dispatch forwarding and invalid-node stutter remain separate rows.
+    fn resume_command_step(mut w: World, event: Event, mut out: Outbox)
+        -> (result: (World, Outbox))
+        requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
+            match event {
+                Event::Command { node, command: Command::Resume, .. } =>
+                    node.0 < w.nodes@.len() && node.0 <= usize::MAX
+                        && node_headroom(w.nodes@[node.0 as int])
+                        && arithmetic_consistent(w.nodes@[node.0 as int]),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        match event {
+            Event::Command { node, id, command: Command::Resume } => {
+                let i = node.0 as usize;
+                on_command(&mut w, i, id, Command::Resume, &mut out);
+                proof {
+                    checking::accepted_node(before, i as int);
+                    command_projection::resume_dependencies(before, w, i as int, id);
+                    internal_safety::apply_step_preserves_accepted(before, w, i as int);
+                }
+            },
+            _ => {},
+        }
+        (w, out)
+    }
+    }
+}
+
 /// Projections of the owner's opaque advance contract live outside the
 /// consumer module so its representation stays local to this proof.
 mod advance_projection {
