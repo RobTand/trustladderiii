@@ -17,6 +17,7 @@ struct DirectState {
     fail_reads_after_acceptance: usize,
     failed_reads: usize,
     no_merge_method: bool,
+    base_after_checks: Option<String>,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -52,6 +53,13 @@ impl Respond for DirectApi {
         }
         if method == "GET" && path.ends_with("/annotations") {
             return ResponseTemplate::new(200).set_body_json(self.base.0.lock().unwrap().annotations.clone());
+        }
+        if method == "GET" && path.ends_with("/check-runs") {
+            let response = self.base.respond(request);
+            if let Some(base) = self.direct.lock().unwrap().base_after_checks.take() {
+                self.base.0.lock().unwrap().pull["base"]["sha"] = json!(base);
+            }
+            return response;
         }
         if method == "PUT" && path == "/repos/owner/sandbox/pulls/100/merge" {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -91,6 +99,7 @@ impl DirectFixture {
             Mock::given(|_: &Request| true).respond_with(DirectApi { base: Api(api.state.clone()), direct: direct.clone() }).with_priority(1).mount(&api.server).await;
         });
         api.state.lock().unwrap().pull["mergeable"] = json!(true);
+        api.state.lock().unwrap().pull["base"]["sha"] = json!("c".repeat(40));
         Self { api, root, direct, wakes: direct_merge::Wakes::default(), clock: Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now()))) }
     }
     fn adapter(&self, settings: &tl3_config::Store) -> direct_merge::Adapter {
@@ -104,6 +113,10 @@ impl DirectFixture {
     }
     fn open_adapters(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter, worktrees: Option<SameHeadRebase>) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
+        registry.register(Upstream::PrismaBuild, DirectChecks {
+            fake: adapters::flux_checks::Fake::new(self.root.path()),
+            base: self.api.state.lock().unwrap().pull["base"]["sha"].as_str().unwrap().into(),
+        });
         registry.register(Upstream::Delivery, adapter);
         if let Some(worktrees) = worktrees { registry.register(Upstream::Worktrees, worktrees); }
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
@@ -155,6 +168,115 @@ impl DirectFixture {
         body["check_run"] = check;
         deliver(settings, &self.api, "check_run", &body);
     }
+}
+
+struct DirectChecks {
+    fake: adapters::flux_checks::Fake,
+    base: String,
+}
+impl DirectChecks {
+    fn report(&self, d: &Delivery, mut completion: tl3_controller::executor::Completion) -> tl3_controller::executor::Completion {
+        for observation in &mut completion.observations {
+            if matches!(observation, tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Reply { reply: tl3_kernel::Reply::ChecksDone { .. }, .. })) {
+                *observation = tl3_controller::executor::Observation::Checks {
+                    node: d.node(), generation: d.generation,
+                    action_key: hex::encode(Sha256::digest(d.key.as_bytes())),
+                    base_sha: self.base.clone(), sha: d.head_sha.clone().unwrap(),
+                    changed_paths: vec![], failed_tests: vec![], report: true, pass: true, results: vec![],
+                };
+            }
+        }
+        completion
+    }
+}
+impl Executor for DirectChecks {
+    fn contract_evidence(&mut self, d: &Delivery) -> tl3_controller::Result<tl3_controller::dispatch_liveness::decision::ContractEvidence> {
+        self.fake.contract_evidence(d)
+    }
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        let completion = self.fake.execute(d)?;
+        Ok(self.report(d, completion))
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(match self.fake.reconcile(d)? {
+            Reconciliation::Found(completion) => Reconciliation::Found(Box::new(self.report(d, *completion))),
+            other => other,
+        })
+    }
+}
+
+fn m3_conflict(controller: &mut Controller, fixture: &DirectFixture, settings: &tl3_config::Store) {
+    for _ in 0..20 {
+        assert!(fixture.direct.lock().unwrap().puts.is_empty(), "a base the passing check did not see must never reach merge PUT");
+        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Rebasing | Phase::Ready(tl3_kernel::Resume::Rebasing)) {
+            let events = Store::open(settings).unwrap().events_after(tl3_store::Revision::ZERO, 4000).unwrap();
+            assert!(events.iter().any(|event| event.receipt.result["kernel_event"]["Fact"]["fact"] == "Conflict"), "base movement must reach the kernel as Conflict");
+            return;
+        }
+        if !controller.drive_once().unwrap() { break; }
+    }
+    panic!("base movement did not enter the existing rebase path");
+}
+
+#[test]
+fn m3_base_moved_during_check_reads_refuses_clean_merge() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_base_moved");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().base_after_checks = Some("d".repeat(40));
+    let (mut controller, delivery) = fixture.start(&settings);
+    m3_conflict(&mut controller, &fixture, &settings);
+    assert_eq!(fixture.api.state.lock().unwrap().pull["mergeable"], true);
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("base movement needs a durable reason")).unwrap();
+    assert_eq!(record["head"], json!(delivery.head_sha));
+    assert_eq!(record["reason"], format!("base moved: checked {}, current {}", "c".repeat(40), "d".repeat(40)));
+}
+
+#[test]
+fn m3_missing_checked_base_refuses_merge() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_missing_base");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let mut store = Store::open(&settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let id = format!("0:{}", delivery.head_sha.as_deref().unwrap());
+    let report = snapshot.rows.iter().find(|row| row.table == "check_reports" && row.id == id).expect("fixture must persist the passing check report");
+    assert_eq!(report.value["pass"], true);
+    assert_eq!(report.value["base_sha"], "c".repeat(40));
+    let mut commit = tl3_store::Commit::new("m3-remove-check-report", json!({}), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Delete { table: "check_reports".into(), id });
+    store.commit(&commit).unwrap();
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
+    m3_conflict(&mut controller, &fixture, &settings);
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("missing checked base needs a durable reason")).unwrap();
+    assert_eq!(record["reason"], format!("base moved: checked base unavailable for approved head {}, current {}", delivery.head_sha.unwrap(), "c".repeat(40)));
+}
+
+#[test]
+fn m3_unchanged_checked_base_merges() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_base_unchanged");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let (mut controller, delivery) = fixture.start(&settings);
+    let snapshot = controller.snapshot().unwrap();
+    let report = snapshot.rows.iter().find(|row| row.table == "check_reports" && row.id == format!("0:{}", delivery.head_sha.as_deref().unwrap())).expect("the approved head needs its stored report");
+    assert_eq!(report.value["base_sha"], fixture.api.state.lock().unwrap().pull["base"]["sha"]);
+    assert_eq!(report.value["pass"], true);
+    drain(&mut controller);
+    let direct = fixture.direct.lock().unwrap();
+    assert_eq!(direct.puts.len(), 1);
+    assert_eq!(direct.successes, 1);
+    assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
 }
 
 #[test]

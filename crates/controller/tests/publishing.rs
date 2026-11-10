@@ -412,15 +412,28 @@ impl Respond for Api {
                     json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true})
                 }
                 ("PUT", "/pulls/100/merge") => {
-                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
-                    assert_eq!(body["sha"], *head, "Direct must pin the merge head");
+                    let head = s.pull.as_ref().unwrap()["head"]["sha"].clone();
+                    assert_eq!(body["sha"], head, "Direct must pin the merge head");
                     let merge = Command::new("git")
                         .current_dir(&self.fixture.remote)
                         .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
                         .output()
                         .unwrap();
                     s.conflicting_handoff |= !merge.status.success();
-                    panic!("pending required checks must never authorize a merge PUT");
+                    assert_eq!(
+                        s.delivery_fixture, "merged",
+                        "pending required checks must never authorize a merge PUT"
+                    );
+                    assert!(
+                        merge.status.success(),
+                        "the rebased head must merge cleanly"
+                    );
+                    let pull = s.pull.as_mut().unwrap();
+                    pull["state"] = json!("closed");
+                    pull["merged_at"] = json!("2026-10-30T01:00:00Z");
+                    pull["merge_commit_sha"] = head.clone();
+                    s.operations.push("merge".into());
+                    json!({"merged":true,"sha":head,"message":"merged"})
                 }
                 ("POST", "/pulls") => {
                     s.opens += 1;
@@ -458,6 +471,10 @@ impl Respond for Api {
                         pull["head"]["sha"] = json!(git(
                             &self.fixture.remote,
                             &["rev-parse", pull["head"]["ref"].as_str().unwrap()]
+                        ));
+                        pull["base"]["sha"] = json!(git(
+                            &self.fixture.remote,
+                            &["rev-parse", pull["base"]["ref"].as_str().unwrap()]
                         ));
                     }
                     let mergeable_override = s.mergeable_override;
@@ -1227,10 +1244,16 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         {
             let mut state = server.api.state.lock().unwrap();
             state.delivery_fixture = "running";
-            state.mergeable_override = Some(false);
+            // d5-clean has no textual conflict. Its checked base alone must force a rebase.
+            state.mergeable_override = Some(mode == "d5-clean");
             let pull = state.pull.as_mut().unwrap();
-            pull["mergeable"] = json!(false);
-            pull["mergeable_state"] = json!("dirty");
+            pull["base"]["sha"] = json!(target);
+            pull["mergeable"] = json!(mode == "d5-clean");
+            pull["mergeable_state"] = json!(if mode == "d5-clean" {
+                "clean"
+            } else {
+                "dirty"
+            });
         }
         webhook(&mut c, &server, "edited");
         for _ in 0..10 {
@@ -1248,6 +1271,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Checking);
         let head = f.head(&d);
+        assert_ne!(
+            head, first_head,
+            "a clean rebase onto a moved base must produce a new head"
+        );
         assert_eq!(
             git(&checkout, &["merge-base", &head, &target]),
             target,
@@ -1286,6 +1313,14 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert_eq!(reviews.len(), 2, "the resolved head needs a fresh review");
         assert_eq!(reviews[1]["inputs"]["head_sha"], head);
         assert_eq!(reviews[1]["inputs"]["check_base_sha"], target);
+        let snapshot = c.snapshot().unwrap();
+        let report = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "check_reports" && row.id == format!("0:{head}"))
+            .expect("the rebased head must have a new persisted check report");
+        assert_eq!(report.value["base_sha"], target);
+        assert_eq!(report.value["pass"], true);
         assert!(
             !reviews[1]["inputs"]["checks"]
                 .as_array()
@@ -1593,12 +1628,18 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     if mode == "unapproved" {
         state.pull.as_mut().unwrap()["head"]["sha"] = json!("f".repeat(40));
     }
-    state.pull.as_mut().unwrap()["state"] = json!("closed");
-    state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-30T01:00:00Z");
-    state.pull.as_mut().unwrap()["merge_commit_sha"] = json!("e".repeat(40));
+    if mode != "d5-clean" {
+        state.pull.as_mut().unwrap()["state"] = json!("closed");
+        state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-30T01:00:00Z");
+        state.pull.as_mut().unwrap()["merge_commit_sha"] = json!("e".repeat(40));
+    }
     state.delivery_fixture = "merged";
     drop(state);
-    webhook(&mut c, &server, "closed");
+    webhook(
+        &mut c,
+        &server,
+        if mode == "d5-clean" { "edited" } else { "closed" },
+    );
     drain(
         &mut c,
         &mut source,
@@ -1632,6 +1673,17 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     assert!(store.worker_progress(None).unwrap().is_empty());
     let state = server.api.state.lock().unwrap();
+    if mode == "d5-clean" {
+        assert_eq!(
+            state
+                .operations
+                .iter()
+                .filter(|op| op.as_str() == "merge")
+                .count(),
+            1,
+            "the rechecked and reviewed head must reach the real merge adapter exactly once"
+        );
+    }
     assert!(state.closed);
     assert_eq!(state.opens, 1);
     assert_eq!(
