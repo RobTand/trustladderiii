@@ -998,6 +998,10 @@ fn c1_replay_rejects_a_different_existing_failure() {
         "call":{"outcome":"failed", "exception":"builtins.ValueError", "assertion":false},
         "teardown":passed});
     report["results"][0]["tests"][0]["phases"] = json!({"base":run, "head":run});
-    report["results"][0]["tests"][0]["phases"]["head"]["call"]["exception"] = json!("builtins.TypeError");
-    assert!(!evaluate(&job, &report).1, "a different head failure must not pass replay");
+    report["results"][0]["tests"][0]["phases"]["head"]["call"]["exception"] =
+        json!("builtins.TypeError");
+    assert!(
+        !evaluate(&job, &report).1,
+        "a different head failure must not pass replay"
+    );
 }
