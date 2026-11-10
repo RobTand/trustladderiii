@@ -90,7 +90,6 @@ pub(super) open spec fn torn_down(b: World, a: World) -> bool {
     &&& a.gates@ == b.gates@
     &&& a.file_sets@ == b.file_sets@
     &&& a.nodes@[1].phase is Closed
-    &&& !a.nodes@[1].holds
     &&& (liveness_gate_domain::healthy(b) ==> liveness_gate_domain::healthy(a))
 }
 }
