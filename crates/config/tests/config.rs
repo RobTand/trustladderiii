@@ -4,6 +4,15 @@ use toml::Value;
 
 const EXAMPLE: &str = include_str!("../example.toml");
 
+#[test]
+fn c6_default_pytest_configuration_is_protected() {
+    let paths = tl3_config::Planning::default().protected_paths;
+    for name in ["pytest.toml", ".pytest.toml"] {
+        assert!(paths.contains(&name.to_string()), "missing root {name}");
+        assert!(paths.contains(&format!("**/{name}")), "missing nested {name}");
+    }
+}
+
 /// PB-REMOVAL (D2): Flux is the only executor, so a config that could start PrismaBuild is
 /// refused when it is parsed, before anything starts. Nothing defaults to a backend.
 #[test]

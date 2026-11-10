@@ -97,3 +97,75 @@ def test_reviewed_commit_protected_change_is_refused(repo):
                                    protected=PROTECTED)
     assert [result.verdict for result in results] == [Verdict.FAIL]
     assert 'deploy/run.sh' in results[0].tests[0].message
+
+
+@pytest.mark.parametrize('filename', ['pytest.toml', '.pytest.toml'])
+@pytest.mark.parametrize('directory', ['', 'nested/tests/'])
+@pytest.mark.parametrize('operation', ['add', 'modify', 'delete', 'rename_in', 'rename_out'])
+def test_c6_pytest_configuration_changes_are_refused(repo, filename, directory, operation):
+    repo, base, ran = repo
+    name = directory + filename
+    if operation in ('modify', 'delete', 'rename_out'):
+        write(repo, {name: '# before\n'})
+    if operation == 'rename_in':
+        write(repo, {directory + 'other.toml': ''})
+    if operation != 'add':
+        base = save(repo, 'configuration baseline')
+    if operation in ('add', 'modify'):
+        write(repo, {name: ''})
+    elif operation == 'delete':
+        (repo / name).unlink()
+    elif operation == 'rename_in':
+        (repo / (directory + 'other.toml')).rename(repo / name)
+    else:
+        (repo / name).rename(repo / (directory + 'other.toml'))
+    head = save(repo, operation)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert [r.verdict for r in results] == [Verdict.FAIL], 'pytest configuration must be refused'
+    assert name in results[0].tests[0].message
+    assert ran == []
+
+
+@pytest.mark.parametrize('name', [
+    'requirements.txt', 'requirements-dev.txt', 'requirements.in', 'uv.lock',
+    'setup.py', 'setup.cfg', 'poetry.lock', 'Pipfile', 'Pipfile.lock',
+    'constraints.txt', 'constraints-ci.txt', 'constraints.in', 'MANIFEST.in',
+    'pyproject.toml',
+])
+@pytest.mark.parametrize('directory', ['', 'pkg/'])
+def test_c6_dependency_changes_carry_coverage_note(repo, name, directory):
+    import json
+    repo, base, ran = repo
+    name = directory + name
+    write(repo, {name: CONFIG + '\n[project]\ndependencies=["new-package"]\n'
+                 if name.endswith('pyproject.toml') else '# changed\n'})
+    head = save(repo, 'dependency change')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    expected = 'not covered by checks: dependency or packaging file changed: ' + name
+    assert all(getattr(r, 'coverage_note', None) == expected for r in results), 'dependency change needs a coverage flag'
+    assert all(r['coverage_note'] == expected for r in json.loads(execution.result_json(results)))
+    # setup.cfg and pyproject.toml already configure tests, so their refusal wins.
+    if name.rsplit('/', 1)[-1] not in ('pyproject.toml', 'setup.cfg'):
+        assert all(r.verdict == Verdict.PASS for r in results)
+        assert ran
+
+
+def test_c6_protected_refusal_keeps_dependency_note(repo):
+    repo, base, ran = repo
+    write(repo, {'pytest.toml': '', 'requirements.txt': '# changed\n'})
+    head = save(repo, 'configuration and dependencies')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert results[0].verdict == Verdict.FAIL, 'configuration refusal wins'
+    assert getattr(results[0], 'coverage_note', None) == (
+        'not covered by checks: dependency or packaging file changed: requirements.txt')
+    assert ran == []
+
+
+@pytest.mark.parametrize('name', ['PYTEST.TOML', '.Pytest.toml', 'nested/PyTest.toml'])
+def test_c6_different_case_does_not_name_a_pytest_configuration(repo, name):
+    repo, base, ran = repo
+    write(repo, {name: ''})
+    head = save(repo, 'different case')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert all(r.verdict == Verdict.PASS for r in results)
+    assert ran
