@@ -1342,12 +1342,16 @@ def test_x7_container_uses_job_uri_and_directory_mount(tmp_path, monkeypatch, op
 
 @pytest.mark.parametrize('uri', ['local:///safe,ro=false', 'local://relative', 'ssh:///socket',
                                   'local:///safe=bad', 'local:///white space', 'local:///bad\npath'])
-def test_x7_invalid_flux_uri_is_refused_with_typed_reason(tmp_path, uri):
+@pytest.mark.parametrize('native', [False, True])
+def test_x7_invalid_flux_uri_is_refused_with_typed_reason(tmp_path, uri, native):
     from tl3_harness import runtime
 
     with pytest.raises(ValueError) as error:
-        runtime.podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1,
-                               mode='in_job', coordinator_uri=uri)
+        if native:
+            runtime.target_environment({'FLUX_URI': uri}, True)
+        else:
+            runtime.podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1,
+                                   mode='in_job', coordinator_uri=uri)
     assert getattr(error.value, 'reason', None) == 'invalid_flux_uri'
     assert uri not in str(error.value)
 
