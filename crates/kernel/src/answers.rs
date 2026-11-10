@@ -375,53 +375,156 @@ fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
 ] {
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+    kernel_proof! { apply_answer_safety::awaiting_arms_bridge(n, nq, id, answer, q); }
     if answer == Answer::Unclear {
-        // One clarifying question. After that the question just stays open.
-        if !q.clarified {
-            let (m1, nq1, x) = clarify_node(m, nq, q);
-            m = m1;
-            nq = nq1;
-            note = Some(x);
-        }
-        kernel_proof! { reveal(apply_answer_values::answered); }
-        return (m, nq, note);
+        return awaiting_unclear_v(n, nq, id, q);
     }
     if !allowed(q.kind, answer) {
-        kernel_proof! {
-            assert(!apply_answer_values::permits(q.kind, answer));
-            reveal(apply_answer_values::answered);
-        }
-        return (m, nq, note);
+        kernel_proof! { assert(!apply_answer_values::permits(q.kind, answer)); }
+        return awaiting_denied_v(n, nq, id, q);
     }
     kernel_proof! { assert(apply_answer_values::permits(q.kind, answer)); }
     match answer {
-        Answer::Continue => {
-            let (m1, x) = go_on_exact(m, q, 0);
-            m = m1;
-            note = x;
-        }
-        Answer::TryAgain => {
-            let (m1, x) = retry_answer_exact(m, q);
-            m = m1;
-            note = x;
-        }
-        Answer::AddCredit(k) => {
-            let (m1, x) = go_on_exact(m, q, k);
-            m = m1;
-            note = x;
-        }
-        Answer::ChangeRequest => {
-            m = stopped_v(m, Outcome::Replaced);
-        }
-        Answer::Stop => {
-            m = stopped_v(m, Outcome::Stopped);
-        }
-        _ => {}
+        Answer::Continue => awaiting_continue_v(n, nq, id, q),
+        Answer::TryAgain => awaiting_retry_v(n, nq, id, q),
+        Answer::AddCredit(k) => awaiting_credit_v(n, nq, id, q, k),
+        Answer::ChangeRequest => awaiting_replace_v(n, nq, id, q),
+        Answer::Stop => awaiting_stop_v(n, nq, id, q),
+        _ => awaiting_other_v(n, nq, id, q),
     }
-    kernel_proof! { reveal(apply_answer_values::answered); }
+}
+}
+
+kernel_fn! {
+fn awaiting_unclear_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == (apply_answer_values::unclear_answer(n, nq, q)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    if !q.clarified {
+        let (m1, nq1, x) = clarify_node(m, nq, q);
+        m = m1;
+        nq = nq1;
+        note = Some(x);
+    }
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_denied_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((n, nq, None)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        permits(q.kind, Answer::Continue),
+    ensures result == ({ let r = apply_answer_values::continued_answer(n, q, 0); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = go_on_exact(m, q, 0);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        permits(q.kind, Answer::TryAgain),
+    ensures result == ({ let r = apply_answer_values::retried_answer(n, q); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = retry_answer_exact(m, q);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        permits(q.kind, Answer::AddCredit(k)),
+    ensures result == ({ let r = apply_answer_values::continued_answer(n, q, k); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = go_on_exact(m, q, k);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_replace_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((retirement::stopped(n, Outcome::Replaced), nq, None)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    m = stopped_v(m, Outcome::Replaced);
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_stop_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((retirement::stopped(n, Outcome::Stopped), nq, None)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    m = stopped_v(m, Outcome::Stopped);
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+fn awaiting_other_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((n, nq, None)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+
     (m, nq, note)
 }
 }

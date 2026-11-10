@@ -55,4 +55,64 @@ pub(super) open spec fn answered(n: Node, nq: u64, id: u64, answer: Answer) -> (
         }},
     }
 }
+pub(super) open spec fn continue_ingesting(n: Node, q: Question, deposit: u8) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::phased(paid, Phase::Ingesting)
+}
+pub(super) open spec fn continue_auditing(n: Node, q: Question, deposit: u8) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::phased(paid, Phase::Auditing)
+}
+pub(super) open spec fn continue_unplanned(n: Node, q: Question, deposit: u8) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::phased(paid, Phase::Unplanned)
+}
+pub(super) open spec fn continue_planning(n: Node, q: Question, deposit: u8, must_split: bool) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::phased(Node { plan_retries: 0, ..paid }, Phase::Planning { must_split })
+}
+pub(super) open spec fn continue_ready(n: Node, q: Question, deposit: u8, r: Resume) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::phased(paid, Phase::Ready(r))
+}
+pub(super) open spec fn continue_stop(n: Node, q: Question, deposit: u8, o: Outcome) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::stopped(paid, o)
+}
+pub(super) open spec fn continue_nowhere(n: Node, q: Question, deposit: u8) -> Node {
+    let paid = Node { credit: handler_safety::paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    retirement::stopped(paid, Outcome::Stopped)
+}
+pub(super) open spec fn continued_arms(n: Node, q: Question, deposit: u8) -> Node {
+    match q.cont {
+        Cont::Ingesting => continue_ingesting(n, q, deposit),
+        Cont::Auditing => continue_auditing(n, q, deposit),
+        Cont::Unplanned => continue_unplanned(n, q, deposit),
+        Cont::Planning { must_split } => continue_planning(n, q, deposit, must_split),
+        Cont::Ready(r) => continue_ready(n, q, deposit, r),
+        Cont::Stop(o) => continue_stop(n, q, deposit, o),
+        Cont::Nowhere => continue_nowhere(n, q, deposit),
+    }
+}
+pub(super) open spec fn unclear_answer(n: Node, nq: u64, q: Question) -> (Node, u64, Option<Notice>) {
+    if q.clarified { (n, nq, None) } else {
+        (Node { question: Some(Question { id: nq, clarified: true, ..q }), ..n },
+            (nq + 1) as u64, Some(Notice::Ask { question: nq }))
+    }
+}
+pub(super) open spec fn awaiting_arms(n: Node, nq: u64, answer: Answer, q: Question)
+    -> (Node, u64, Option<Notice>) {
+    if answer == Answer::Unclear { unclear_answer(n, nq, q) }
+    else if !permits(q.kind, answer) { (n, nq, None) }
+    else { match answer {
+        Answer::Continue => { let r = continued_answer(n, q, 0); (r.0, nq, r.1) },
+        Answer::TryAgain => { let r = retried_answer(n, q); (r.0, nq, r.1) },
+        Answer::AddCredit(k) => { let r = continued_answer(n, q, k); (r.0, nq, r.1) },
+        Answer::ChangeRequest => (retirement::stopped(n, Outcome::Replaced), nq, None),
+        Answer::Stop => (retirement::stopped(n, Outcome::Stopped), nq, None),
+        _ => (n, nq, None),
+    }}
+}
+
+
 }

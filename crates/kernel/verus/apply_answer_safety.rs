@@ -477,4 +477,18 @@ pub(super) proof fn retried_answer_rules(n: Node, q: Question, nq: u64)
     reveal(continued_answer);
 }
 
+pub(super) proof fn continued_arms_bridge(n: Node, q: Question, deposit: u8)
+    ensures handler_safety::continued_node(n, q, deposit) == continued_arms(n, q, deposit),
+{
+    reveal(handler_safety::continued_node);
+}
+
+pub(super) proof fn awaiting_arms_bridge(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
+    requires n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures answered(n, nq, id, answer) == awaiting_arms(n, nq, answer, q),
+{
+    reveal(answered);
+}
+
+
 }

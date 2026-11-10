@@ -223,27 +223,17 @@ pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node
         n.credit.spent < u64::MAX,
     ensures result == handler_safety::continued_node(n, q, deposit),
 ] {
-    let mut m = n;
-    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
-    m.question = None;
-    match q.cont {
-        Cont::Ingesting => m = set_phase_v(m, Phase::Ingesting),
-        Cont::Auditing => m = set_phase_v(m, Phase::Auditing),
-        Cont::Unplanned => m = set_phase_v(m, Phase::Unplanned),
-        Cont::Planning { must_split } => {
-            m.plan_retries = 0;
-            m = set_phase_v(m, Phase::Planning { must_split });
-        }
-        Cont::Ready(r) => m = set_phase_v(m, Phase::Ready(r)),
-        Cont::Stop(o) => {
-            m = stopped_v(m, o);
-        }
-        Cont::Nowhere => {
-            m = stopped_v(m, Outcome::Stopped);
-        }
-    }
-    kernel_proof! { reveal(handler_safety::continued_node); }
-    m
+    let result = match q.cont {
+        Cont::Ingesting => continue_ingesting_v(n, q, deposit),
+        Cont::Auditing => continue_auditing_v(n, q, deposit),
+        Cont::Unplanned => continue_unplanned_v(n, q, deposit),
+        Cont::Planning { must_split } => continue_planning_v(n, q, deposit, must_split),
+        Cont::Ready(r) => continue_ready_v(n, q, deposit, r),
+        Cont::Stop(o) => continue_stop_v(n, q, deposit, o),
+        Cont::Nowhere => continue_nowhere_v(n, q, deposit),
+    };
+    kernel_proof! { apply_answer_safety::continued_arms_bridge(n, q, deposit); }
+    result
 }
 }
 
@@ -300,5 +290,139 @@ pub(super) fn stopped_v(n: Node, outcome: Outcome) -> (result: Node) [
     ensures result == retirement::stopped(n, outcome),
 ] {
     enter_stopping_v(n, outcome)
+}
+}
+
+kernel_fn! {
+fn continue_ingesting_v(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_ingesting(n, q, deposit),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = set_phase_v(m, Phase::Ingesting);
+    m
+}
+}
+
+kernel_fn! {
+fn continue_auditing_v(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_auditing(n, q, deposit),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = set_phase_v(m, Phase::Auditing);
+    m
+}
+}
+
+kernel_fn! {
+fn continue_unplanned_v(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_unplanned(n, q, deposit),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = set_phase_v(m, Phase::Unplanned);
+    m
+}
+}
+
+kernel_fn! {
+fn continue_planning_v(n: Node, q: Question, deposit: u8, must_split: bool) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_planning(n, q, deposit, must_split),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m.plan_retries = 0;
+    m = set_phase_v(m, Phase::Planning { must_split });
+    m
+}
+}
+
+kernel_fn! {
+fn continue_ready_v(n: Node, q: Question, deposit: u8, r: Resume) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_ready(n, q, deposit, r),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = set_phase_v(m, Phase::Ready(r));
+    m
+}
+}
+
+kernel_fn! {
+fn continue_stop_v(n: Node, q: Question, deposit: u8, o: Outcome) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_stop(n, q, deposit, o),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = stopped_v(m, o);
+    m
+}
+}
+
+kernel_fn! {
+fn continue_nowhere_v(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continue_nowhere(n, q, deposit),
+] {
+    let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
+    m.question = None;
+    m = stopped_v(m, Outcome::Stopped);
+    m
 }
 }
