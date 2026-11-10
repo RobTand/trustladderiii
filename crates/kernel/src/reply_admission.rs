@@ -415,7 +415,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::files_post(old(w).fail_fast, files, fits, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
-] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_files = *w }
     kernel_snapshot! { before_files_out = *out }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
@@ -425,8 +425,12 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
         let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, true);
+        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+            files, fits, footprint, change); }
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
+            reply_family_posts::files_posts(before_files@.nodes@[i as int], before_files@.fail_fast,
+                before_files@.next_question, files, fits, footprint, i as int, before_files_out@, *out);
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
                 w.nodes@[i as int], before_files_out@, *out);
         }
@@ -439,8 +443,12 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
         let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, false);
+        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+            files, fits, footprint, change); }
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
+            reply_family_posts::files_posts(before_files@.nodes@[i as int], before_files@.fail_fast,
+                before_files@.next_question, files, fits, footprint, i as int, before_files_out@, *out);
             handler_safety::fund_fast(before_files@.nodes@[i as int], w.nodes@[i as int]);
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
                 w.nodes@[i as int], before_files_out@, *out);
@@ -451,10 +459,15 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
         let change = out_of_room_node(w.nodes[i], w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles);
-        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
-            files, fits, before_files@.nodes@[i as int].footprint, change); }
+        kernel_proof! {
+            reveal(reply_family_values::files);
+            reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+                files, fits, before_files@.nodes@[i as int].footprint, change);
+        }
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
+            reply_family_posts::room_posts(before_files@.nodes@[i as int], before_files@.fail_fast,
+                before_files@.next_question, ReviewStop::MakerNeedsFiles, i as int, before_files_out@, *out);
             if !(before_files@.nodes@[i as int].phase is Closed || before_files@.nodes@[i as int].phase is Stopping) {
                 if fits && !footprint::footprint_empty(files) {
                     handler_safety::fund_off(before_files@.nodes@[i as int], w.nodes@[i as int]);

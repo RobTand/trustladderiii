@@ -38,10 +38,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
     kernel_snapshot! { before_out = *out }
     let change = run_failed_node(w.nodes[i], i, report);
     resolve_reply_change(w, i, change, out);
-    kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
-    }
+    kernel_proof! { reply_family_posts::failed_run_props(before@.nodes@[i as int]); }
     kernel_proof! {
         retries_facts::failed_result(before@.nodes@[i as int], w.nodes@[i as int], before_out@, *out);
     }
@@ -230,14 +227,15 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
             && match final(w).nodes@[i as int].question {
                 Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Planning { must_split: true },
                 None => false },
-] proof [reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
     let change = out_of_room_node(w.nodes[i], w.fail_fast, w.next_question, step);
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
+        reply_family_posts::room_posts(before@.nodes@[i as int], before@.fail_fast,
+            before@.next_question, step, i as int, before_out@, *out);
+        reply_family_posts::retry_lift(before@, *w, i as int, change, before_out@, *out);
     }
 }
 }

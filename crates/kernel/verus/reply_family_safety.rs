@@ -111,6 +111,7 @@ pub(super) proof fn work_maker_rows(n: Node, c: ReplyCtx, r: ReplyChange)
                         Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
                     && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
             } by {
+        reveal(reply_family_values::room);
         reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
         reveal(port_t860_contracts::ended); reveal(retirement::stopped);
         reveal(distance);
@@ -157,6 +158,7 @@ pub(super) proof fn work_review_rows(n: Node, c: ReplyCtx, r: ReplyChange)
                         Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
                     && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
             } by {
+        reveal(reply_family_values::room);
         reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
         reveal(port_t860_contracts::ended); reveal(retirement::stopped);
         reveal(distance);
@@ -265,6 +267,8 @@ pub(super) proof fn files_rows(n: Node, c: ReplyCtx, files: Footprint, fits: boo
                         Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
                     && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
             } by {
+        reveal(reply_family_values::files);
+        reveal(reply_family_values::room);
         reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
         reveal(port_t860_contracts::ended); reveal(retirement::stopped);
     }
