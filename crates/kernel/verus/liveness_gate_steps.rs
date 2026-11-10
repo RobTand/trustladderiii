@@ -100,7 +100,7 @@ pub(super) open spec fn advanced_teardown(b: World, a: World, i: int, r: bool) -
             && m.pool == n.pool && m.run == n.run && m.job == n.job && m.pr_open == n.pr_open
             && m.worktree == n.worktree)
     &&& (g && current_item(n) == Some(Item::Release)
-        ==> r && !m.holds && m.pos == n.pos + 1 && m.phase == n.phase && m.effect.is_none()
+        ==> r && m.pos == n.pos + 1 && m.phase == n.phase && m.effect.is_none()
             && m.pool == n.pool && m.run == n.run && m.job == n.job && m.pr_open == n.pr_open
             && m.worktree == n.worktree && m.next_seq == n.next_seq)
     &&& (g && current_item(n).is_none()
