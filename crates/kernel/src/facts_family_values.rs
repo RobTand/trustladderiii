@@ -23,14 +23,84 @@ pub(super) open spec fn notices(notes: Outbox, i: usize, bound: int) -> bool {
         && (forall|k: int| notes.len <= k < OUTBOX ==> #[trigger] notes.items@[k].is_none())
 }
 
-/// Exact ordered list, including the unoccupied slots.
-#[verifier::opaque]
-pub(super) open spec fn merge_notices(n: Node, notes: Outbox, i: usize,
-    head: HeadId, checks_passed: bool) -> bool {
+pub(super) open spec fn priority_node(n: Node, priority: Priority) -> Node {
+    if n.phase is Closed { n } else { Node { priority, ..n } }
+}
+
+pub(super) open spec fn closed_pr_node(n: Node) -> Node {
+    if !n.pr_open { n } else {
+        let closed = Node { pr_open: false, ..n };
+        if n.phase is Stopping || n.phase is Closed { closed }
+        else { retirement::stopped(closed, Outcome::Stopped) }
+    }
+}
+
+pub(super) open spec fn conflict_node(n: Node) -> Node {
+    if n.phase == Phase::AwaitingDelivery {
+        retirement::phased(n, Phase::Ready(Resume::Rebasing))
+    } else if n.phase == Phase::Publishing {
+        retirement::phased(n, Phase::Rebasing)
+    } else { n }
+}
+
+pub(super) open spec fn cleared_node(n: Node, by_rob: bool) -> Node {
+    if n.waiting_incident && (by_rob || !n.incident_needs_rob) {
+        Node { waiting_incident: false, incident_needs_rob: false, ..n }
+    } else { n }
+}
+
+pub(super) open spec fn merged_credit(c: Credit) -> Credit {
+    Credit { merge_credited: true,
+        earned: if c.merge_credited { c.earned } else { (c.earned + 1) as u64 }, ..c }
+}
+
+pub(super) open spec fn merged_node(n: Node, head: HeadId) -> Node {
+    if !n.had_pr || n.merged.is_some() { n } else { match n.phase {
+        Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced) => Node {
+            merged: Some(head), phase: Phase::Closed(Outcome::Merged),
+            credit: merged_credit(n.credit), ..n
+        },
+        Phase::Closed(_) => n,
+        _ => retirement::stopped(Node { merged: Some(head), pr_open: false, ..n }, Outcome::Merged),
+    } }
+}
+
+pub(super) open spec fn fact_value_node(n: Node, fact: Fact) -> Node {
+    match fact {
+        Fact::Priority(priority) => priority_node(n, priority),
+        Fact::PrClosedByPerson => closed_pr_node(n),
+        Fact::Conflict => conflict_node(n),
+        Fact::IncidentCleared { by_rob } => cleared_node(n, by_rob),
+        Fact::PrMerged { head, .. } => merged_node(n, head),
+        _ => n,
+    }
+}
+
+pub(super) open spec fn ordinary_items(n: Node, i: usize, fact: Fact) -> Seq<Option<Out>> {
+    if fact == Fact::PrClosedByPerson && n.pr_open
+        && !(n.phase is Stopping || n.phase is Closed) {
+        seq![Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::PrClosed) })]
+    } else { seq![] }
+}
+
+pub(super) open spec fn padded_notices(items: Seq<Option<Out>>) -> Seq<Option<Out>> {
+    Seq::new(OUTBOX as nat, |k: int| if k < items.len() { items[k] } else { None })
+}
+
+pub(super) proof fn fact_value_bridge(n: Node, fact: Fact)
+    requires matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict
+        | Fact::IncidentCleared { .. } | Fact::PrMerged { .. }),
+    ensures fact_value_node(n, fact) == retirement::fact_node(n, fact),
+{
+    reveal(retirement::fact_node);
+}
+
+pub(super) open spec fn merge_items(n: Node, i: usize,
+    head: HeadId, checks_passed: bool) -> Seq<Option<Out>> {
     let late = matches!(n.phase, Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced));
     let active = n.had_pr && n.merged.is_none() && (!(n.phase is Closed) || late);
     let unapproved = !(n.approved == Some(head) && checks_passed);
-    let items = if !active { seq![] } else {
+    if !active { seq![] } else {
         let prefix = if late { seq![
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::LateMerge) }),
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
@@ -39,9 +109,15 @@ pub(super) open spec fn merge_notices(n: Node, notes: Outbox, i: usize,
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::UnapprovedMerge) }),
         ] } else { prefix }
-    };
-    notes.len == items.len()
-        && notes.items@ == Seq::new(OUTBOX as nat, |k: int| if k < items.len() { items[k] } else { None })
+    }
+}
+
+/// Exact ordered list, including the unoccupied slots.
+#[verifier::opaque]
+pub(super) open spec fn merge_notices(n: Node, notes: Outbox, i: usize,
+    head: HeadId, checks_passed: bool) -> bool {
+    notes.len == merge_items(n, i, head, checks_passed).len()
+        && notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed))
 }
 
 pub(super) proof fn value_node_step(b: Node, n: Node, fast: bool, i: usize, fact: Fact)
@@ -139,6 +215,74 @@ pub(super) proof fn empty_merge_notices(n: Node, notes: Outbox, i: usize,
         if k < Seq::<Option<Out>>::empty().len() { Seq::<Option<Out>>::empty()[k] } else { None }));
 }
 
+pub(super) proof fn ordinary_outputs(n: Node, notes: Outbox, i: usize, fact: Fact)
+    requires matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
+            | Fact::Conflict | Fact::IncidentCleared { .. }),
+        notes.len == ordinary_items(n, i, fact).len(),
+        notes.items@ =~= padded_notices(ordinary_items(n, i, fact)),
+    ensures notices(notes, i, 1), retirement::notices_only(notes),
+        fact is Priority || fact is Conflict || fact is IncidentCleared ==> notes.len == 0,
+        !(fact == Fact::PrClosedByPerson && n.pr_open
+            && !(n.phase is Stopping || n.phase is Closed)) ==> notes.len == 0,
+        fact == Fact::PrClosedByPerson && n.pr_open
+            && !(n.phase is Stopping || n.phase is Closed)
+            ==> notes.len == 1 && notes.items@[0] == Some(Out::Notice {
+                node: NodeId(i as u64), notice: Notice::Note(NoteKind::PrClosed) }),
+{
+    reveal(notices);
+    reveal(retirement::notices_only);
+}
+
+pub(super) proof fn merge_frame(n: Node, value: Node, head: HeadId, checks_passed: bool)
+    requires node_headroom(n), value == retirement::fact_node(n, Fact::PrMerged { head, checks_passed }),
+    ensures value.repo == n.repo, value.footprint == n.footprint,
+        settle_shape(n) ==> settle_shape(value),
+        n.phase is Closed ==> value.phase is Closed,
+        value.generation as int <= n.generation as int + 1,
+        value.next_seq == n.next_seq,
+        value.credit.start == n.credit.start,
+        value.credit.earned as int <= n.credit.earned as int + 1,
+        value.credit.added == n.credit.added, value.credit.spent == n.credit.spent,
+        value.credit.earned as int + merge_capacity(value) <= n.credit.earned as int + 1,
+        value.last_cmd == n.last_cmd,
+{
+    reveal(retirement::fact_node);
+    reveal(retirement::stopped);
+}
+
+pub(super) proof fn merge_distance(n: Node, value: Node, head: HeadId, checks_passed: bool)
+    requires n.had_pr, n.merged.is_none(), n.phase == Phase::AwaitingDelivery,
+        !n.paused, !n.waiting_incident, n.effect.is_none(),
+        value == retirement::fact_node(n, Fact::PrMerged { head, checks_passed }),
+    ensures distance(value) < distance(n),
+{
+    reveal(retirement::fact_node);
+    let prepared = Node { merged: Some(head), pr_open: false, ..n };
+    retirement::merge_input_distance(n, head);
+    allocation_stopping_lemmas::stopping_progress(prepared, value, Outcome::Merged);
+}
+
+pub(super) proof fn merge_outputs(n: Node, notes: Outbox, i: usize,
+    head: HeadId, checks_passed: bool)
+    requires notes.len == merge_items(n, i, head, checks_passed).len(),
+        notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)),
+    ensures merge_notices(n, notes, i, head, checks_passed),
+        notices(notes, i, 4), retirement::notices_only(notes),
+        n.had_pr && n.merged.is_none() && !(n.phase is Closed)
+            && !(n.approved == Some(head) && checks_passed)
+            ==> retirement::unapproved_note(notes, i),
+{
+    reveal(merge_notices);
+    reveal(notices);
+    reveal(retirement::notices_only);
+    reveal(retirement::unapproved_note);
+    if n.had_pr && n.merged.is_none() && !(n.phase is Closed)
+        && !(n.approved == Some(head) && checks_passed) {
+        assert(notes.items@[1] == Some(Out::Notice { node: NodeId(i as u64),
+            notice: Notice::Note(NoteKind::UnapprovedMerge) }));
+    }
+}
+
 #[verifier::opaque]
 pub(super) open spec fn appended(ob: Outbox, oa: Outbox, notes: Outbox) -> bool {
     oa.len == ob.len + notes.len
@@ -153,6 +297,164 @@ pub(super) open spec fn notice_suffix(ob: Outbox, oa: Outbox, i: usize) -> bool 
             Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
             _ => false,
         }
+}
+}
+
+kernel_fn! {
+pub(super) fn priority_fact_arm(n: Node, i: usize, priority: Priority)
+    -> (result: (Node, Outbox)) [
+    requires node_headroom(n),
+    ensures result.0 == priority_node(n, priority),
+        result.1.len == ordinary_items(n, i, Fact::Priority(priority)).len(),
+        result.1.items@ =~= padded_notices(ordinary_items(n, i, Fact::Priority(priority))),
+] proof [reveal(empty_outbox);] {
+    let mut value = n;
+    let mut notes = Outbox::new();
+    let out = &mut notes;
+    if !value.phase.is_closed() {
+        value.priority = priority;
+    }
+    kernel_proof! {
+        assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::Priority(priority))));
+    }
+    (value, notes)
+}
+}
+
+kernel_fn! {
+pub(super) fn closed_pr_fact_arm(n: Node, i: usize)
+    -> (result: (Node, Outbox)) [
+    requires node_headroom(n),
+    ensures result.0 == closed_pr_node(n),
+        result.1.len == ordinary_items(n, i, Fact::PrClosedByPerson).len(),
+        result.1.items@ =~= padded_notices(ordinary_items(n, i, Fact::PrClosedByPerson)),
+] proof [reveal(empty_outbox);] {
+    let mut value = n;
+    let mut notes = Outbox::new();
+    let out = &mut notes;
+    let m = &mut value;
+    if !m.pr_open {
+        kernel_proof! {
+            assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::PrClosedByPerson)));
+        }
+        return (value, notes);
+    }
+    m.pr_open = false;
+    if !m.phase.is_stopping() && !m.phase.is_closed() {
+        notice(out, i, Notice::Note(NoteKind::PrClosed));
+        enter_stopping(m, Outcome::Stopped);
+    }
+    kernel_proof! {
+        assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::PrClosedByPerson)));
+    }
+    (value, notes)
+}
+}
+
+kernel_fn! {
+pub(super) fn conflict_fact_arm(n: Node, i: usize)
+    -> (result: (Node, Outbox)) [
+    requires node_headroom(n),
+    ensures result.0 == conflict_node(n),
+        result.1.len == ordinary_items(n, i, Fact::Conflict).len(),
+        result.1.items@ =~= padded_notices(ordinary_items(n, i, Fact::Conflict)),
+] proof [reveal(empty_outbox);] {
+    let mut value = n;
+    let mut notes = Outbox::new();
+    let out = &mut notes;
+    let m = &mut value;
+    if m.phase == Phase::AwaitingDelivery {
+        set_phase(m, Phase::Ready(Resume::Rebasing));
+    } else if m.phase == Phase::Publishing {
+        set_phase(m, Phase::Rebasing);
+    }
+    kernel_proof! {
+        assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::Conflict)));
+    }
+    (value, notes)
+}
+}
+
+kernel_fn! {
+pub(super) fn cleared_fact_arm(n: Node, i: usize, by_rob: bool)
+    -> (result: (Node, Outbox)) [
+    requires node_headroom(n),
+    ensures result.0 == cleared_node(n, by_rob),
+        result.1.len == ordinary_items(n, i, Fact::IncidentCleared { by_rob }).len(),
+        result.1.items@ =~= padded_notices(ordinary_items(n, i, Fact::IncidentCleared { by_rob })),
+] proof [reveal(empty_outbox);] {
+    let mut value = n;
+    let mut notes = Outbox::new();
+    let out = &mut notes;
+    let m = &mut value;
+    if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
+        m.waiting_incident = false;
+        m.incident_needs_rob = false;
+    }
+    kernel_proof! {
+        assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::IncidentCleared { by_rob })));
+    }
+    (value, notes)
+}
+}
+
+kernel_fn! {
+/// Give the merge caller a whole credit value in its exact node equation.
+pub(super) fn merge_credit_value(n: Node) -> (result: Node) [
+    requires n.credit.merge_credited || n.credit.earned < u64::MAX,
+    ensures result == (Node { credit: merged_credit(n.credit), ..n }),
+] {
+    let mut value = n;
+    merge_credit(&mut value);
+    value
+}
+}
+
+kernel_fn! {
+pub(super) fn merged_fact_arm(n: Node, i: usize, head: HeadId, checks_passed: bool)
+    -> (result: (Node, Outbox)) [
+    requires node_headroom(n),
+    ensures result.0 == merged_node(n, head),
+        result.1.len == merge_items(n, i, head, checks_passed).len(),
+        result.1.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)),
+] proof [reveal(empty_outbox);] {
+    let mut value = n;
+    let mut notes = Outbox::new();
+    let out = &mut notes;
+    let m = &mut value;
+    if !m.had_pr || m.merged.is_some() {
+        kernel_proof! {
+            assert(notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)));
+        }
+        return (value, notes);
+    }
+    let approved = m.approved == Some(head) && checks_passed;
+    match m.phase {
+        Phase::Closed(o) => {
+            if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
+                kernel_proof! {
+                    assert(notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)));
+                }
+                return (value, notes);
+            }
+            m.merged = Some(head);
+            m.phase = Phase::Closed(Outcome::Merged);
+            *m = merge_credit_value(*m);
+            notice(out, i, Notice::Note(NoteKind::LateMerge));
+            notice(out, i, Notice::Incident { needs_rob: false });
+        }
+        _ => {
+            merge_open(m, head);
+        }
+    }
+    if !approved {
+        notice(out, i, Notice::Incident { needs_rob: false });
+        notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
+    }
+    kernel_proof! {
+        assert(notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)));
+    }
+    (value, notes)
 }
 }
 
@@ -184,63 +486,25 @@ pub(super) fn ordinary_fact_value(n: Node, fast: bool, i: usize, fact: Fact)
             && n.effect.is_none() && (!n.paused || n.phase is Stopping)
             && !(n.phase is Closed) ==> distance(result.0) < distance(n)),
         retirement::notices_only(result.1),
-] proof [reveal(notices); reveal(empty_outbox); reveal(retirement::notices_only);] {
-    let mut value = n;
-    let mut notes = Outbox::new();
-    let out = &mut notes;
-    match fact {
-        Fact::Priority(priority) => {
-            if !value.phase.is_closed() {
-                value.priority = priority;
-            }
-        }
-        Fact::PrClosedByPerson => {
-            let m = &mut value;
-            if !m.pr_open {
-                kernel_proof! {
-                    assert(value == retirement::fact_node(n, fact)) by {
-                        reveal(retirement::fact_node);
-                    }
-                    ordinary_frame(n, value, fact);
-                    value_node_rows(n, value, fast, i, fact);
-                }
-                return (value, notes);
-            }
-            m.pr_open = false;
-            if !m.phase.is_stopping() && !m.phase.is_closed() {
-                notice(out, i, Notice::Note(NoteKind::PrClosed));
-                enter_stopping(m, Outcome::Stopped);
-            }
-        }
-        Fact::Conflict => {
-            let m = &mut value;
-            if m.phase == Phase::AwaitingDelivery {
-                set_phase(m, Phase::Ready(Resume::Rebasing));
-            } else if m.phase == Phase::Publishing {
-                set_phase(m, Phase::Rebasing);
-            }
-        }
-        Fact::IncidentCleared { by_rob } => {
-            let m = &mut value;
-            if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
-                m.waiting_incident = false;
-                m.incident_needs_rob = false;
-            }
-        }
-        _ => {}
-    }
+] {
+    let result = match fact {
+        Fact::Priority(priority) => priority_fact_arm(n, i, priority),
+        Fact::PrClosedByPerson => closed_pr_fact_arm(n, i),
+        Fact::Conflict => conflict_fact_arm(n, i),
+        Fact::IncidentCleared { by_rob } => cleared_fact_arm(n, i, by_rob),
+        _ => (n, Outbox::new()),
+    };
     kernel_proof! {
-        assert(value == retirement::fact_node(n, fact)) by {
-            reveal(retirement::fact_node);
-        }
-        ordinary_frame(n, value, fact);
+        fact_value_bridge(n, fact);
+        ordinary_frame(n, result.0, fact);
+        ordinary_outputs(n, result.1, i, fact);
+        value_node_rows(n, result.0, fast, i, fact);
         if fact == (Fact::IncidentCleared { by_rob: true }) && n.waiting_incident
             && n.effect.is_none() && (!n.paused || n.phase is Stopping) && !(n.phase is Closed) {
-            ordinary_distance(n, value, fact);
+            ordinary_distance(n, result.0, fact);
         }
-        value_node_rows(n, value, fast, i, fact);
     }
-    (value, notes)
+    result
 }
 }
 
@@ -270,63 +534,21 @@ pub(super) fn merge_fact_value(n: Node, fast: bool, i: usize,
         n.had_pr && n.merged.is_none() && !(n.phase is Closed)
             && !(n.approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(result.1, i),
-] proof [reveal(notices); reveal(merge_notices); reveal(empty_outbox); reveal(retirement::fact_node);
-    reveal(retirement::stopped); reveal(retirement::notices_only);
-    reveal(retirement::unapproved_note);] {
-    let mut value = n;
-    let mut notes = Outbox::new();
-    let out = &mut notes;
-    kernel_snapshot! { before_merge = n }
-    let m = &mut value;
-    if !m.had_pr || m.merged.is_some() {
-        kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed);
-            empty_merge_notices(n, notes, i, head, checks_passed); }
-        kernel_proof! { value_node_rows(n, value, fast, i, Fact::PrMerged { head, checks_passed }); }
-        return (value, notes);
-    }
-    let approved = m.approved == Some(head) && checks_passed;
-    match m.phase {
-        Phase::Closed(o) => {
-            if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
-                kernel_proof! {
-                    facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed);
-                    empty_merge_notices(n, notes, i, head, checks_passed);
-                }
-                kernel_proof! { value_node_rows(n, value, fast, i, Fact::PrMerged { head, checks_passed }); }
-                return (value, notes);
-            }
-            m.merged = Some(head);
-            m.phase = Phase::Closed(Outcome::Merged);
-            merge_credit(m);
-            kernel_proof! { facts_merge_lemmas::late_result(before_merge@, *m, head, checks_passed); }
-            notice(out, i, Notice::Note(NoteKind::LateMerge));
-            notice(out, i, Notice::Incident { needs_rob: false });
-        }
-        _ => {
-            merge_open(m, head);
-            kernel_proof! { facts_merge_lemmas::open_result(before_merge@, *m, head, checks_passed); }
-        }
-    }
-    if !approved {
-        notice(out, i, Notice::Incident { needs_rob: false });
-        notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
-    }
+] {
+    let result = merged_fact_arm(n, i, head, checks_passed);
     kernel_proof! {
-        let prefix = if matches!(n.phase,
-            Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced)) { seq![
-            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::LateMerge) }),
-            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
-        ] } else { seq![] };
-        let items = if !approved { prefix + seq![
-            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: false } }),
-            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::UnapprovedMerge) }),
-        ] } else { prefix };
-        assert(notes.len == items.len());
-        assert(notes.items@ =~= Seq::new(OUTBOX as nat, |k: int|
-            if k < items.len() { items[k] } else { None }));
-        value_node_rows(n, value, fast, i, Fact::PrMerged { head, checks_passed });
+        let fact = Fact::PrMerged { head, checks_passed };
+        fact_value_bridge(n, fact);
+        merge_frame(n, result.0, head, checks_passed);
+        merge_outputs(n, result.1, i, head, checks_passed);
+        value_node_rows(n, result.0, fast, i, fact);
+        if !n.had_pr || n.merged.is_some() { assert(result.0 == n); }
+        if n.had_pr && n.merged.is_none() && n.phase == Phase::AwaitingDelivery
+            && !n.paused && !n.waiting_incident && n.effect.is_none() {
+            merge_distance(n, result.0, head, checks_passed);
+        }
     }
-    (value, notes)
+    result
 }
 }
 
@@ -344,6 +566,7 @@ pub(super) fn append_fact_notices(out: &mut Outbox, notes: Outbox, i: usize) -> 
     let mut k = 0usize;
     kernel_while! { (k < notes.len) [
         invariant notices(notes, i, 4), k <= notes.len, out.len == before_append@.len + k,
+            notes.len == 0 ==> out.items == before_append@.items,
             before_append@.len + notes.len <= OUTBOX,
             forall|j: int| 0 <= j < OUTBOX ==> out.items@[j]
                 == if before_append@.len <= j < out.len {
@@ -361,7 +584,7 @@ pub(super) fn append_fact_notices(out: &mut Outbox, notes: Outbox, i: usize) -> 
     kernel_proof! {
         if notes.len == 0 {
             assert(out.items@ =~= before_append@.items@);
-            assert(*out == before_append@);
+            assert(out.len == before_append@.len);
         }
         if retirement::unapproved_note(notes, i) {
             let note = Some(Out::Notice { node: NodeId(i as u64),
