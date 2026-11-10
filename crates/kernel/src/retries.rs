@@ -707,7 +707,7 @@ fn next_rung_ask(node: Node) -> (result: ReplyChange) [
     requires node.generation < u64::MAX,
     ensures result == reply_family_values::rung_ask(node), reply_family_values::callable(result),
 ] proof [reveal(reply_family_values::rung_ask);] {
-    ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1, }
+    ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 0, }
 }
 }
 
