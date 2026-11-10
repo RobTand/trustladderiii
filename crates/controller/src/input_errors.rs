@@ -553,7 +553,23 @@ impl Controller {
             return Ok(None);
         }
         match tl3_kernel::step_checked(world.clone(), event) {
-            Ok(result) => Ok(Some(result)),
+            Ok(result) => {
+                #[cfg(test)]
+                let result = {
+                    let mut result = result;
+                    if let Some(remaining) = self.invalid_result_injection.get() {
+                        if remaining == 0 {
+                            self.invalid_result_injection.set(None);
+                            result.world.gates.clear();
+                            assert!(!result.world.valid());
+                        } else {
+                            self.invalid_result_injection.set(Some(remaining - 1));
+                        }
+                    }
+                    result
+                };
+                Ok(Some(result))
+            }
             Err(refusal) => {
                 *world = refusal.world;
                 self.kernel_counter_refused(snapshot, refusal.exhaustion, commit)?;

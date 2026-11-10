@@ -368,6 +368,8 @@ pub struct Controller {
     contention_notices: BTreeSet<(String, String)>,
     #[cfg(test)]
     refusal_injection: std::cell::RefCell<input_errors::RefusalInjection>,
+    #[cfg(test)]
+    invalid_result_injection: std::cell::Cell<Option<usize>>,
     allowances: tl3_config::Allowances,
     quota_horizon_ms: u64,
     /// tl3d judges owed postmortems at this pace (#403); see `run_postmortems`.
@@ -468,6 +470,8 @@ impl Controller {
                 .collect(),
             #[cfg(test)]
             refusal_injection: Default::default(),
+            #[cfg(test)]
+            invalid_result_injection: Default::default(),
             allowances: tl3_config::Allowances::default(),
             quota_horizon_ms: 6 * 3_600_000,
             postmortems: None,
