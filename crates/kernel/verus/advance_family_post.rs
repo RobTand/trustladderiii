@@ -90,7 +90,7 @@ pub(super) open spec fn slot_value(n: Node, t: u64, c: AdvanceContext) -> (Node,
     match n.phase {
         Phase::Ready(r) => if n.paused { slot_paused_value(n, t) }
             else if n.ticket.is_none() { slot_issue_value(n, t) }
-            else if c.slot { slot_grant_value(n, t, r) }
+            else if !c.slot { slot_grant_value(n, t, r) }
             else { (n, t, false) },
         _ => (n, t, false),
     }
