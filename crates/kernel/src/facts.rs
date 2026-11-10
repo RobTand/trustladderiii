@@ -206,7 +206,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     }
     kernel_proof! {
         if fact is CiFailed || fact is IncidentCleared || fact is Priority
-            || fact is PrClosedByPerson || fact is Conflict {
+            || fact is PrClosedByPerson || fact is Conflict || fact is PushByOther {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }

@@ -98,16 +98,22 @@ pub(super) proof fn ci_fail_fast(n: Node, nq: u64, fast: bool, infra: bool, i: u
         reply_family_values::finish(nq, ci_change(n, fast, infra)), fast,
         Event::Fact { node: NodeId(i as u64), fact: Fact::CiFailed { infra } }, i as int),
 {
-    reveal(ci_change);
-    if ci_active(n, infra) {
-        if infra {
-            ci_infrastructure_exact(n, nq, fast);
-            reveal(retirement::fact_node);
-        } else {
+    if infra {
+        ci_infrastructure_exact(n, nq, fast);
+        reveal(retirement::fact_node);
+    } else {
+        reveal(ci_change);
+        if ci_active(n, false) {
+            assert(n.review_stop.is_none());
             reveal(reply_family_values::failed_round);
             if n.round != 0 {
                 reveal(reply_family_values::rung);
-                if fast { reveal(retirement::stopped); }
+                if fast {
+                    reveal(retirement::stopped);
+                } else {
+                    let z = reply_family_values::finish(nq, ci_change(n, fast, false));
+                    assert(z.review_stop == n.review_stop);
+                }
             }
         }
     }
@@ -226,7 +232,7 @@ pub(super) proof fn reply_notice_bound(notes: Outbox, nq: u64, change: ReplyChan
 }
 
 pub(super) proof fn append_prefix(ob: Outbox, oa: Outbox, notes: Outbox)
-    requires facts_family_values::appended(ob, oa, notes),
+    requires ob.len <= OUTBOX, facts_family_values::appended(ob, oa, notes),
     ensures facts_family_values::prefix_preserved(ob, oa),
 {
     reveal(facts_family_values::appended);
