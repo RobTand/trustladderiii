@@ -850,7 +850,7 @@ fn ack_incident_count(c: u8) -> (result: u8) [
     requires c <= 2,
     ensures result == ack_incident_count_spec(c),
 ] {
-    (c + 1).min(2)
+    (c + 1).min(1)
 }
 }
 
