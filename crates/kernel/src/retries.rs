@@ -167,7 +167,7 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
 ] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
-    let change = failed_round_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report); kernel_proof! { reply_family_posts::failed_round_value_posts(w.nodes[i], w.fail_fast, w.next_question, step); }
+    let change = failed_round_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report); kernel_proof! { reply_family_posts::failed_round_value_posts(w.nodes@[i as int], w.fail_fast, w.next_question, step); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         reply_family_posts::failed_round_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, step,
@@ -202,7 +202,7 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
 ] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
-    let change = next_rung_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report); kernel_proof! { reply_family_posts::rung_value_posts(w.nodes[i], w.fail_fast, w.next_question, step); }
+    let change = next_rung_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report); kernel_proof! { reply_family_posts::rung_value_posts(w.nodes@[i as int], w.fail_fast, w.next_question, step); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         reply_family_posts::rung_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, step,
@@ -262,7 +262,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 ] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
-    let change = plan_retry_node(w.nodes[i], w.fail_fast, w.next_question, cant_meet); kernel_proof! { reply_family_posts::plan_retry_value_posts(w.nodes[i], w.fail_fast, w.next_question, cant_meet); }
+    let change = plan_retry_node(w.nodes[i], w.fail_fast, w.next_question, cant_meet); kernel_proof! { reply_family_posts::plan_retry_value_posts(w.nodes@[i as int], w.fail_fast, w.next_question, cant_meet); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         reply_family_posts::plan_retry_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, cant_meet,
@@ -291,7 +291,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
 ] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
-    let change = recheck_node(w.nodes[i], w.next_question, target); kernel_proof! { reply_family_posts::recheck_value_posts(w.nodes[i], w.next_question, target); }
+    let change = recheck_node(w.nodes[i], w.next_question, target); kernel_proof! { reply_family_posts::recheck_value_posts(w.nodes@[i as int], w.next_question, target); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         reply_family_posts::recheck_posts(before@.nodes@[i as int], before@.next_question, target,
