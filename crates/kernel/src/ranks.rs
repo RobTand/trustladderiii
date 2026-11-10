@@ -1067,7 +1067,7 @@ kernel_fn! {
             Item::Start(role) => advance_start(node, next_ticket, context, out, report, role),
             Item::StartChecks => advance_checks(node, next_ticket, context, out, report),
             Item::StartRebase => advance_rebase(node, next_ticket, context, out, report),
-            Item::Await | Item::Delivery | Item::Answer => advance_idle(node, next_ticket, context, out, report),
+            Item::Await | Item::Delivery | Item::Answer => advance_slot(node, next_ticket, context, out, report),
             Item::Admit => advance_admit(node, next_ticket, context, out, report),
             Item::Slot => advance_slot(node, next_ticket, context, out, report),
             Item::Release => advance_release(node, next_ticket, context, out, report),
