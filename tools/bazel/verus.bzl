@@ -794,7 +794,6 @@ def verus_proofs():
             "kernel::queries::Node::waiting_on": "Read-only presentation API outside the scoped kernel proof.",
             "kernel::queries::Node::operation_pending": "Read-only presentation API outside the scoped kernel proof.",
             "kernel::queries::Node::effect_cancelling": "Read-only presentation API outside the scoped kernel proof.",
-            # Nonrecursive specification definitions have no independent query.
             "kernel::retirement_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::initial_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -1332,7 +1331,7 @@ def verus_proofs():
             "handler_safety_continue_step": ("kernel::handler_safety#continue_step", 1),
             "handler_safety_last_cmd_step": ("kernel::handler_safety#last_cmd_step", 1),
             "pool_key": ("kernel#pool_key", 1),
-            "special_safety": ("kernel::special_safety", 3),
+            "special_safety": ("kernel::special_safety", 4),
             "transition_composition": ("kernel::transition_composition", 8),
             "kernel_outbox_occupied": ("kernel#occupied", 1),
             "transition_safety_intro": ("kernel::transition_safety#intro", 1),
@@ -1781,6 +1780,16 @@ def verus_proofs():
             "retries_facts_pack_incident_write": ("kernel::retries_facts#pack_incident_write", 1),
             "retries_facts_finish_failed_incident": ("kernel::retries_facts#finish_failed_incident", 1),
             "retries_raise_failed_run_incident": ("kernel::retries#raise_failed_run_incident", 1),
+            "special_safety_pause_assembly": ("kernel::special_safety::pause_assembly", 1),
+            "special_safety_gate_assembly": ("kernel::special_safety::gate_assembly", 1),
+            "special_safety_gate_projection": ("kernel::special_safety::gate_projection", 1),
+            "special_safety_resume_assembly": ("kernel::special_safety::resume_assembly", 1),
+            "special_safety_stop_assembly": ("kernel::special_safety::stop_assembly", 1),
+            "special_safety_command_projection": ("kernel::special_safety::command_projection", 1),
+            "special_safety_pool_assembly": ("kernel::special_safety::pool_assembly", 1),
+            "special_safety_change_assembly": ("kernel::special_safety::change_assembly", 1),
+            "special_safety_advance_rank": ("kernel::special_safety::advance_projection", 1),
+            "special_safety_pause_projection": ("kernel::special_safety::pause_projection", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
