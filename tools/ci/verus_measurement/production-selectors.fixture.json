@@ -1,10 +1,25 @@
 {
-  "source_head": "774c86d8b800d45fe9ceedeca5d50a49c3e68661",
+  "source_head": "bc38ba0f0f367abd37b97c8767b3b1941a16d8ff",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "ebb4717d37376d6d7fadfd3b7c02931778819a678e44a504318d074002a2bac8",
-  "groups": 910,
-  "obligations": 1119,
+  "source_sha256": "71ef6800d6a37af185fdbb42201d88a2f2a352818583307d471f3aa9769b91c6",
+  "groups": 913,
+  "obligations": 1122,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_frontier",
+      "selector": "kernel::special_safety::answer_frontier",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_frontier_reveal",
+      "selector": "kernel::special_safety::answer_frontier_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_apply_assembly",
+      "selector": "kernel::special_safety::answer_apply_assembly",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_apply_command_safety_rules_after_last_cmd",
       "selector": "kernel::apply_command_safety#rules_after_last_cmd",
