@@ -238,15 +238,7 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
 {
     reveal(node_rules); reveal(fact_node);
     match fact {
-        Fact::IncidentCleared { .. } => {},
-        Fact::CiFailed { infra: true } => {},
-        Fact::PrMerged { .. } => {
-            if n.had_pr && n.merged.is_none() && !(n.phase is Closed) { reveal(stopped); }
-        },
-        Fact::PrClosedByPerson => {
-            if n.pr_open && !(n.phase is Stopping || n.phase is Closed) { reveal(stopped); }
-        },
-        Fact::Priority(_) | Fact::Conflict => {},
+        Fact::PrMerged { .. } | Fact::PrClosedByPerson => { reveal(stopped); },
         _ => {},
     }
 }
