@@ -183,40 +183,7 @@ pub(super) fn request(
             "explicit bounded job environment and runner argv required",
         ));
     }
-    for (name, value) in &request.environment {
-        let reserved = name.starts_with("FLUX_")
-            || name.starts_with("TL3_RUN_")
-            || name.starts_with("PRISMABUILD_")
-            || matches!(
-                name.as_str(),
-                "TL3_EXECUTION_BACKEND"
-                    | "OUT"
-                    | "OMP_NUM_THREADS"
-                    | "MKL_NUM_THREADS"
-                    | "OPENBLAS_NUM_THREADS"
-                    | "TORCH_NUM_THREADS"
-                    | "NUMEXPR_NUM_THREADS"
-                    | "VECLIB_MAXIMUM_THREADS"
-                    | "BLIS_NUM_THREADS"
-            );
-        if reserved
-            || !token(name)
-            || name
-                .bytes()
-                .any(|b| !b.is_ascii_alphanumeric() && b != b'_')
-            || name.contains("TOKEN")
-            || name.contains("SECRET")
-            || name.contains("PASSWORD")
-            || name.ends_with("KEY")
-            || value.len() > 4096
-            || value.chars().any(char::is_control)
-            || safe(value)? != *value
-        {
-            return Err(BackendError::invalid(
-                "reserved, sensitive or invalid job environment; values withheld",
-            ));
-        }
-    }
+    validate_request_environment(&request.environment)?;
     if request.runner.arguments.iter().any(|s| {
         s.len() > 16_384 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)
     }) {

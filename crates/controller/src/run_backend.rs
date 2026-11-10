@@ -276,6 +276,23 @@ pub enum Suite {
     },
 }
 
+/// Caller inputs are separate from the controller-owned dispatch environment.
+pub fn validate_request_environment(environment: &std::collections::BTreeMap<String, String>) -> Result<()> {
+    if !environment.contains_key("PATH") {
+        return Err(BackendError::invalid("explicit job environment PATH required"));
+    }
+    for (name, value) in environment {
+        if !matches!(name.as_str(), "HOME" | "XDG_RUNTIME_DIR" | "PATH") {
+            let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(128).collect();
+            return Err(BackendError::invalid(&format!("unsupported job environment name: {name}; controller-owned names cannot be supplied by callers")));
+        }
+        if value.len() > 4096 || value.chars().any(char::is_control) || durable::safe(value)? != *value {
+            return Err(BackendError::invalid(&format!("invalid job environment value for {name}; value withheld")));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Request {

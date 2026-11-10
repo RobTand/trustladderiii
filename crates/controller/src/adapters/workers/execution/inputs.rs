@@ -392,6 +392,7 @@ fn execute(command: Command) -> Result<Value> {
             let environment = serde_json::from_slice(
                 &durable::read(&profile.job_environment).map_err(backend_error)?,
             )?;
+            backend::validate_request_environment(&environment).map_err(backend_error)?;
             let request = backend::Request {
                 repo: format!(
                     "{}/{}",
