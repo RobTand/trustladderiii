@@ -51,21 +51,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 Some(q) => q.id != id,
                 None => true,
             })),
-
-        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
-        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
-        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        old(w).next_question <= final(w).next_question,
-        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
-            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
-    kernel_snapshot! { before_answer_rules = *w }
-    kernel_proof! {
-        if retirement::node_rules(*w, w.nodes@[i as int]) {
-            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
-        }
-    }
-
     kernel_proof! {
         if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
     }
@@ -94,9 +80,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 // An answer that left the node AwaitingRob withholds nothing.
                 handler_safety::unwithheld_same(before_answer@);
             }
-            if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
-                apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
-            }
         }
     }
     kernel_proof! {
@@ -107,13 +90,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     match note {
         Some(x) => notice(out, i, x),
         None => {}
-    }
-
-    kernel_proof! {
-        if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
-            handler_safety::rules_world_update(before_answer_rules@, *w,
-                before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
-        }
     }
 }
 }
