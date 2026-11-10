@@ -928,6 +928,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "answers_answer_write": ("kernel::answers#answer_write", 1),
+            "answer_owner_owner_rows_withheld_after": ("kernel::answer_owner#owner_rows_withheld_after", 1),
+            "answer_rules_withhold_same_node": ("kernel::answer_rules#withhold_same_node", 1),
             "event_frames_out_of_range_stutter_intro": ("kernel::event_frames#out_of_range_stutter_intro", 1),
             "event_frames_reveal_out_of_range_stutter_rows": ("kernel::event_frames_reveal#out_of_range_stutter_rows", 1),
             "answer_owner_owner_rows_unwithheld": ("kernel::answer_owner#owner_rows_unwithheld", 1),
