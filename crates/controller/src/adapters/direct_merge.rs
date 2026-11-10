@@ -563,15 +563,36 @@ impl Adapter {
             store: self.store.clone(),
         }
     }
-    fn observed_evidence(&self, d: &Delivery, pull: &PullRequest) -> Result<Box<crate::outcome::MergeEvidence>> {
+    fn observed_evidence(
+        &self,
+        d: &Delivery,
+        pull: &PullRequest,
+    ) -> Result<Box<crate::outcome::MergeEvidence>> {
         let github = self.client(d)?;
         let repo = full_name(&d.repository);
         let checks = read_checks(&self.runtime, github, &repo, pull)?;
-        let intent: Option<Intent> = read_file(&self.records.path(&d.key).with_extension("intent"))?;
-        let base = intent.filter(|intent| intent.action == "Merge" && intent.head == pull.head.sha).map(|intent| intent.base_before_merge);
-        merge_evidence(&self.runtime, github, &repo, &self.snapshot()?, d.node(), pull,
-            pull.merge_commit_sha.as_deref().ok_or(Error::Invalid("merged PR lacks landed commit"))?, base,
-            crate::outcome::RequiredChecks { passed: checks.checks == Checks::Passed, count: checks.count }, true)
+        let intent: Option<Intent> =
+            read_file(&self.records.path(&d.key).with_extension("intent"))?;
+        let base = intent
+            .filter(|intent| intent.action == "Merge" && intent.head == pull.head.sha)
+            .map(|intent| intent.base_before_merge);
+        merge_evidence(
+            &self.runtime,
+            github,
+            &repo,
+            &self.snapshot()?,
+            d.node(),
+            pull,
+            pull.merge_commit_sha
+                .as_deref()
+                .ok_or(Error::Invalid("merged PR lacks landed commit"))?,
+            base,
+            crate::outcome::RequiredChecks {
+                passed: checks.checks == Checks::Passed,
+                count: checks.count,
+            },
+            true,
+        )
     }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
         self.journal()
@@ -800,9 +821,23 @@ impl Adapter {
                                     Merged {
                                         head: sha.clone(),
                                         checks_passed: true,
-                                        evidence: merge_evidence(&self.runtime, &github, &repo, &self.snapshot()?, d.node(), &read.pull,
-                                            result.sha.as_deref().ok_or(Error::Invalid("successful merge lacks landed commit"))?,
-                                            Some(read.pull.base.sha.clone()), crate::outcome::RequiredChecks { passed: true, count: read.required_count }, false)?,
+                                        evidence: merge_evidence(
+                                            &self.runtime,
+                                            &github,
+                                            &repo,
+                                            &self.snapshot()?,
+                                            d.node(),
+                                            &read.pull,
+                                            result.sha.as_deref().ok_or(Error::Invalid(
+                                                "successful merge lacks landed commit",
+                                            ))?,
+                                            Some(read.pull.base.sha.clone()),
+                                            crate::outcome::RequiredChecks {
+                                                passed: true,
+                                                count: read.required_count,
+                                            },
+                                            false,
+                                        )?,
                                     },
                                 );
                             }
@@ -1142,178 +1177,201 @@ struct CheckRead {
     failure: Option<(DeliveryOutcome, String)>,
     count: usize,
 }
-fn read_checks(runtime: &tokio::runtime::Runtime, github: &GitHub, repo: &str, pull: &PullRequest) -> Result<CheckRead> {
+fn read_checks(
+    runtime: &tokio::runtime::Runtime,
+    github: &GitHub,
+    repo: &str,
+    pull: &PullRequest,
+) -> Result<CheckRead> {
     let mut failure = None;
-            let required = runtime.block_on(github.required_status_checks(repo, &pull.base.branch))?;
-            let count = required.checks.len();
-            if !required.unavailable.is_empty() {
-                return Err(Error::Permanent {
-                    class: "direct_protection_read",
-                    source: required.unavailable.join("; ").into(),
-                });
+    let required = runtime.block_on(github.required_status_checks(repo, &pull.base.branch))?;
+    let count = required.checks.len();
+    if !required.unavailable.is_empty() {
+        return Err(Error::Permanent {
+            class: "direct_protection_read",
+            source: required.unavailable.join("; ").into(),
+        });
+    }
+    let runs = runtime.block_on(github.check_runs(repo, &pull.head.sha))?;
+    // #830 retains the own-app approval check; durable exact-head approval is checked below.
+    let own: Vec<_> = runs
+        .iter()
+        .filter(|check| {
+            check.head_sha == pull.head.sha
+                && check.name == super::github::APPROVAL_CHECK
+                && check
+                    .app
+                    .as_ref()
+                    .is_some_and(|app| app.id == github.app_id())
+        })
+        .collect();
+    let approval = !own.is_empty()
+        && own.iter().all(|check| {
+            check.status == "completed"
+                && check.conclusion.as_deref() == Some("success")
+                && check
+                    .external_id
+                    .as_deref()
+                    .is_some_and(|id| id.ends_with(&format!(":{}", pull.head.sha)))
+        });
+    let mut latest = BTreeMap::new();
+    for check in &runs {
+        if check.head_sha == pull.head.sha {
+            let entry = latest
+                .entry((check.name.as_str(), check.app.as_ref().map(|app| app.id)))
+                .or_insert(check);
+            if check.id > entry.id {
+                *entry = check;
             }
-            let runs = runtime
-                .block_on(github.check_runs(repo, &pull.head.sha))?;
-            // #830 retains the own-app approval check; durable exact-head approval is checked below.
-            let own: Vec<_> = runs
-                .iter()
-                .filter(|check| {
-                    check.head_sha == pull.head.sha
-                        && check.name == super::github::APPROVAL_CHECK
-                        && check
-                            .app
-                            .as_ref()
-                            .is_some_and(|app| app.id == github.app_id())
-                })
-                .collect();
-            let approval = !own.is_empty()
-                && own.iter().all(|check| {
-                    check.status == "completed"
-                        && check.conclusion.as_deref() == Some("success")
-                        && check
-                            .external_id
-                            .as_deref()
-                            .is_some_and(|id| id.ends_with(&format!(":{}", pull.head.sha)))
-                });
-            let mut latest = BTreeMap::new();
-            for check in &runs {
-                if check.head_sha == pull.head.sha {
-                    let entry = latest
-                        .entry((check.name.as_str(), check.app.as_ref().map(|app| app.id)))
-                        .or_insert(check);
-                    if check.id > entry.id {
-                        *entry = check;
-                    }
+        }
+    }
+    let statuses = if required
+        .checks
+        .iter()
+        .any(|rule| rule.integration_id.is_none())
+    {
+        runtime.block_on(github.commit_statuses(repo, &pull.head.sha))?
+    } else {
+        vec![]
+    };
+    let mut summary = required::Summary {
+        ready: true,
+        failure: required::Failure::None,
+    };
+    for rule in required.checks {
+        let matching: Vec<_> = latest
+            .values()
+            .filter(|check| {
+                required::rule_matches(
+                    check.name == rule.context,
+                    rule.integration_id,
+                    check.app.as_ref().map(|app| app.id),
+                )
+            })
+            .collect();
+        let status = rule
+            .integration_id
+            .is_none()
+            .then(|| {
+                statuses
+                    .iter()
+                    .filter(|status| status.context == rule.context)
+                    .max_by_key(|status| status.id)
+            })
+            .flatten();
+        if matching.is_empty() && status.is_none() {
+            summary = required::record(summary, required::Contribution::Pending);
+        }
+        // Q47, docs/state-machine.md:681-689 on b8ed2968; #830 preserves required protection.
+        // C1's record folds EVERY report conjunctively, including a same-name legacy status.
+        for check in matching {
+            let view = checks::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
+            let runner = if required::needs_annotations(
+                view.status == checks::Status::Completed,
+                view.app == checks::App::Actions,
+                view.conclusion == Some(checks::Conclusion::Failure),
+            ) {
+                let annotations = runtime.block_on(github.check_annotations(repo, check.id))?;
+                required::runner_failure(
+                    &annotations.iter().map(annotation_class).collect::<Vec<_>>(),
+                )
+            } else {
+                false
+            };
+            let item = match required::required_check(view, runner) {
+                required::RequiredState::Passed => required::Contribution::Passed,
+                required::RequiredState::Infrastructure => required::Contribution::Infrastructure,
+                required::RequiredState::Tests => required::Contribution::Tests,
+                required::RequiredState::Pending | required::RequiredState::Unknown => {
+                    required::Contribution::Pending
                 }
-            }
-            let statuses = if required
-                .checks
-                .iter()
-                .any(|rule| rule.integration_id.is_none())
+            };
+            summary = required::record(summary, item);
+            if matches!(
+                item,
+                required::Contribution::Tests | required::Contribution::Infrastructure
+            ) && (failure.is_none() || item == required::Contribution::Tests)
             {
-                runtime
-                    .block_on(github.commit_statuses(repo, &pull.head.sha))?
-            } else {
-                vec![]
-            };
-            let mut summary = required::Summary {
-                ready: true,
-                failure: required::Failure::None,
-            };
-            for rule in required.checks {
-                let matching: Vec<_> = latest
-                    .values()
-                    .filter(|check| {
-                        required::rule_matches(
-                            check.name == rule.context,
-                            rule.integration_id,
-                            check.app.as_ref().map(|app| app.id),
-                        )
-                    })
-                    .collect();
-                let status = rule
-                    .integration_id
-                    .is_none()
-                    .then(|| {
-                        statuses
-                            .iter()
-                            .filter(|status| status.context == rule.context)
-                            .max_by_key(|status| status.id)
-                    })
-                    .flatten();
-                if matching.is_empty() && status.is_none() {
-                    summary = required::record(summary, required::Contribution::Pending);
-                }
-                // Q47, docs/state-machine.md:681-689 on b8ed2968; #830 preserves required protection.
-                // C1's record folds EVERY report conjunctively, including a same-name legacy status.
-                for check in matching {
-                    let view =
-                        checks::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
-                    let runner = if required::needs_annotations(
-                        view.status == checks::Status::Completed,
-                        view.app == checks::App::Actions,
-                        view.conclusion == Some(checks::Conclusion::Failure),
-                    ) {
-                        let annotations = runtime
-                            .block_on(github.check_annotations(repo, check.id))?;
-                        required::runner_failure(
-                            &annotations.iter().map(annotation_class).collect::<Vec<_>>(),
-                        )
-                    } else {
-                        false
-                    };
-                    let item = match required::required_check(view, runner) {
-                        required::RequiredState::Passed => required::Contribution::Passed,
-                        required::RequiredState::Infrastructure => {
-                            required::Contribution::Infrastructure
-                        }
-                        required::RequiredState::Tests => required::Contribution::Tests,
-                        required::RequiredState::Pending | required::RequiredState::Unknown => {
-                            required::Contribution::Pending
-                        }
-                    };
-                    summary = required::record(summary, item);
-                    if matches!(
-                        item,
-                        required::Contribution::Tests | required::Contribution::Infrastructure
-                    ) && (failure.is_none() || item == required::Contribution::Tests)
-                    {
-                        failure = Some(head_failure(
-                            &pull.head.sha,
-                            item == required::Contribution::Infrastructure,
-                            check.id,
-                            check.completed_at.map(|time| time.to_rfc3339()),
-                        ));
-                    }
-                }
-                if let Some(status) = status {
-                    let item = required::classic_status(match status.state.as_str() {
-                        "success" => required::ClassicStatus::Success,
-                        "failure" => required::ClassicStatus::Failure,
-                        "error" => required::ClassicStatus::Error,
-                        _ => required::ClassicStatus::Other,
-                    });
-                    summary = required::record(summary, item);
-                    if item == required::Contribution::Tests {
-                        failure = Some(head_failure(
-                            &pull.head.sha,
-                            false,
-                            status.id,
-                            status.updated_at.map(|time| time.to_rfc3339()),
-                        ));
-                    }
-                }
+                failure = Some(head_failure(
+                    &pull.head.sha,
+                    item == required::Contribution::Infrastructure,
+                    check.id,
+                    check.completed_at.map(|time| time.to_rfc3339()),
+                ));
             }
-            let checks = if summary.failure != required::Failure::None {
-                Checks::Failed
-            } else if summary.ready {
-                Checks::Passed
-            } else {
-                Checks::Pending
-            };
-    Ok(CheckRead { checks, approval, failure, count })
+        }
+        if let Some(status) = status {
+            let item = required::classic_status(match status.state.as_str() {
+                "success" => required::ClassicStatus::Success,
+                "failure" => required::ClassicStatus::Failure,
+                "error" => required::ClassicStatus::Error,
+                _ => required::ClassicStatus::Other,
+            });
+            summary = required::record(summary, item);
+            if item == required::Contribution::Tests {
+                failure = Some(head_failure(
+                    &pull.head.sha,
+                    false,
+                    status.id,
+                    status.updated_at.map(|time| time.to_rfc3339()),
+                ));
+            }
+        }
+    }
+    let checks = if summary.failure != required::Failure::None {
+        Checks::Failed
+    } else if summary.ready {
+        Checks::Passed
+    } else {
+        Checks::Pending
+    };
+    Ok(CheckRead {
+        checks,
+        approval,
+        failure,
+        count,
+    })
 }
 fn merge_evidence(
-    runtime: &tokio::runtime::Runtime, github: &GitHub, repo: &str,
-    snapshot: &Snapshot, node: tl3_kernel::NodeId, pull: &PullRequest,
-    landed: &str, base_before_merge: Option<String>,
-    required_checks: crate::outcome::RequiredChecks, observed: bool,
+    runtime: &tokio::runtime::Runtime,
+    github: &GitHub,
+    repo: &str,
+    snapshot: &Snapshot,
+    node: tl3_kernel::NodeId,
+    pull: &PullRequest,
+    landed: &str,
+    base_before_merge: Option<String>,
+    required_checks: crate::outcome::RequiredChecks,
+    observed: bool,
 ) -> Result<Box<crate::outcome::MergeEvidence>> {
     let commit = runtime.block_on(github.git_commit(repo, landed))?;
     let head_commit = runtime.block_on(github.git_commit(repo, &pull.head.sha))?;
     let world = crate::snapshot::decode(snapshot)?;
-    let n = world.nodes.get(node.0 as usize).ok_or(Error::Invalid("merge evidence node missing"))?;
-    let parents: Vec<_> = commit.parents.into_iter().map(|parent| parent.sha).collect();
+    let n = world
+        .nodes
+        .get(node.0 as usize)
+        .ok_or(Error::Invalid("merge evidence node missing"))?;
+    let parents: Vec<_> = commit
+        .parents
+        .into_iter()
+        .map(|parent| parent.sha)
+        .collect();
     Ok(Box::new(crate::outcome::MergeEvidence {
         head: pull.head.sha.clone(),
         tl3_checks_passed: crate::commit_sha(snapshot, n.checked) == Some(pull.head.sha.as_str()),
         review_approved: crate::commit_sha(snapshot, n.approved) == Some(pull.head.sha.as_str()),
-        required_checks, observed,
+        required_checks,
+        observed,
         landed: crate::outcome::Landed {
-            commit: commit.sha, tree_matches: commit.tree.sha == head_commit.tree.sha,
-            tree: commit.tree.sha, head_tree: head_commit.tree.sha,
-            parent_matches: base_before_merge.as_ref().map(|base| parents.first() == Some(base)),
-            parents, base_before_merge,
+            commit: commit.sha,
+            tree_matches: commit.tree.sha == head_commit.tree.sha,
+            tree: commit.tree.sha,
+            head_tree: head_commit.tree.sha,
+            parent_matches: base_before_merge
+                .as_ref()
+                .map(|base| parents.first() == Some(base)),
+            parents,
+            base_before_merge,
         },
     }))
 }

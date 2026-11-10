@@ -379,6 +379,13 @@ impl Respond for Api {
         if method == "GET" && matches!(path, "/branches/main" | "/branches/master") {
             return ResponseTemplate::new(200).set_body_json(json!({"protected":false}));
         }
+        if method == "GET" && path.starts_with("/git/commits/") {
+            let sha = path.rsplit('/').next().unwrap();
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "sha":sha,"tree":{"sha":"1".repeat(40)},
+                "parents":[{"sha":s.pull.as_ref().unwrap()["base"]["sha"]}]
+            }));
+        }
         if path == "/pulls/17" {
             if method == "PATCH" {
                 s.proposed.as_mut().unwrap()["state"] = body["state"].clone();

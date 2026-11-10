@@ -18,6 +18,7 @@ struct DirectState {
     failed_reads: usize,
     no_merge_method: bool,
     different_tree: bool,
+    different_parent: bool,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -43,7 +44,7 @@ impl Respond for DirectApi {
             let landed = sha == "dddddddddddddddddddddddddddddddddddddddd";
             return ResponseTemplate::new(200).set_body_json(json!({"sha":sha,
                 "tree":{"sha":if landed && direct.different_tree {"2".repeat(40)} else {"1".repeat(40)}},
-                "parents":[{"sha":state.pull["base"]["sha"]}]}));
+                "parents":[{"sha":if landed && direct.different_parent {json!("3".repeat(40))} else {state.pull["base"]["sha"].clone()}}]}));
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
@@ -1759,7 +1760,48 @@ fn m4_ordinary_merge_records_three_facts_without_notice() {
     assert_eq!(record["review_approved"], true);
     assert_eq!(record["required_checks"], json!({"passed":true,"count":1}));
     assert!(m4_notices(&mut controller).is_empty());
+    assert!(!controller.snapshot().unwrap().rows.iter().any(|row| row.table == "incidents"));
+    let merged_facts: Vec<_> = r1_kernel_facts(&settings).into_iter().filter_map(|fact| fact.get("PrMerged").cloned()).collect();
+    assert_eq!(merged_facts.len(), 1);
+    assert_eq!(merged_facts[0]["checks_passed"], true);
     let world = controller.world().unwrap();
     assert_eq!(world.nodes[0].merged, world.nodes[0].approved);
     assert!(matches!(world.nodes[0].phase, Phase::Closed(Outcome::Merged)));
+}
+
+#[test]
+fn m4_different_first_parent_is_a_nonblocking_notice() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_parent");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().different_parent = true;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["tree_matches"], true);
+    assert_eq!(record["landed"]["parent_matches"], false);
+    let notices = m4_notices(&mut controller);
+    assert_eq!(notices.len(), 1);
+    let summary = notices[0]["summary"].as_str().unwrap();
+    assert!(summary.contains(&"3".repeat(40)));
+    assert!(summary.contains(record["landed"]["base_before_merge"].as_str().unwrap()));
+    assert_eq!(notices[0]["open"], false);
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+}
+#[test]
+fn m4_lost_reply_retains_landed_commit_and_saved_base() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_lost_reply");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().lost_reply = true;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["commit"], "dddddddddddddddddddddddddddddddddddddddd");
+    assert_eq!(record["landed"]["parent_matches"], true);
+    assert!(record["landed"]["base_before_merge"].is_string());
+    assert!(m4_notices(&mut controller).is_empty());
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }

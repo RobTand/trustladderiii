@@ -1394,12 +1394,22 @@ async fn reads_git_commit_tree_and_ordered_parents() {
     let commit = github.git_commit("owner/sandbox", &sha).await.unwrap();
     assert_eq!(commit.sha, sha);
     assert_eq!(commit.tree.sha, "1".repeat(40));
-    assert_eq!(commit.parents.iter().map(|parent| parent.sha.as_str()).collect::<Vec<_>>(), vec!["a".repeat(40), "b".repeat(40)]);
+    assert_eq!(
+        commit
+            .parents
+            .iter()
+            .map(|parent| parent.sha.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a".repeat(40), "b".repeat(40)]
+    );
 }
 #[tokio::test]
 async fn git_commit_requires_an_exact_sha_before_network_io() {
     let server = MockServer::start().await;
     let github = GitHub::new(config(), 3, options(&server)).unwrap();
-    assert!(matches!(github.git_commit("owner/sandbox", "main").await, Err(Error::Config("commit read needs an exact commit SHA"))));
+    assert!(matches!(
+        github.git_commit("owner/sandbox", "main").await,
+        Err(Error::Config("commit read needs an exact commit SHA"))
+    ));
     assert!(server.received_requests().await.unwrap().is_empty());
 }

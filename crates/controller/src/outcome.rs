@@ -7,6 +7,7 @@ pub enum Outcome {
     Merged {
         head: String,
         checks_passed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
         evidence: Option<Box<MergeEvidence>>,
     },
     CiFailed {
@@ -73,11 +74,15 @@ impl MergeEvidence {
             notices.push("merged with no required GitHub checks".into());
         }
         if self.observed && !self.required_checks.passed {
-            notices.push("observed someone else's merge with required GitHub checks not passed".into());
+            notices.push(
+                "observed someone else's merge with required GitHub checks not passed".into(),
+            );
         }
         if !self.landed.tree_matches {
-            notices.push(format!("landed tree differs from the checked head: landed {}, checked {}",
-                self.landed.tree, self.landed.head_tree));
+            notices.push(format!(
+                "landed tree differs from the checked head: landed {}, checked {}",
+                self.landed.tree, self.landed.head_tree
+            ));
         }
         if self.landed.parent_matches == Some(false) {
             notices.push(format!("landed first parent differs from the base read before merge: landed {:?}, base {:?}",
@@ -94,38 +99,83 @@ impl crate::Controller {
         evidence: &MergeEvidence,
         commit: &mut tl3_store::Commit,
     ) -> crate::Result<()> {
-        use crate::{executor::{Delivery, Output, Upstream}, looks, put};
+        use crate::{
+            executor::{Delivery, Output, Upstream},
+            looks, put,
+        };
         use serde_json::json;
         let id = format!("{}:{}", node.0, evidence.head);
-        commit.rows.push(put("merge_records", id.clone(), json!(evidence)));
+        commit
+            .rows
+            .push(put("merge_records", id.clone(), json!(evidence)));
         let request = crate::request(snapshot, node)?;
         let world = crate::snapshot::decode(snapshot)?;
-        let n = world.nodes.get(node.0 as usize).ok_or(crate::Error::Invalid("merge record node missing"))?;
+        let n = world
+            .nodes
+            .get(node.0 as usize)
+            .ok_or(crate::Error::Invalid("merge record node missing"))?;
         for (index, summary) in evidence.notices().into_iter().enumerate() {
             let id = format!("merge-audit:{id}:{index}");
-            let signature = looks::IncidentSignature { upstream: Upstream::Delivery, class: "merge_audit".into() };
+            let signature = looks::IncidentSignature {
+                upstream: Upstream::Delivery,
+                class: "merge_audit".into(),
+            };
             let mut post = Delivery {
-                key: format!("incident:{id}"), epoch: snapshot.epoch.get(),
-                output: Output::Notice { node, notice: tl3_kernel::Notice::Incident { needs_rob: false } },
-                generation: n.generation, head_sha: Some(evidence.head.clone()),
-                repository: request.repo.clone(), issue: request.issue,
-                pull_request: None, proposed: None,
-                paths: tl3_contracts::footprint::Footprint::new(vec![]).map_err(crate::Error::Invalid)?,
-                attempt: n.attempt, round: n.round, replanned: n.replanned, checks: None,
-                job_generation: None, question: None, marker_key: None,
+                key: format!("incident:{id}"),
+                epoch: snapshot.epoch.get(),
+                output: Output::Notice {
+                    node,
+                    notice: tl3_kernel::Notice::Incident { needs_rob: false },
+                },
+                generation: n.generation,
+                head_sha: Some(evidence.head.clone()),
+                repository: request.repo.clone(),
+                issue: request.issue,
+                pull_request: None,
+                proposed: None,
+                paths: tl3_contracts::footprint::Footprint::new(vec![])
+                    .map_err(crate::Error::Invalid)?,
+                attempt: n.attempt,
+                round: n.round,
+                replanned: n.replanned,
+                checks: None,
+                job_generation: None,
+                question: None,
+                marker_key: None,
                 note: Some(looks::incident_note(&request.repo, request.issue, &summary)),
-                scope_removals: None, question_context: Some(json!({"incident_id":id,"signature":signature,"issue_title":request.title})),
-                steering: None, request_text: None, evidence: None,
+                scope_removals: None,
+                question_context: Some(
+                    json!({"incident_id":id,"signature":signature,"issue_title":request.title}),
+                ),
+                steering: None,
+                request_text: None,
+                evidence: None,
             };
             if let Some(operations) = &self.bootstrap.operations {
-                post.repository = crate::Repository { owner: operations.owner.clone(), name: operations.name.clone(), installation: operations.installation_id };
+                post.repository = crate::Repository {
+                    owner: operations.owner.clone(),
+                    name: operations.name.clone(),
+                    installation: operations.installation_id,
+                };
                 post.issue = operations.number;
             }
-            commit.rows.push(put("incidents", id.clone(), json!(looks::Incident {
-                id, node: Some(node), input_failure: None, open: false, needs_rob: false,
-                blocking: false, summary, signature, effect: None,
-                post_key: Some(post.key.clone()), cause: None,
-            })));
+            commit.rows.push(put(
+                "incidents",
+                id.clone(),
+                json!(looks::Incident {
+                    id,
+                    node: Some(node),
+                    input_failure: None,
+                    open: false,
+                    needs_rob: false,
+                    blocking: false,
+                    summary,
+                    signature,
+                    effect: None,
+                    post_key: Some(post.key.clone()),
+                    cause: None,
+                }),
+            ));
             commit.rows.push(self.allowance_row(post.clone()));
             commit.effects.push(post.into_effect());
         }

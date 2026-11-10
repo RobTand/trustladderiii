@@ -3041,7 +3041,11 @@ impl Controller {
                     }
                     return Ok(None);
                 }
-                if let Outcome::Merged { evidence: Some(evidence), .. } = &outcome {
+                if let Outcome::Merged {
+                    evidence: Some(evidence),
+                    ..
+                } = &outcome
+                {
                     self.record_merge(snapshot, node, evidence, commit)?;
                 }
                 let recorded = json!({"node": node, "outcome": &outcome});

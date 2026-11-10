@@ -484,7 +484,13 @@ impl GitHub {
         if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(Error::Config("commit read needs an exact commit SHA"));
         }
-        self.request(Method::GET, format!("{}/git/commits/{sha}", repo_path(repo)?), vec![], None).await
+        self.request(
+            Method::GET,
+            format!("{}/git/commits/{sha}", repo_path(repo)?),
+            vec![],
+            None,
+        )
+        .await
     }
 
     pub async fn merge_settings(&self, repo: &str) -> Result<MergeSettings, Error> {
