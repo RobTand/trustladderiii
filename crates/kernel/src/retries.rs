@@ -910,7 +910,7 @@ fn spent_v(n: Node) -> (result: Node) [
         result.generation == n.generation, result.next_seq == n.next_seq,
 ] {
     let mut m = n;
-    m.credit = spend_v(m.credit, 1);
+    m.credit = spend_v(m.credit, 0);
     m
 }
 }
