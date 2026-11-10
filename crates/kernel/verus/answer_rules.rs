@@ -71,4 +71,50 @@ pub(super) proof fn rules_after_last_cmd(before: World, after: World, a: Node, n
     }
 }
 
+
+/// N1 for on_answer (rule 7; on_answer fix 11-10): the node-rules chain across answer_node, the dependency
+/// withhold and the world write, out of on_answer's query. Premises are on_answer's facts verbatim:
+/// answer_node's node_rules_v / repo / footprint / ticket posts, the withhold write's post over the mid world
+/// (or the unchanged node), and the world-scalar frames.
+pub(super) proof fn on_answer_rules(before: World, mid: World, after: World, b: Node, a: Node, f: Node,
+    nq1: u64, withhold: bool, node: NodeId)
+    requires
+        handler_safety::node_rules_v(b, before.next_question) ==> handler_safety::node_rules_v(a, nq1),
+        a.repo == b.repo,
+        a.footprint == b.footprint,
+        a.ticket == b.ticket || a.ticket.is_none(),
+        !withhold ==> f == a,
+        withhold ==> f == (Node {
+            credit: Credit {
+                withheld: a.credit.withheld
+                    || (!dependencies::prerequisites_delivered(mid, node)
+                        && !a.planning_started
+                        && (match a.phase {
+                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
+                            _ => false,
+                        })
+                        && a.credit.ready),
+                ..a.credit
+            },
+            ..a
+        }),
+        after.next_question == nq1,
+        after.gates@ == before.gates@,
+        after.file_sets@ == before.file_sets@,
+        after.next_ticket == before.next_ticket,
+    ensures retirement::node_rules(before, b) ==> retirement::node_rules(after, f),
+{
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        if withhold {
+            dependencies::prerequisite_definition(mid, node);
+            apply_command_safety::withhold_rules_v(a, nq1, mid.dependencies@, node);
+            reveal(dependencies::withheld_after);
+            assert(f == handler_safety::unwithheld(a, dependencies::withheld_after(a.credit.withheld,
+                a.planning_started, a.phase, a.credit.ready, mid.dependencies@, node)));
+        }
+        handler_safety::rules_world_update(before, after, b, f);
+    }
+}
+
 }

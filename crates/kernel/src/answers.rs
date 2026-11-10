@@ -87,6 +87,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
     kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
     w.nodes[i] = n1;
+    kernel_snapshot! { mid_world = *w }
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
         w.withhold_dependency_credit(i);
@@ -98,9 +99,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
             if continued@ == before_answer@ {
                 // An answer that left the node AwaitingRob withholds nothing.
                 handler_safety::unwithheld_same(before_answer@);
-            }
-            if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
-                apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
             }
         }
     }
@@ -115,10 +113,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     }
 
     kernel_proof! {
-        if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
-            handler_safety::rules_world_update(before_answer_rules@, *w,
-                before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
-        }
+        answer_rules::on_answer_rules(before_answer_rules@, mid_world@, *w, before_answer@, n1,
+            w.nodes@[i as int], nq1, withhold, NodeId(i as u64));
     }
 }
 }
