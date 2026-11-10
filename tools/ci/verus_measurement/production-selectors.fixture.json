@@ -1,10 +1,30 @@
 {
-  "source_head": "667cbc9b2de08621964bfd643e95c4e490c83ea7",
+  "source_head": "a3cd7fce9ca17b4394d96f711508b7ca6254f2e9",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "2628307a24018833d03225fb7a7a5c779d5457f5f6b58993077d018eef9050be",
-  "groups": 539,
-  "obligations": 737,
+  "source_sha256": "4c1c3edd370ddb05b4fad6b32e64d0d066e0d9f969da72e17bff37f08c06454f",
+  "groups": 543,
+  "obligations": 741,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_incident_count",
+      "selector": "kernel::acknowledgements#ack_incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_restart_value",
+      "selector": "kernel::acknowledgements#ack_retry_restart_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_plain_incident_value",
+      "selector": "kernel::acknowledgements#ack_retry_plain_incident_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_incident_bridge",
+      "selector": "kernel::acknowledgements#ack_retry_incident_bridge",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_acknowledgements_ack_retry_emit_value",
       "selector": "kernel::acknowledgements#ack_retry_emit_value",
