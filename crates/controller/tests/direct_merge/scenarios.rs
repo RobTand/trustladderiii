@@ -307,10 +307,9 @@ fn m3_live_base_read_failure_keeps_existing_error_path() {
     assert!(matches!(&error, tl3_controller::Error::Adapter(source) if matches!(source.downcast_ref::<tl3_github::Error>(), Some(tl3_github::Error::Http { status: 503 }))), "the existing GitHub error must propagate: {error}");
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
     let key = hex::encode(delivery.key.as_bytes());
-    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("failed live tip read needs a durable reason")).unwrap();
-    assert_eq!(record["current_base"], Value::Null);
-    assert_eq!(record["pr_base_sha"], "c".repeat(40));
-    assert_eq!(record["reason"], "base moved: live tip read failed for branch main: GitHub returned HTTP 503");
+    let receipt = fixture.root.path().join("direct").join(format!("{key}.base-moved"));
+    let records: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).expect("the accepted delivery has a real records directory").map(|entry| entry.unwrap().path()).collect();
+    assert!(!records.contains(&receipt), "a failed live tip read must not write a base-moved receipt");
 }
 
 #[test]

@@ -650,25 +650,9 @@ impl Adapter {
         let mut base_moved = None;
         if pull.merged_at.is_none() && pull.state == "open" && head(&pull.head.sha)? == approved {
             // Pull metadata is not a live branch-tip read. Read the second pull's base last.
-            let branch = match self.runtime.block_on(github.branch(&repo, &pull.base.branch)) {
-                Ok(branch) => branch,
-                Err(error) => {
-                    self.record_base_move(
-                        d,
-                        &serde_json::json!({
-                            "head": approved_sha,
-                            "checked_base": checked_base,
-                            "current_base": null,
-                            "pr_base_sha": pull.base.sha,
-                            "reason": format!(
-                                "base moved: live tip read failed for branch {}: {error}",
-                                pull.base.branch
-                            ),
-                        }),
-                    )?;
-                    return Err(error.into());
-                }
-            };
+            let branch = self
+                .runtime
+                .block_on(github.branch(&repo, &pull.base.branch))?;
             let current_base = branch
                 .as_ref()
                 .map(|branch| branch.commit.sha.as_str())
@@ -721,13 +705,6 @@ impl Adapter {
             method,
             base_moved,
         })
-    }
-    fn record_base_move(&self, d: &Delivery, record: &serde_json::Value) -> Result<()> {
-        self.write(
-            Write::Receipt,
-            &self.records.path(&d.key).with_extension("base-moved"),
-            &serde_json::to_vec(record)?,
-        )
     }
     fn fact(&self, d: &Delivery, outcome: DeliveryOutcome) -> Result<Completion> {
         let suffix = match &outcome {
@@ -805,7 +782,11 @@ impl Adapter {
             )?,
             Outcome::Conflict => {
                 if let Some(record) = &read.base_moved {
-                    self.record_base_move(d, record)?;
+                    self.write(
+                        Write::Receipt,
+                        &self.records.path(&d.key).with_extension("base-moved"),
+                        &serde_json::to_vec(record)?,
+                    )?;
                 }
                 self.fact(
                     d,
