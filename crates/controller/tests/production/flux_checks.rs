@@ -765,7 +765,8 @@ fn with_checks_adapter(case: impl FnOnce(&mut Adapter, &Arc<Backend>, &Options))
     let root = tempfile::tempdir().unwrap();
     let mut database = support::Database::start();
     let mut ownership =
-        Ownership::claim(Store::open(&database.create("flux_retired_pb_contract")).unwrap()).unwrap();
+        Ownership::claim(Store::open(&database.create("flux_retired_pb_contract")).unwrap())
+            .unwrap();
     let (mut adapter, backend, _attached, options) = setup(root.path(), &mut ownership);
     case(&mut adapter, &backend, &options);
     drop((adapter, ownership));
@@ -832,7 +833,10 @@ fn flux_checks_closed_and_superseded_requests_retain_every_journal() {
             panic!("expected a durable completion");
         };
         assert_eq!(key, d.key);
-        assert!(matches!(adapter.reconcile(d).unwrap(), Reconciliation::Found(_)));
+        assert!(matches!(
+            adapter.reconcile(d).unwrap(),
+            Reconciliation::Found(_)
+        ));
         drop(owner);
     }
     running.stop().unwrap();
@@ -849,7 +853,10 @@ fn flux_checks_closed_and_superseded_requests_retain_every_journal() {
     )
     .unwrap();
     for d in [&old, &new] {
-        assert!(matches!(restored.reconcile(d).unwrap(), Reconciliation::Found(_)));
+        assert!(matches!(
+            restored.reconcile(d).unwrap(),
+            Reconciliation::Found(_)
+        ));
     }
     drop((restored, ownership));
     assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
@@ -887,7 +894,9 @@ fn flux_checks_bound_plan_is_never_replaced() {
     with_checks_adapter(|adapter, backend, _| {
         let d = delivery();
         adapter.execute(&d).unwrap();
-        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        let path = backend
+            .records
+            .join(format!("{}.job", durable::digest(d.key.as_bytes())));
         let before = fs::read(&path).unwrap();
         let mut changed = d.clone();
         changed.checks.as_mut().unwrap().base_sha =
@@ -910,7 +919,10 @@ fn flux_checks_unknown_submission_never_confirms() {
             adapter.execute(&d).unwrap_err().to_string(),
             "check acceptance remains unknown; retained for attach"
         );
-        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert!(matches!(
+            adapter.reconcile(&d).unwrap(),
+            Reconciliation::Pending
+        ));
         assert_eq!(
             adapter.execute(&d).unwrap_err().to_string(),
             "check acceptance remains unknown; reattach without resubmission"
@@ -923,7 +935,9 @@ fn flux_checks_unknown_submission_never_confirms() {
 fn flux_checks_malformed_journal_is_never_absent() {
     with_checks_adapter(|adapter, backend, _| {
         let d = delivery();
-        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        let path = backend
+            .records
+            .join(format!("{}.job", durable::digest(d.key.as_bytes())));
         fs::write(&path, b"{truncated").unwrap();
         for error in [
             adapter
@@ -950,11 +964,19 @@ fn flux_checks_failed_terminal_never_passes() {
             panic!("failed terminal must produce a durable infrastructure completion");
         };
         assert!(completion.observations.iter().any(|observation| matches!(
-            observation, Observation::Checks { report: false, pass: false, .. }
+            observation,
+            Observation::Checks {
+                report: false,
+                pass: false,
+                ..
+            }
         )));
-        assert!(!completion.observations.iter().any(|observation| matches!(
-            observation, Observation::Checks { pass: true, .. }
-        )));
+        assert!(
+            !completion
+                .observations
+                .iter()
+                .any(|observation| matches!(observation, Observation::Checks { pass: true, .. }))
+        );
     });
 }
 
@@ -972,7 +994,10 @@ fn flux_checks_success_without_report_never_passes() {
                 .to_string(),
             "upstream adapter failed: InvalidRequest: no semantic payload in infrastructure fixtures"
         );
-        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert!(matches!(
+            adapter.reconcile(&d).unwrap(),
+            Reconciliation::Pending
+        ));
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
 }
@@ -996,7 +1021,10 @@ fn flux_checks_withdrawal_targets_only_the_exact_generation() {
         );
         assert_eq!(backend.state.lock().unwrap().cancels, 0);
         assert_eq!(
-            adapter.execute(&withdrawal(Some(4))).unwrap_err().to_string(),
+            adapter
+                .execute(&withdrawal(Some(4)))
+                .unwrap_err()
+                .to_string(),
             "withdrawal awaits terminal evidence, not cancellation acknowledgement"
         );
         assert!(backend.state.lock().unwrap().cancels > 0);

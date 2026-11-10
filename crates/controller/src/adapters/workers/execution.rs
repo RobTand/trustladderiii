@@ -10,10 +10,7 @@ pub use waits::Waits;
 
 /// The worker tests executor: Flux, the only one. Configuration refuses any other at parse.
 #[derive(Clone)]
-pub(super) struct Selected(
-    Box<tl3_config::Flux>,
-    crate::adapters::images::Images,
-);
+pub(super) struct Selected(Box<tl3_config::Flux>, crate::adapters::images::Images);
 
 impl Selected {
     pub(super) fn new(config: &tl3_config::Config) -> Self {

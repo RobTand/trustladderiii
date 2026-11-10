@@ -683,7 +683,10 @@ mod release_boundary {
         let bundle = snapshot(fixture.flux.runtime_bundles[0].parent().unwrap());
         let _contender = stager(&fixture).unwrap();
         assert_eq!(snapshot(&fixture.flux.staging_root), inputs);
-        assert_eq!(snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()), bundle);
+        assert_eq!(
+            snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()),
+            bundle
+        );
         assert_trusted(&prepared.request.tree, &snapshot(&trusted(&fixture)));
     }
 
@@ -733,7 +736,10 @@ mod release_boundary {
             assert!(controller.prepare_request(&repo.delivery()).is_err());
             assert_eq!(fs::read(&fixture.flux.staging_root).unwrap(), b"occupied");
         }
-        assert_eq!(snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()), before);
+        assert_eq!(
+            snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()),
+            before
+        );
     }
 
     #[test]
@@ -750,7 +756,10 @@ mod release_boundary {
         let second = controller.prepare_request(&repo.delivery()).unwrap();
         assert_ne!(first.request.tree.root, second.request.tree.root);
         assert_eq!(snapshot(&first.request.tree.root), before);
-        assert_eq!(fs::read(partial.join("retained")).unwrap(), b"owned partial input");
+        assert_eq!(
+            fs::read(partial.join("retained")).unwrap(),
+            b"owned partial input"
+        );
         assert_trusted(&second.request.tree, &snapshot(&trusted(&fixture)));
     }
 }
