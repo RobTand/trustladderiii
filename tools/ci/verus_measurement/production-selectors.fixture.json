@@ -1,10 +1,95 @@
 {
-  "source_head": "340ee9cfd479856cedc7323ca000f1b03cfdd3ce",
+  "source_head": "9d87ab1fbc534872e06b739c14ec4aa3d0a2adf3",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "830c2c162c22f4dab07b22a12f8c7781bb67fcb5415b2d40f27c4c665f29fdcf",
-  "groups": 589,
-  "obligations": 787,
+  "source_sha256": "e015ea3a83ec9f14e42ccece115c7d7e8d3069326f36f81ece15cc9478a3a25b",
+  "groups": 606,
+  "obligations": 804,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_made_v",
+      "selector": "kernel::work_replies#work_made_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_checked_v",
+      "selector": "kernel::work_replies#work_checked_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_approved_v",
+      "selector": "kernel::work_replies#work_approved_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_rebase_paid_v",
+      "selector": "kernel::work_replies#rebase_paid_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_rebase_ask_v",
+      "selector": "kernel::work_replies#rebase_ask_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_rebase_head_v",
+      "selector": "kernel::work_replies#rebase_head_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_review_restart_v",
+      "selector": "kernel::work_replies#review_restart_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_pair_rows",
+      "selector": "kernel::reply_family_dispatch#pair_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_bounds",
+      "selector": "kernel::reply_family_dispatch#work_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_progress",
+      "selector": "kernel::reply_family_dispatch#work_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_maker_rows",
+      "selector": "kernel::reply_family_dispatch#work_maker_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_checks_rows",
+      "selector": "kernel::reply_family_dispatch#work_checks_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_review_rows",
+      "selector": "kernel::reply_family_dispatch#work_review_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_rebase_rows",
+      "selector": "kernel::reply_family_dispatch#rebase_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_completion",
+      "selector": "kernel::reply_family_dispatch#work_completion",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_work_value_posts",
+      "selector": "kernel::reply_family_dispatch#work_value_posts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_rebase_value_posts",
+      "selector": "kernel::reply_family_dispatch#rebase_value_posts",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_room_bound",
       "selector": "kernel::reply_family_posts#room_bound",
