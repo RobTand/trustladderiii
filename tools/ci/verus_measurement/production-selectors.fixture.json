@@ -1,10 +1,25 @@
 {
-  "source_head": "e6f21b416bb54f419dc2750fe1ac09394cee26e7",
+  "source_head": "b8dc1b991a9d06de83b12434220ebd85dbbfe832",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3a387302369bf9171f736fcd29b7fe767460ba591a5dfeb796706dca0f8915d8",
-  "groups": 510,
-  "obligations": 708,
+  "source_sha256": "3684d19a4b250911d7c7d958bcb8f1273007f05cb63e70e4c7125dbc9cde5ce0",
+  "groups": 513,
+  "obligations": 711,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_allocation_incident_node",
+      "selector": "kernel::allocation#incident_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_notes",
+      "selector": "kernel::allocation#incident_notes",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_value",
+      "selector": "kernel::allocation#incident_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
       "selector": "kernel::handler_safety#step_rows_carry",
