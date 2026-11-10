@@ -950,6 +950,203 @@ pub(super) proof fn answer_mid(before: World, mid: World, i: usize, id: u64, que
     }
 }
 
+/// Design A (Opus 1110, after ablation capture 3d3ef796): the last_cmd write's consequences for
+/// answer_command, over plain World values. Premises are the write's literal facts; each conclusion
+/// is an unconditional implication, so answer_command calls this once outside any branch, and
+/// node_checked's unfolding and the node-rules chain stay out of answer_command's query.
+pub(super) proof fn answer_mid_pm(before: World, mid: World, i: usize, id: u64, question: u64,
+    answer: Answer, r: Node)
+    requires i < before.nodes@.len(),
+        r == before.nodes@[i as int],
+        mid.nodes@[i as int] == (Node { last_cmd: id, ..r }),
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, before.nodes@[i as int]) ==> node_checked(mid, mid.nodes@[i as int]),
+        node_checked(before, before.nodes@[i as int])
+            && command_progress_input(before.nodes@[i as int], Command::Answer { question, answer })
+            ==> answer_progress_input(mid.nodes@[i as int], question, answer)
+                && distance(mid.nodes@[i as int]) == distance(before.nodes@[i as int]),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(mid, mid.nodes@[i as int]),
+{
+    let b = before.nodes@[i as int];
+    let a = mid.nodes@[i as int];
+    assert(a == (Node { last_cmd: id, ..b }));
+    if node_checked(before, b) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(b, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(b, id);
+        }
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, a);
+    }
+}
+
+/// Design A (Opus 1110, after ablation capture 3d3ef796): the last_cmd write's consequences for
+/// answer_command, over plain World values. Premises are the write's literal facts; each conclusion
+/// is an unconditional implication, so answer_command calls this once outside any branch, and
+/// node_checked's unfolding and the node-rules chain stay out of answer_command's query.
+pub(super) proof fn answer_mid_pf(before: World, mid: World, i: usize, id: u64, question: u64,
+    answer: Answer)
+    requires i < before.nodes@.len(),
+        mid.nodes@[i as int].last_cmd == id,
+        mid.nodes@[i as int].phase == before.nodes@[i as int].phase,
+        mid.nodes@[i as int].pos == before.nodes@[i as int].pos,
+        mid.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        mid.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        mid.nodes@[i as int].generation == before.nodes@[i as int].generation,
+        mid.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        mid.nodes@[i as int].effect == before.nodes@[i as int].effect,
+        mid.nodes@[i as int].run == before.nodes@[i as int].run,
+        mid.nodes@[i as int].job == before.nodes@[i as int].job,
+        mid.nodes@[i as int].pool == before.nodes@[i as int].pool,
+        mid.nodes@[i as int].ticket == before.nodes@[i as int].ticket,
+        mid.nodes@[i as int].holds == before.nodes@[i as int].holds,
+        mid.nodes@[i as int].paused == before.nodes@[i as int].paused,
+        mid.nodes@[i as int].question == before.nodes@[i as int].question,
+        mid.nodes@[i as int].attempt == before.nodes@[i as int].attempt,
+        mid.nodes@[i as int].round == before.nodes@[i as int].round,
+        mid.nodes@[i as int].replanned == before.nodes@[i as int].replanned,
+        mid.nodes@[i as int].plan_retries == before.nodes@[i as int].plan_retries,
+        mid.nodes@[i as int].audit_rounds == before.nodes@[i as int].audit_rounds,
+        mid.nodes@[i as int].early_end == before.nodes@[i as int].early_end,
+        mid.nodes@[i as int].run_failures == before.nodes@[i as int].run_failures,
+        mid.nodes@[i as int].run_incidents == before.nodes@[i as int].run_incidents,
+        mid.nodes@[i as int].fx_failures == before.nodes@[i as int].fx_failures,
+        mid.nodes@[i as int].fx_incidents == before.nodes@[i as int].fx_incidents,
+        mid.nodes@[i as int].waiting_incident == before.nodes@[i as int].waiting_incident,
+        mid.nodes@[i as int].incident_needs_rob == before.nodes@[i as int].incident_needs_rob,
+        mid.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        mid.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        mid.nodes@[i as int].head == before.nodes@[i as int].head,
+        mid.nodes@[i as int].checked == before.nodes@[i as int].checked,
+        mid.nodes@[i as int].approved == before.nodes@[i as int].approved,
+        mid.nodes@[i as int].merged == before.nodes@[i as int].merged,
+        mid.nodes@[i as int].pr_open == before.nodes@[i as int].pr_open,
+        mid.nodes@[i as int].had_pr == before.nodes@[i as int].had_pr,
+        mid.nodes@[i as int].worktree == before.nodes@[i as int].worktree,
+        mid.nodes@[i as int].rechecks == before.nodes@[i as int].rechecks,
+        mid.nodes@[i as int].review_restarted == before.nodes@[i as int].review_restarted,
+        mid.nodes@[i as int].credit == before.nodes@[i as int].credit,
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, before.nodes@[i as int]) ==> node_checked(mid, mid.nodes@[i as int]),
+        node_checked(before, before.nodes@[i as int])
+            && command_progress_input(before.nodes@[i as int], Command::Answer { question, answer })
+            ==> answer_progress_input(mid.nodes@[i as int], question, answer)
+                && distance(mid.nodes@[i as int]) == distance(before.nodes@[i as int]),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(mid, mid.nodes@[i as int]),
+{
+    let b = before.nodes@[i as int];
+    let a = mid.nodes@[i as int];
+    assert(a == (Node { last_cmd: id, ..b }));
+    if node_checked(before, b) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(b, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(b, id);
+        }
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, a);
+    }
+}
+
+/// Design A (Opus 1110, after ablation capture 3d3ef796): the last_cmd write's consequences for
+/// answer_command, over plain World values. Premises are the write's literal facts; each conclusion
+/// is an unconditional implication, so answer_command calls this once outside any branch, and
+/// node_checked's unfolding and the node-rules chain stay out of answer_command's query.
+pub(super) proof fn answer_mid_ps(before: World, mid: World, i: usize, id: u64, question: u64,
+    answer: Answer)
+    requires i < before.nodes@.len(),
+        mid.nodes@ == before.nodes@.update(i as int, Node { last_cmd: id, ..before.nodes@[i as int] }),
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, before.nodes@[i as int]) ==> node_checked(mid, mid.nodes@[i as int]),
+        node_checked(before, before.nodes@[i as int])
+            && command_progress_input(before.nodes@[i as int], Command::Answer { question, answer })
+            ==> answer_progress_input(mid.nodes@[i as int], question, answer)
+                && distance(mid.nodes@[i as int]) == distance(before.nodes@[i as int]),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(mid, mid.nodes@[i as int]),
+{
+    let b = before.nodes@[i as int];
+    let a = mid.nodes@[i as int];
+    assert(a == (Node { last_cmd: id, ..b }));
+    if node_checked(before, b) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(b, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(b, id);
+        }
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, a);
+    }
+}
+
+/// Design A (Opus 1110, after ablation capture 3d3ef796): the last_cmd write's consequences for
+/// answer_command, over plain World values. Premises are the write's literal facts; each conclusion
+/// is an unconditional implication, so answer_command calls this once outside any branch, and
+/// node_checked's unfolding and the node-rules chain stay out of answer_command's query.
+pub(super) proof fn answer_mid_pm2(before: World, mid: World, i: usize, id: u64, question: u64,
+    answer: Answer, r: Node, m1: Node)
+    requires i < before.nodes@.len(),
+        r == before.nodes@[i as int],
+        m1 == (Node { last_cmd: id, ..r }),
+        mid.nodes@[i as int] == m1,
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures
+        node_checked(before, before.nodes@[i as int]) ==> node_checked(mid, mid.nodes@[i as int]),
+        node_checked(before, before.nodes@[i as int])
+            && command_progress_input(before.nodes@[i as int], Command::Answer { question, answer })
+            ==> answer_progress_input(mid.nodes@[i as int], question, answer)
+                && distance(mid.nodes@[i as int]) == distance(before.nodes@[i as int]),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(mid, mid.nodes@[i as int]),
+{
+    let b = before.nodes@[i as int];
+    let a = mid.nodes@[i as int];
+    assert(a == (Node { last_cmd: id, ..b }));
+    if node_checked(before, b) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        if command_progress_input(b, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+            handler_safety::distance_last_cmd(b, id);
+        }
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, a);
+    }
+}
+
 /// Design A: a one-slot frame is a table update (the N-cut table clause), proven here so the
 /// extensionality step stays out of the entry's query. The premise is the entry's own frame clause.
 pub(super) proof fn frame_to_update(s: Seq<Node>, t: Seq<Node>, i: int)
