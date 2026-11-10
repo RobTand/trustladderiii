@@ -1,10 +1,30 @@
 {
-  "source_head": "5e9523bedaa1487d1f6dcd2ec247097ab61f6769",
+  "source_head": "e941ff8f5e0a324894e53ab11abaca7122a3c4cf",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3f18ecdcf08ec8693a20aabed96e1b818b64c8c20de3fbedb42afad6d751dd06",
-  "groups": 629,
-  "obligations": 827,
+  "source_sha256": "be084ac991178efeea33af18d14cb48d432ea002df011d0d7ed5c76dde4e1cf0",
+  "groups": 633,
+  "obligations": 831,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_stop_frames_stop_owner_waiting_frame",
+      "selector": "kernel::stop_frames#stop_owner_waiting_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frames_pause_endpoint_frame",
+      "selector": "kernel::stop_frames#pause_endpoint_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frames_n4_frames_refl",
+      "selector": "kernel::stop_frames#n4_frames_refl",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frame_reveal_n4_frames_reveal",
+      "selector": "kernel::stop_frame_reveal#n4_frames_reveal",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_stop_frames_stop_e11_frames",
       "selector": "kernel::stop_frames#stop_e11_frames",
