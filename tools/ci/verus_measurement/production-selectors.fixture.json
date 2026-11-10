@@ -1,10 +1,15 @@
 {
-  "source_head": "9393348ab47ab74e2a31cb57a64b179ad27b4ae9",
+  "source_head": "1a3e855baa14623f3d9cafc18243a43b898b488b",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "fe450ace89448ce3a919d6fce84661cd4028f1627f0e434b9b5b02a726f00312",
-  "groups": 557,
-  "obligations": 755,
+  "source_sha256": "3471a5ea1273efc8ded829c648d58d9d96b20868d12ad3ffd034eec805c8d3b0",
+  "groups": 558,
+  "obligations": 756,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_advance_family_post_teardown_missing_rows",
+      "selector": "kernel::advance_family_post#teardown_missing_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_ranks_advance_teardown_missing_value",
       "selector": "kernel::ranks#advance_teardown_missing_value",
