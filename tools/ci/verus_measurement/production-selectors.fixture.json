@@ -1,10 +1,15 @@
 {
-  "source_head": "0809df150ff9962e5ab050ebfe462417a3cf3a99",
+  "source_head": "902d22fe92204d60131a004cdb1ff8ed400f8d7e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4928106a51a13e011b8587825c64550625416598e49b11657132056e4d246812",
-  "groups": 497,
-  "obligations": 689,
+  "source_sha256": "2900902f9597edf110b9e9ecee4bc7a6dd14e6d3ab46e01ad8de39e9ce95ce8c",
+  "groups": 498,
+  "obligations": 690,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_slot",
+      "selector": "kernel::advance_family_rules#rules_slot",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_allocation_incident_value",
       "selector": "kernel::allocation#incident_value",
