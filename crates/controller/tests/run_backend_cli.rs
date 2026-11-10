@@ -4,6 +4,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use tl3_controller::run_backend::{self as api, durable::digest, *};
 
 fn cli(request: &Value) -> Vec<Value> {
@@ -19,6 +20,78 @@ fn cli(request: &Value) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+/// Every suite Python that may import from a source checkout runs with `-B`. The flag is
+/// on the interpreter argv, so it survives the `env_clear()` of product spawn paths that
+/// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.
+const PYTHON_NO_BYTECODE: &str = "-B";
+
+/// Rob 11-03: a performance-budget overrun is a recorded warning, never a failure
+/// or a rerun. Only a contractual deadline (a product timeout) fails a test.
+/// The line follows the repo `{"budget_warning": ...}` convention (tools/bazel/rust_runner.py).
+fn check_budget(test: &str, start: Instant, budget: Duration) {
+    let measured = start.elapsed();
+    if measured > budget {
+        println!(
+            "{}",
+            json!({"budget_warning": {"test": test, "measured": measured.as_secs_f64(),
+                "limit": budget.as_secs_f64(), "metric": "wall"}})
+        );
+    }
+}
+
+/// The run-backend transport idle timeout: a CLI child silent this long is hung by contract.
+fn transport_idle_deadline() -> Duration {
+    Duration::from_secs(cleanup_limits().idle_timeout_seconds)
+}
+
+/// The native command deadline; a stop_watch that is not faster cannot be told from expiry.
+fn native_command_deadline() -> Duration {
+    Duration::from_secs(cleanup_limits().native_timeout_seconds)
+}
+
+/// Failing bound for a stop_watch measured from `stopped`, which is taken after the
+/// native call (and its deadline) began. Deadline expiry lands near 30 s - δ after
+/// `stopped`; 10 s of margin keeps a dropped or ignored stop on the failing side.
+fn stop_watch_deadline() -> Duration {
+    native_command_deadline() - Duration::from_secs(10)
+}
+
+/// Test-only latency knob: unset is 0; anything else must be finite, non-negative seconds.
+fn latency_knob(name: &str) -> f64 {
+    std::env::var(name).map_or(0.0, |value| {
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .unwrap_or_else(|| panic!("{name} must be non-negative seconds, got {value:?}"))
+    })
+}
+
+/// Wait for a fixture milestone: a warning past `budget`, a failure only at the idle timeout.
+fn wait_until(test: &str, budget: Duration, mut reached: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !reached() {
+        assert!(
+            start.elapsed() < transport_idle_deadline(),
+            "{test}: not reached within the transport idle timeout"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    check_budget(test, start, budget);
+}
+
+/// Receive one frame: a warning past `budget`, a failure only at the idle timeout.
+fn recv_within<T>(test: &str, receive: &std::sync::mpsc::Receiver<T>, budget: Duration) -> T {
+    let start = Instant::now();
+    let value = receive
+        .recv_timeout(transport_idle_deadline())
+        .unwrap_or_else(|error| {
+            panic!("{test}: no frame within the transport idle timeout: {error}")
+        });
+    check_budget(test, start, budget);
+    value
 }
 
 #[test]
@@ -333,14 +406,11 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
     .unwrap();
     std::thread::scope(|scope| {
         let attach = scope.spawn(|| f.attach());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !f.intent.output_dir.join("scratch-entered").exists() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "helper did not reach pause"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        wait_until(
+            "helper reaches reclamation pause",
+            Duration::from_secs(10),
+            || f.intent.output_dir.join("scratch-entered").exists(),
+        );
         assert!(root.join("leftover").exists());
         assert!(!f.intent.output_dir.join("receipt.json").exists());
         let gate = fs::File::open(f.options.journal_root.join("runtime-lock")).unwrap();
@@ -369,9 +439,11 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
             "{terminal:?}"
         );
         assert!(!root.exists());
-        let waiting = receive
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap();
+        let waiting = recv_within(
+            "waiting begin returns after reclamation",
+            &receive,
+            Duration::from_secs(10),
+        );
         assert_eq!(waiting.last().unwrap()["kind"], "error", "{waiting:?}");
         assert!(
             waiting.last().unwrap()["message"]
@@ -697,6 +769,77 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
     assert!(!debt.exists());
 }
 
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_helper_import_from_a_checkout_writes_no_bytecode() {
+    // The product cleanup spawn clears the environment, so PYTHONDONTWRITEBYTECODE never
+    // reaches the helper. A private checkout copy shows exactly what the helper writes.
+    let checkout = tempfile::tempdir().unwrap();
+    let package = checkout.path().join("harness/src/tl3_harness");
+    fs::create_dir_all(&package).unwrap();
+    let harness = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/src/tl3_harness");
+    for entry in fs::read_dir(&harness).unwrap().flatten() {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "py")
+        {
+            fs::copy(entry.path(), package.join(entry.file_name())).unwrap();
+        }
+    }
+    let imported = checkout.path().join("imported");
+    let init = package.join("__init__.py");
+    let mut text = fs::read_to_string(&init).unwrap();
+    text.push_str(&format!(
+        "\nopen({:?}, 'w').close()\n",
+        imported.to_str().unwrap()
+    ));
+    fs::write(&init, text).unwrap();
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    f.request.scratch_root = scratch.path().to_owned();
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    fs::write(
+        f.root.path().join("action-fixture.json"),
+        json!({"source": checkout.path()}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.retain_fixture_allocation();
+    f.events(&completed(256));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "infra-lost",
+        "{frames:?}"
+    );
+    assert!(
+        imported.exists(),
+        "the helper must import tl3_harness from the checkout"
+    );
+    fn bytecode(dir: &Path, found: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|name| name == "__pycache__")
+                || path.extension().is_some_and(|extension| extension == "pyc")
+            {
+                found.push(path.clone());
+            }
+            if entry.file_type().unwrap().is_dir() {
+                bytecode(&path, found);
+            }
+        }
+    }
+    let mut written = Vec::new();
+    bytecode(checkout.path(), &mut written);
+    assert!(
+        written.is_empty(),
+        "bytecode written into the checkout: {written:?}"
+    );
+}
+
 fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
@@ -748,6 +891,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode,
+            "injected_latency_seconds": latency_knob("FX_TEST_ACTION_LATENCY_SECONDS"),
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
@@ -762,6 +906,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         .map(PathBuf::from)
         .unwrap_or_else(|| source.to_owned());
     let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(PYTHON_NO_BYTECODE)
         .arg(source.join("harness/tests/fx_action_e2e.py"))
         .arg(f.root.path())
         .arg(action_source)
@@ -1399,6 +1544,12 @@ fixture=$1
 shift
 printf '%s\n' "$*" >> "$fixture/calls"
 mode=$(cat "$fixture/mode")
+# Test-only contention model: delay every native call, never change its result. The
+# watched quiet call is exempt: its start anchors the stop_watch deadline in the tests.
+case "$mode:$1:${2:-}" in
+quiet-jobs:jobs:*|quiet-info:job:info|quiet:job:eventlog|quiet-collect:job:status) ;;
+*) if [ -e "$fixture/native-latency" ]; then /bin/sleep "$(cat "$fixture/native-latency")"; fi;;
+esac
 case "$1" in
 submit)
     printf '%s\n' "$@" > "$fixture/args"
@@ -1417,7 +1568,7 @@ job)
     submit) cp "$3" "$fixture/jobspec.json"; if [ "$mode" = unknown ]; then exit 1; fi; cat "$fixture/submit-id";;
     info)
         if [ "$mode" = quiet-info ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
-        if [ "$3" = --original ]; then cat "$fixture/jobspec.json"; else cat "$fixture/all.json"; fi;;
+        if [ "$3" = --original ]; then if [ -e "$fixture/jobspec-$4.json" ]; then cat "$fixture/jobspec-$4.json"; else cat "$fixture/jobspec.json"; fi; else cat "$fixture/all.json"; fi;;
     eventlog)
         if [ "$mode" = quiet ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$mode" = interrupted ]; then head -n 1 "$fixture/events"; exit 1; fi
@@ -1426,7 +1577,7 @@ job)
     *) exit 9;; esac;;
 *) exit 9;; esac
 "#).unwrap();
-        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib,os
+        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib,os,resource
 root=pathlib.Path(sys.argv[1]);args=sys.argv[2:]
 # Read only the owned fake-native process initial environment, never the test caller.
 initial=dict(item.decode().split('=',1) for item in pathlib.Path(f'/proc/{os.getppid()}/environ').read_bytes().split(b'\0') if item)
@@ -1438,12 +1589,19 @@ for item in args:
     elif item.startswith('--env=') and '=' in item[6:]:
         key,value=item[6:].split('=',1);environment[key]=value
 user=dict(item[15:].split('=',1) for item in args if item.startswith('--setattr=user.'))
+shell_options={'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}
+# Model the Flux CLI: it propagates the submitter's soft rlimits unless --rlimit=-* is given.
+if '--rlimit=-*' not in args: shell_options['rlimit']={'nofile':resource.getrlimit(resource.RLIMIT_NOFILE)[0],'core':resource.getrlimit(resource.RLIMIT_CORE)[0]}
 runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
-spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
+spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':shell_options}}}}
 text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
+        let native_latency = latency_knob("FX_TEST_NATIVE_LATENCY_SECONDS");
+        if native_latency > 0.0 {
+            fs::write(p.join("native-latency"), native_latency.to_string()).unwrap();
+        }
         fs::write(p.join("submit-id"), "fABC\n").unwrap();
         let all = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0-3"}}],"nodelist":["fixture-host"]}});
         fs::write(p.join("all.json"), all.to_string()).unwrap();
@@ -1794,6 +1952,89 @@ fn jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels(
     assert_eq!(
         unisolated["attributes"]["system"]["environment"]["TL3_TEST_CALLER_BENIGN"],
         "synthetic-benign-sentinel"
+    );
+}
+
+#[test]
+#[ignore = "requires admitted PB CLI child fixture"]
+fn jobspec_submit_clears_propagated_rlimits() {
+    let f = Fixture::new();
+    // The submitting process carries a distinctive soft limit that Flux would propagate.
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("ulimit -S -n 777 && exec \"$0\" \"$@\"")
+        .arg(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .args(["--config", f.config.to_str().unwrap()])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"submit","request":f.request,"intent":f.intent})
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let frames: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|r| serde_json::from_str(r).unwrap())
+        .collect();
+    assert_eq!(
+        frames.last().unwrap()["result"]["submission"]["kind"],
+        "accepted",
+        "{frames:?}"
+    );
+    let args = fs::read_to_string(f.root.path().join("args"))
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        args.iter().filter(|a| a.as_str() == "--rlimit=-*").count(),
+        1,
+        "{args:?}"
+    );
+    for path in [
+        f.root.path().join("jobspec.json"),
+        f.intent.output_dir.join("original-jobspec.json"),
+    ] {
+        let spec: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let options = &spec["attributes"]["system"]["shell"]["options"];
+        assert!(options.is_object(), "{spec}");
+        assert!(options.get("rlimit").is_none(), "{spec}");
+    }
+    // Demonstrate this producer models propagation: without the reset the sentinel leaks.
+    let without_reset = args
+        .iter()
+        .filter(|a| a.as_str() != "--rlimit=-*")
+        .cloned()
+        .collect::<Vec<_>>();
+    let propagated = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("ulimit -S -n 777 && exec /usr/bin/python3 \"$@\"")
+        .arg("jobspec-producer")
+        .arg(f.root.path().join("jobspec.py"))
+        .arg(f.root.path())
+        .args(&without_reset)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        propagated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&propagated.stderr)
+    );
+    let leaked: Value = serde_json::from_slice(&propagated.stdout).unwrap();
+    assert_eq!(
+        leaked["attributes"]["system"]["shell"]["options"]["rlimit"]["nofile"],
+        777
     );
 }
 
@@ -2184,7 +2425,6 @@ fn probe_reports_busy_incompatible_unknown_and_never_ram_admission() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
-    use std::time::{Duration, Instant};
     let f = Fixture::new();
     f.submit();
     f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":f.ownership()}));
@@ -2202,16 +2442,18 @@ fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
         json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("watching").exists() {
-        assert!(Instant::now() < deadline, "quiet watcher never started");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("quiet watcher started", Duration::from_secs(5), || {
+        f.root.path().join("watching").exists()
+    });
     let stopped = Instant::now();
     writeln!(stdin, "{{\"op\":\"stop_watch\"}}").unwrap();
     drop(stdin);
     let output = child.wait_with_output().unwrap();
-    assert!(stopped.elapsed() < Duration::from_secs(2));
+    assert!(
+        stopped.elapsed() < stop_watch_deadline(),
+        "stop_watch did not stop the observer well before the native command deadline"
+    );
+    check_budget("quiet watcher stop_watch", stopped, Duration::from_secs(2));
     let frames: Vec<Value> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
@@ -2243,7 +2485,6 @@ fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
-    use std::time::{Duration, Instant};
     let f = Fixture::new();
     f.submit();
     f.retain_fixture_allocation();
@@ -2262,11 +2503,11 @@ fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
         json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("watching").exists() {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until(
+        "separate attach watcher started",
+        Duration::from_secs(5),
+        || f.root.path().join("watching").exists(),
+    );
     let cancel =
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(
@@ -2334,7 +2575,6 @@ fn optional_reviewed_sha_remains_distinct_in_wire_and_request_digest() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
-    use std::time::{Duration, Instant};
     for mode in ["quiet-jobs", "quiet-info", "quiet-collect"] {
         let f = Fixture::new();
         if mode == "quiet-jobs" {
@@ -2356,18 +2596,23 @@ fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
             json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
         )
         .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !f.root.path().join("watching").exists() {
-            assert!(Instant::now() < deadline, "phase {mode} was not reached");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until(
+            &format!("phase {mode} reached"),
+            Duration::from_secs(5),
+            || f.root.path().join("watching").exists(),
+        );
         let start = Instant::now();
         writeln!(stdin, "{{\"op\":\"stop_watch\"}}").unwrap();
         drop(stdin);
         let output = child.wait_with_output().unwrap();
         assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "phase {mode} did not stop promptly"
+            start.elapsed() < stop_watch_deadline(),
+            "phase {mode} stop_watch did not stop the observer well before the native command deadline"
+        );
+        check_budget(
+            &format!("phase {mode} stop_watch"),
+            start,
+            Duration::from_secs(2),
         );
         assert!(!output.stdout.is_empty());
         assert!(!f.calls().lines().any(|call| call.starts_with("cancel ")));
@@ -2486,7 +2731,7 @@ impl Fixture {
         .unwrap();
         fs::write(
             source.join("cleanup-helper"),
-            r#"#!/usr/bin/python3
+            r#"#!/usr/bin/python3 __PYTHON_FLAGS__
 import json,sys,pathlib,time
 __SCRATCH_FIXTURE__
 facts=json.load(sys.stdin)
@@ -2517,7 +2762,9 @@ control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
 print((root/('trusted-stop-'+owned['execution']+'.json')).read_text(),flush=True)
 sys.exit(control.get('exit_code',0))
-"#.replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
+"#
+            .replace("__PYTHON_FLAGS__", PYTHON_NO_BYTECODE)
+            .replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
         )
         .unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"]
@@ -3235,11 +3482,11 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
         json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !f.root.path().join("query-started").exists() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    wait_until(
+        "held liveness query started",
+        Duration::from_secs(5),
+        || f.root.path().join("query-started").exists(),
+    );
     f.report(ReportOutcome::Passed, true);
     f.attach();
     fs::write(f.root.path().join("query-release"), "release").unwrap();
@@ -3938,7 +4185,6 @@ impl Fixture {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() {
-    use std::time::{Duration, Instant};
     for op in ["cleanup_runtime", "cancel"] {
         let mut f = Fixture::new();
         f.podman(ContainerMode::OwnScope, true);
@@ -4023,7 +4269,6 @@ fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt() {
-    use std::time::{Duration, Instant};
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
@@ -4111,7 +4356,11 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     f.cleanup_facts(&second, false);
     f.cleanup_control(&first.execution, 2);
     let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime");
-    let progress = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    let progress = recv_within(
+        "first cleanup progress frame",
+        &receive,
+        Duration::from_secs(5),
+    );
     assert_eq!(progress["progress"]["execution"], "first");
     // Separate cancel process fsyncs intent and invokes its own bounded cleanup while the first waits.
     let cancel =
@@ -5146,4 +5395,357 @@ fn native_submit_recovery_and_liveness_normalize_job_ids() {
             );
         }
     }
+}
+
+// FX-ATTACH-RACE: the job's runner observes its placement while the submit's acceptance
+// is still unknown, before any controller attach has recovered the binding.
+/// Submit whose reply is lost after dispatch: the intent is durable, the binding is not.
+fn acceptance_unknown(f: &Fixture) {
+    fs::write(f.root.path().join("mode"), "unknown").unwrap();
+    assert_eq!(f.submit()["kind"], "unknown");
+    fs::write(f.root.path().join("mode"), "normal").unwrap();
+    assert!(f.state().dispatched);
+    assert!(f.state().binding.is_none());
+}
+
+/// The live native R graph for the single-host first-cut placement.
+fn early_allocation(f: &Fixture) -> String {
+    let count = f.request.reservation.cpus.get();
+    let cpus = (0..count)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let nodes = std::iter::once(json!({"metadata":{"type":"node","rank":0,"id":0,"name":"dl380g10"}}))
+        .chain((0..count).map(|n| json!({"metadata":{"type":"core","rank":0,"id":n,"properties":{"os-pus":n.to_string()}}})))
+        .collect::<Vec<_>>();
+    fs::write(
+        f.root.path().join("all.json"),
+        json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":cpus}}],"nodelist":["dl380g10"]},"scheduling":{"graph":{"nodes":nodes}}}).to_string(),
+    )
+    .unwrap();
+    cpus
+}
+
+/// The runner's own observe_allocation for `job` (its FLUX_JOB_ID), asserting nothing.
+fn early_observe(f: &Fixture, job: &str) -> Vec<Value> {
+    let cpus = early_allocation(f);
+    let mut run = f.ownership().run;
+    run.job = job.into();
+    f.call(json!({"op":"observe_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,
+        "observed":{"run":run,"request_digest":f.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
+        "cgroup":format!("0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-{job}:sys.service")}}))
+}
+
+fn early_validate(f: &Fixture, facts: &Value) -> Vec<Value> {
+    f.call(json!({"op":"validate_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}))
+}
+
+fn native_calls(calls: &str, prefix: &str) -> usize {
+    calls
+        .lines()
+        .filter(|line| line.starts_with(prefix))
+        .count()
+}
+
+fn observation_blobs(f: &Fixture) -> usize {
+    fs::read_dir(&f.intent.output_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("allocation-observation-")
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// A same-name native job whose immutable original jobspec is not the retained one.
+fn foreign_original(f: &Fixture, job: &str) {
+    let mut spec: Value =
+        serde_json::from_slice(&fs::read(f.root.path().join("jobspec.json")).unwrap()).unwrap();
+    spec["attributes"]["system"]["duration"] = json!(1.0);
+    fs::write(
+        f.root.path().join(format!("jobspec-{job}.json")),
+        spec.to_string(),
+    )
+    .unwrap();
+}
+
+fn listed_jobs(f: &Fixture, jobs: &[&str]) {
+    let jobs = jobs
+        .iter()
+        .enumerate()
+        .map(|(id, job)| json!({"name":f.intent.correlation,"jobid":job,"id":id + 42}))
+        .collect::<Vec<_>>();
+    fs::write(
+        f.root.path().join("jobs.json"),
+        json!({ "jobs": jobs }).to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn acceptance_unknown_early_observe_recovers_exact_job_and_admits() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    let calls = f.calls();
+    assert_eq!(native_calls(&calls, "jobs -a "), 1, "{calls}");
+    assert!(
+        calls.contains("job info --original fABC jobspec"),
+        "{calls}"
+    );
+    assert_eq!(native_calls(&calls, "job submit "), 1, "{calls}");
+    let granted = early_validate(&f, &observed.last().unwrap()["result"]["facts"]);
+    assert_eq!(granted.last().unwrap()["kind"], "result", "{granted:?}");
+    assert_eq!(f.state().allocation_grant.unwrap().run.job, "fABC");
+    f.report(ReportOutcome::Passed, true);
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "passed",
+        "{frames:?}"
+    );
+    let calls = f.calls();
+    assert_eq!(native_calls(&calls, "jobs -a "), 1, "{calls}");
+    assert_eq!(native_calls(&calls, "job submit "), 1, "{calls}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_for_cancelled_terminal_or_undispatched_job_is_refused_without_recovery() {
+    for case in ["cancelled", "undispatched", "terminal"] {
+        let f = Fixture::new();
+        if case == "cancelled" {
+            acceptance_unknown(&f);
+            // The cancel's own reconciliation cannot prove the job, so no binding exists.
+            fs::write(f.root.path().join("mode"), "query-error").unwrap();
+            f.call(
+                json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
+            );
+            fs::write(f.root.path().join("mode"), "normal").unwrap();
+            assert!(f.state().cancel_requested, "{case}");
+            assert!(f.state().binding.is_none(), "{case}");
+        } else {
+            // The output directory already exists, so nothing is dispatched.
+            fs::create_dir_all(&f.intent.output_dir).unwrap();
+            assert_eq!(f.submit()["kind"], "unknown", "{case}");
+            assert!(!f.state().dispatched, "{case}");
+            if case == "terminal" {
+                f.call(
+                    json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
+                );
+                assert!(f.state().terminal.is_some(), "{case}");
+            }
+        }
+        let before = f.calls().lines().count();
+        let observed = early_observe(&f, "fABC");
+        assert_eq!(
+            observed.last().unwrap()["kind"],
+            "error",
+            "{case}: {observed:?}"
+        );
+        let after = f
+            .calls()
+            .lines()
+            .skip(before)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(native_calls(&after, "jobs "), 0, "{case}: {after}");
+        assert_eq!(native_calls(&after, "job info "), 0, "{case}: {after}");
+        assert!(f.state().binding.is_none(), "{case}");
+        assert!(f.state().allocation_grant.is_none(), "{case}");
+        assert_eq!(observation_blobs(&f), 0, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_without_matching_job_is_refused() {
+    for case in ["no-candidate", "query-error", "foreign-only"] {
+        let f = Fixture::new();
+        acceptance_unknown(&f);
+        match case {
+            "no-candidate" => listed_jobs(&f, &[]),
+            "query-error" => fs::write(f.root.path().join("mode"), "query-error").unwrap(),
+            _ => {
+                foreign_original(&f, "fZZZ");
+                listed_jobs(&f, &["fZZZ"]);
+            }
+        }
+        let observed = early_observe(&f, "fABC");
+        assert_eq!(
+            observed.last().unwrap()["kind"],
+            "error",
+            "{case}: {observed:?}"
+        );
+        assert!(f.state().binding.is_none(), "{case}");
+        assert!(f.state().allocation_grant.is_none(), "{case}");
+        assert_eq!(observation_blobs(&f), 0, "{case}");
+        assert!(
+            !f.calls().contains("job info fABC R"),
+            "{case}: {}",
+            f.calls()
+        );
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(f.state().binding.is_none(), "{case}");
+        assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_with_conflicting_same_name_job_is_refused() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    foreign_original(&f, "fDEF");
+    listed_jobs(&f, &["fABC", "fDEF"]);
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "error", "{observed:?}");
+    let calls = f.calls();
+    assert!(
+        calls.contains("job info --original fABC jobspec"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("job info --original fDEF jobspec"),
+        "{calls}"
+    );
+    assert!(f.state().binding.is_none());
+    assert!(f.state().allocation_grant.is_none());
+    assert_eq!(observation_blobs(&f), 0);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_for_wrong_run_is_refused_after_exact_recovery() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let observed = early_observe(&f, "fDEF");
+    assert_eq!(observed.last().unwrap()["kind"], "error", "{observed:?}");
+    // Recovery bound only the exact original job, never the runner's claimed one.
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    assert!(f.state().allocation_grant.is_none());
+    assert!(!f.calls().contains("job info fDEF R"), "{}", f.calls());
+    let exact = early_observe(&f, "fABC");
+    assert_eq!(exact.last().unwrap()["kind"], "result", "{exact:?}");
+    let mut forged = exact.last().unwrap()["result"]["facts"].clone();
+    forged["run"]["job"] = json!("fDEF");
+    let refused = early_validate(&f, &forged);
+    assert_eq!(refused.last().unwrap()["kind"], "error", "{refused:?}");
+    assert!(f.state().allocation_grant.is_none());
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_replay_is_idempotent() {
+    // Repeated observation reuses the durable binding and retains identical facts.
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let first = early_observe(&f, "fABC");
+    assert_eq!(first.last().unwrap()["kind"], "result", "{first:?}");
+    let second = early_observe(&f, "fABC");
+    assert_eq!(second.last().unwrap()["kind"], "result", "{second:?}");
+    assert_eq!(
+        first.last().unwrap()["result"]["facts"],
+        second.last().unwrap()["result"]["facts"]
+    );
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 1, "{}", f.calls());
+    // A replayed submit returns the recovered binding and never resubmits.
+    let replay = f.submit();
+    assert_eq!(replay["kind"], "accepted", "{replay:?}");
+    assert_eq!(replay["binding"]["id"]["job"], "fABC", "{replay:?}");
+    assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{}", f.calls());
+
+    // Interruption after the binding commit: the native R read fails, then a retry
+    // proceeds from the committed binding without recovering again.
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let cpus = early_allocation(&f);
+    let graph = fs::read(f.root.path().join("all.json")).unwrap();
+    fs::remove_file(f.root.path().join("all.json")).unwrap();
+    let mut run = f.ownership().run;
+    run.job = "fABC".into();
+    let interrupted = f.call(json!({"op":"observe_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,
+        "observed":{"run":run,"request_digest":f.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
+        "cgroup":"0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service"}}));
+    assert_eq!(
+        interrupted.last().unwrap()["kind"],
+        "error",
+        "{interrupted:?}"
+    );
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    fs::write(f.root.path().join("all.json"), graph).unwrap();
+    let resumed = early_observe(&f, "fABC");
+    assert_eq!(resumed.last().unwrap()["kind"], "result", "{resumed:?}");
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 1, "{}", f.calls());
+    let granted = early_validate(&f, &resumed.last().unwrap()["result"]["facts"]);
+    assert_eq!(granted.last().unwrap()["kind"], "result", "{granted:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn concurrent_attach_and_early_observe_commit_one_binding() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    fs::write(f.root.path().join("mode"), "held-query").unwrap();
+    // Release the held query on every exit, so a failing assertion never strands the attach.
+    struct Release(PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "");
+        }
+    }
+    let release = Release(f.root.path().join("query-release"));
+    let mut attach = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .args(["--config", f.config.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        attach.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
+    )
+    .unwrap();
+    wait_until(
+        "attach recovery query started",
+        Duration::from_secs(5),
+        || f.root.path().join("query-started").exists(),
+    );
+    // The runner observes while attach's recovery query is still in flight.
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    drop(release);
+    let output = attach.wait_with_output().unwrap();
+    let frames = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let observation = &frames.last().unwrap()["result"]["observation"];
+    assert_eq!(observation["binding"]["id"]["job"], "fABC", "{frames:?}");
+    assert_ne!(
+        observation["reason"], "recovery transport or identity unavailable",
+        "{frames:?}"
+    );
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 2, "{}", f.calls());
+    assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{}", f.calls());
 }

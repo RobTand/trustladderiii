@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import resource
 import stat
 import subprocess
 import tempfile
@@ -84,11 +85,17 @@ class FluxAdmissionTests(unittest.TestCase):
             self.assertEqual(env, self.intent['environment'])
             self.assertNotIn('TL3_PLANTED_MARKER', env)
             command = list(args[args.index('/usr/bin/python3'):])
+            system = {'environment': env, 'cwd': str(self.source), 'duration': 5400,
+                      'constraints': {'hostlist': ['dl380g10']}}
+            if '--rlimit=-*' not in args:
+                # Model the Flux CLI: it propagates the submitter's soft rlimits unless reset.
+                system['shell'] = {'options': {'rlimit': {
+                    'nofile': resource.getrlimit(resource.RLIMIT_NOFILE)[0],
+                    'core': resource.getrlimit(resource.RLIMIT_CORE)[0]}}}
             return 0, fx.encoded({'version': 1, 'resources': [{'type': 'slot', 'count': 1, 'label': 'task',
                     'with': [{'type': 'core', 'count': self.intent['cpus']}]}],
                     'tasks': [{'command': command, 'slot': 'task', 'count': {'per_slot': 1}}],
-                    'attributes': {'system': {'environment': env, 'cwd': str(self.source), 'duration': 5400,
-                    'constraints': {'hostlist': ['dl380g10']}}}}), b''
+                    'attributes': {'system': system}}), b''
         if args[:2] == ('job', 'submit'):
             self.spec = fx.load(Path(args[2]))
             expected = fx.digest(fx.encoded(self.intent))
@@ -301,6 +308,18 @@ class FluxAdmissionTests(unittest.TestCase):
         self.assertEqual(shared.stat().st_mode & 0o777, 0o755)
         self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
         self.assertFalse((evidence / 'deploy.lock').exists())
+
+    def test_dry_run_clears_propagated_rlimits(self):
+        spec = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
+        dry_runs = [args for args in self.calls if args[:2] == ('submit', '--dry-run')]
+        self.assertEqual(len(dry_runs), 1)
+        self.assertEqual(dry_runs[0].count('--rlimit=-*'), 1, dry_runs[0])
+        self.assertNotIn('rlimit', spec['attributes']['system'].get('shell', {}).get('options', {}))
+        # The fake models Flux: without the reset the submitter's limits reach the jobspec.
+        _, raw, _ = self.native(*[item for item in dry_runs[0] if item != '--rlimit=-*'])
+        leaked = json.loads(raw)['attributes']['system']['shell']['options']['rlimit']
+        self.assertEqual(leaked['nofile'], resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+        self.assertEqual(self.submissions(), 0)
 
     def test_owner_limit_verifier_checks_actual_jobspec_and_saved_intent(self):
         good = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
