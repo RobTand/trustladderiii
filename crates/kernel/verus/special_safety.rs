@@ -642,7 +642,6 @@ mod invalid_command_assembly {
             match event {
                 Event::Command { node, id, command } => {
                     command_frames_reveal::command_rows_project(before, w, node, id, command);
-                    checking::accepted_frame(before, w);
                 },
                 _ => {},
             }
