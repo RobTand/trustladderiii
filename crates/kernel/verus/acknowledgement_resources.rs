@@ -92,7 +92,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
 pub(super) open spec fn confirmed_step_frame(b: Node, n: Node) -> bool {
     (n.pos == b.pos + 1)
         && (n.effect == b.effect)
-        && (n.phase == b.phase)
+        && (n.phase != b.phase)
         && (n.holds == b.holds)
         && (n.pool == b.pool)
         && (n.run == b.run)
