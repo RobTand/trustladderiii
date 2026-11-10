@@ -811,7 +811,8 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), (Event::Fact { node, fact }))
+    ensures fact_relation_exports::fact_rows(*old(w), *final(w), node, fact, *old(out), *final(out)),
+        (progress_input(*old(w), (Event::Fact { node, fact }))
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>
@@ -930,7 +931,30 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
     kernel_proof! { report_projection(*w, (Event::Fact { node, fact })); events_lemmas::selected_input(before_apply@, (Event::Fact { node, fact })); }
         if let Some(i) = w.index(node) {
             on_fact(w, i, fact, out, report);
+            kernel_proof! {
+                if let Fact::Priority(priority) = fact {
+                    if checking::accepted(before_apply@) {
+                        checking::accepted_node(before_apply@, i as int);
+                        fact_relation_priority::node_rows(before_apply@,
+                            before_apply@.nodes@[i as int], priority, i, before_apply_out@);
+                        fact_relation_reveal::priority_model(before_apply@.nodes@[i as int], priority);
+                        retirement::node_frame(before_apply@, *w, w.nodes@[i as int]);
+                        checking::accepted_parts(before_apply@);
+                        if !dependencies::prerequisites_delivered(before_apply@, node) {
+                            dependency_owner_exports::waiting_owner_ok(before_apply@, i as int);
+                        }
+                        assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
+                        internal_safety::apply_step_preserves_accepted_full(before_apply@, *w, i as int);
+                        apply_safety::apply_frame(before_apply@, *w);
+                        transition_safety::lift_apply(before_apply@, *w,
+                            Event::Fact { node, fact }, i as int, before_apply_out@, *out);
+                    }
+                }
+            }
         }
+    kernel_proof! {
+        fact_relation_exports::fact_rows_intro(before_apply@, *w, node, fact, before_apply_out@, *out);
+    }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Fact { node, fact })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Fact { node, fact }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
