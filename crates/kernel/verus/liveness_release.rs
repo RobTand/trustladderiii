@@ -29,7 +29,7 @@ pub(super) fn stop(w: &mut World, Ghost(k): Ghost<int>)
 }
 
 pub(super) fn finish(w: &mut World, Ghost(k): Ghost<int>)
-    requires context(*old(w), k), 0 <= k <= 900, clean(old(w).nodes@[1], 5),
+    requires context(*old(w), k), 0 <= k <= 900,
     ensures context(*final(w), k + 2), final(w).nodes@[1].phase == Phase::Closed(Outcome::Stopped),
         !final(w).nodes@[1].holds,
         final(w).nodes@ == old(w).nodes@.update(1, final(w).nodes@[1]),
