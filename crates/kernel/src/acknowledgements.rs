@@ -667,7 +667,7 @@ proof fn ack_confirmed_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nq
 }
 
 proof fn ack_delivery_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
-    requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
+    requires !e.cancelling, true,
         ack == Ack::DeliveryAccepted, nqa == nq, oa == ob,
         n.review_stop == b.review_stop,
     ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
