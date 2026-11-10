@@ -575,3 +575,182 @@ fn x7_activation_survives_broker_identity_changes() {
     fs::write(&options.executable, "changed tool").unwrap();
     assert!(activation.validate_options(&options).is_err());
 }
+
+mod release_boundary {
+    use super::*;
+    use crate::adapters::flux_checks::staging::Stager;
+
+    fn stager(fixture: &Fixture) -> Result<Stager> {
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
+        config.flux = fixture.flux.clone();
+        for repo in &mut config.github.repos {
+            repo.container_image = None;
+        }
+        Stager::new(&config)
+    }
+
+    fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        fn collect(root: &Path, path: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+            for entry in fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    collect(root, &entry.path(), files);
+                } else {
+                    files.insert(
+                        entry.path().strip_prefix(root).unwrap().to_owned(),
+                        fs::read(entry.path()).unwrap(),
+                    );
+                }
+            }
+        }
+        let mut files = BTreeMap::new();
+        collect(root, root, &mut files);
+        files
+    }
+
+    fn trusted(fixture: &Fixture) -> PathBuf {
+        fixture.flux.runtime_bundles[0]
+            .parent()
+            .unwrap()
+            .join(&fixture.input.trusted_root)
+    }
+
+    fn assert_trusted(input: &backend::TreeIdentity, expected: &BTreeMap<PathBuf, Vec<u8>>) {
+        let actual = snapshot(&input.root.join("trusted/tl3_harness"));
+        let python = expected
+            .iter()
+            .filter(|(path, _)| path.extension().is_some_and(|extension| extension == "py"))
+            .map(|(path, bytes)| (path.clone(), bytes.clone()))
+            .collect::<BTreeMap<_, _>>();
+        assert!(!python.is_empty());
+        assert_eq!(actual, python);
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_running_controller_stages_its_qualified_release_after_producer_removal() {
+        let fixture = Fixture::new();
+        let controller = stager(&fixture).unwrap();
+        let expected = snapshot(&trusted(&fixture));
+        fs::remove_dir_all(&fixture.input.source_root).unwrap();
+        let repo = crate::git_tests::Repo::new();
+        for _ in 0..2 {
+            let prepared = controller.prepare_request(&repo.delivery()).unwrap();
+            assert_trusted(&prepared.request.tree, &expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_bundle_missing_at_startup_never_creates_an_available_stager() {
+        let fixture = Fixture::new();
+        let manifest = &fixture.flux.runtime_bundles[0];
+        let saved = manifest.with_extension("saved");
+        let parent = manifest.parent().unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::rename(manifest, &saved).unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(stager(&fixture).is_err());
+        assert!(!fixture.flux.staging_root.exists());
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::rename(saved, manifest).unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).unwrap();
+        // Availability requires a new, successful activation load.
+        assert!(stager(&fixture).is_ok());
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_failed_input_copy_never_falls_back_to_the_producer() {
+        let fixture = Fixture::new();
+        let controller = stager(&fixture).unwrap();
+        fs::write(&fixture.flux.staging_root, b"occupied").unwrap();
+        let repo = crate::git_tests::Repo::new();
+        assert!(controller.prepare_request(&repo.delivery()).is_err());
+        assert_eq!(fs::read(&fixture.flux.staging_root).unwrap(), b"occupied");
+        assert!(!repo.path.join("trusted").exists());
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_second_controller_load_never_touches_the_owners_input_or_bundle() {
+        let fixture = Fixture::new();
+        let owner = stager(&fixture).unwrap();
+        let repo = crate::git_tests::Repo::new();
+        let prepared = owner.prepare_request(&repo.delivery()).unwrap();
+        let inputs = snapshot(&fixture.flux.staging_root);
+        let bundle = snapshot(fixture.flux.runtime_bundles[0].parent().unwrap());
+        let _contender = stager(&fixture).unwrap();
+        assert_eq!(snapshot(&fixture.flux.staging_root), inputs);
+        assert_eq!(snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()), bundle);
+        assert_trusted(&prepared.request.tree, &snapshot(&trusted(&fixture)));
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_current_switch_never_changes_the_qualified_module_set() {
+        use std::os::unix::fs::symlink;
+        let fixture = Fixture::new();
+        let current = fixture.root.path().join("current");
+        symlink(&fixture.input.source_root, &current).unwrap();
+        let controller = stager(&fixture).unwrap();
+        let expected = snapshot(&trusted(&fixture));
+        fs::remove_file(&current).unwrap();
+        let replacement = fixture.root.path().join("replacement");
+        fs::create_dir(&replacement).unwrap();
+        fs::write(replacement.join("runner.py"), b"unqualified replacement").unwrap();
+        symlink(replacement, &current).unwrap();
+        let repo = crate::git_tests::Repo::new();
+        let prepared = controller.prepare_request(&repo.delivery()).unwrap();
+        assert_trusted(&prepared.request.tree, &expected);
+        fs::remove_file(current).unwrap();
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn a_truncated_bundle_is_never_staged() {
+        let fixture = Fixture::new();
+        let controller = stager(&fixture).unwrap();
+        let runner = trusted(&fixture).join("runner.py");
+        fs::set_permissions(&runner, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&runner, b"truncated").unwrap();
+        fs::set_permissions(runner, fs::Permissions::from_mode(0o400)).unwrap();
+        let repo = crate::git_tests::Repo::new();
+        assert!(controller.prepare_request(&repo.delivery()).is_err());
+        assert!(!fixture.flux.staging_root.exists());
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn repeated_failed_preparations_never_publish_partial_inputs() {
+        let fixture = Fixture::new();
+        let controller = stager(&fixture).unwrap();
+        fs::write(&fixture.flux.staging_root, b"occupied").unwrap();
+        let repo = crate::git_tests::Repo::new();
+        let before = snapshot(fixture.flux.runtime_bundles[0].parent().unwrap());
+        for _ in 0..3 {
+            assert!(controller.prepare_request(&repo.delivery()).is_err());
+            assert_eq!(fs::read(&fixture.flux.staging_root).unwrap(), b"occupied");
+        }
+        assert_eq!(snapshot(fixture.flux.runtime_bundles[0].parent().unwrap()), before);
+    }
+
+    #[test]
+    #[ignore = "Flux shared-runtime fixture; run explicitly on the fleet"]
+    fn interrupted_preparations_preserve_owned_partial_and_completed_inputs() {
+        let fixture = Fixture::new();
+        let controller = stager(&fixture).unwrap();
+        let partial = fixture.flux.staging_root.join("interrupted");
+        fs::create_dir_all(&partial).unwrap();
+        fs::write(partial.join("retained"), b"owned partial input").unwrap();
+        let repo = crate::git_tests::Repo::new();
+        let first = controller.prepare_request(&repo.delivery()).unwrap();
+        let before = snapshot(&first.request.tree.root);
+        let second = controller.prepare_request(&repo.delivery()).unwrap();
+        assert_ne!(first.request.tree.root, second.request.tree.root);
+        assert_eq!(snapshot(&first.request.tree.root), before);
+        assert_eq!(fs::read(partial.join("retained")).unwrap(), b"owned partial input");
+        assert_trusted(&second.request.tree, &snapshot(&trusted(&fixture)));
+    }
+}
