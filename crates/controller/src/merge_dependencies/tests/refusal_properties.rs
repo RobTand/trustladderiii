@@ -2177,3 +2177,28 @@ fn invalid_step_result_retains_input_world_and_effects() {
     assert!(!c.consume_kernel_input(&after, row).unwrap());
     assert_eq!(c.snapshot().unwrap().rows.iter().filter(|r| r.table == "incidents").count(), 1);
 }
+
+
+#[test]
+fn invalid_stored_world_is_fatal_and_retains_inbox() {
+    let mut db = Database::start();
+    let (_repo, mut c, repository) = fixture(&mut db, "invalid_stored_world");
+    let node = intake(&mut c, &repository, 42);
+    c.observe("bad-store-reply", Observation::Kernel(Event::Command {
+        node,
+        id: 1,
+        command: Command::Stop,
+    })).unwrap();
+    let mut world = c.world().unwrap();
+    world.gates.clear();
+    assert!(!world.valid(), "fixture must fail the real kernel checker");
+    persist_world(&mut c, &world, "invalid-stored-world");
+    let before = c.snapshot().unwrap();
+    let error = crate::snapshot::decode(&before).unwrap_err();
+    assert_eq!(error.to_string(), "invalid stored kernel world");
+    let result = c.drive_once();
+    let after = c.snapshot().unwrap();
+    assert_eq!(json!(after.rows), json!(before.rows), "fatal stored state must delete no inbox rows");
+    assert!(result.is_err(), "a running controller must stop on a bad stored world");
+    assert!(!crate::input_errors::recoverable(&error), "invalid stored kernel worlds must never be recoverable input errors");
+}
