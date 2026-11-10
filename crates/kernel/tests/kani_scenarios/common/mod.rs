@@ -1,0 +1,1218 @@
+//! The same assertions on enumerated and sampled inputs.
+#![allow(dead_code, unused_imports)]
+include!("kernel_scope.rs");
+mod sampling;
+// This is a test-local deterministic compatibility namespace, not the Kani crate.
+// Keeping these bindings preserves every copied assertion and filter byte for byte.
+use sampling as kani;
+const LIMIT: u64 = 1 << 40;
+const CREDIT_LIMIT: u64 = 1 << 30;
+
+fn small_head(head: Option<HeadId>) -> bool {
+    head.is_none_or(|head| head.0 < 8)
+}
+
+fn small(n: &Node) -> bool {
+    n.generation < LIMIT
+        && n.next_seq < LIMIT
+        && n.last_cmd < LIMIT
+        && n.repo.0 < 2
+        && small_head(n.proposed)
+        && small_head(n.head)
+        && small_head(n.checked)
+        && small_head(n.approved)
+        && small_head(n.merged)
+        && n.credit.start < CREDIT_LIMIT
+        && n.credit.earned < CREDIT_LIMIT
+        && n.credit.added < CREDIT_LIMIT
+        && n.credit.spent < CREDIT_LIMIT
+        && n.ticket.map_or(true, |t| t < LIMIT)
+        && n.run.map_or(true, |g| g < LIMIT)
+        && n.job.map_or(true, |g| g < LIMIT)
+        && n.effect.map_or(true, |e| e.seq < LIMIT)
+        && n.question.map_or(true, |q| q.id < LIMIT)
+}
+
+fn require_consistent(w: &World) {
+    match w.check() {
+        Ok(()) => {}
+        Err(Broken::Footprint) => panic!("broken: footprint handle"),
+        Err(Broken::Config) => panic!("broken: config"),
+        Err(Broken::Agenda) => panic!("broken: agenda"),
+        Err(Broken::Effect) => panic!("broken: effect"),
+        Err(Broken::Holds) => panic!("broken: holds"),
+        Err(Broken::Run) => panic!("broken: run"),
+        Err(Broken::Pool) => panic!("broken: pool"),
+        Err(Broken::Ticket) => panic!("broken: ticket"),
+        Err(Broken::Question) => panic!("broken: question"),
+        Err(Broken::Incident) => panic!("broken: incident"),
+        Err(Broken::Credit) => panic!("broken: credit"),
+        Err(Broken::Leaf) => panic!("broken: leaf"),
+        Err(Broken::Pr) => panic!("broken: pr"),
+        Err(Broken::Teardown) => panic!("broken: teardown"),
+        Err(Broken::Merge) => panic!("broken: merge"),
+        Err(Broken::Closed) => panic!("broken: closed"),
+        Err(Broken::Gate) => panic!("broken: gate"),
+        Err(Broken::Dependencies) => panic!("broken: dependencies"),
+        Err(Broken::ReviewStop) => panic!("broken: review stop"),
+    }
+}
+
+fn teardown(kind: EffectKind) -> bool {
+    matches!(
+        kind,
+        EffectKind::StopRun
+            | EffectKind::WithdrawJob
+            | EffectKind::ClosePr
+            | EffectKind::RemoveWorktree
+    )
+}
+
+fn check_nodes(before: &World, after: &World) {
+    let mut i = 0;
+    while i < before.nodes.len() {
+        let b = &before.nodes[i];
+        let n = &after.nodes[i];
+        assert!(n.proposed == b.proposed);
+        assert!(!b.adopted || n.adopted);
+        // Effect keys only move forward.
+        assert!(n.next_seq >= b.next_seq);
+        // Closed is final. Only a late merge changes it, from Stopped or Replaced to Merged.
+        if let Phase::Closed(o) = b.phase {
+            let corrected = n.phase == Phase::Closed(Outcome::Merged)
+                && matches!(o, Outcome::Stopped | Outcome::Replaced);
+            assert!(n.phase == b.phase || corrected);
+        }
+        // A merged leaf earns its credit once.
+        assert!(n.credit.earned <= b.credit.earned + 1);
+        if n.credit.earned > b.credit.earned {
+            assert!(!b.credit.merge_credited && n.credit.merge_credited);
+        }
+        i += 1;
+    }
+}
+
+fn check_outputs(before: &World, after: &World, out: &Outbox, exempt: Option<usize>) {
+    let mut slot = 0;
+    while slot < OUTBOX {
+        if let Some(Out::Effect {
+            node,
+            seq,
+            kind,
+            head,
+        }) = out.get(slot)
+        {
+            assert!(node.index().is_some_and(|i| i < after.nodes.len()));
+            // Look the node up by a concrete index. A read at a symbolic index
+            // into nodes the event just rewrote made the merge proofs need
+            // more than 48 GB; this way they need a few.
+            let mut i = 0;
+            while i < after.nodes.len() {
+                if NodeId(i as u64) == node {
+                    check_effect(
+                        before.nodes.get(i),
+                        &after.nodes[i],
+                        seq,
+                        kind,
+                        head,
+                        exempt == Some(i),
+                    );
+                }
+                i += 1;
+            }
+        }
+        slot += 1;
+    }
+}
+
+fn check_effect(
+    before: Option<&Node>,
+    n: &Node,
+    seq: u64,
+    kind: EffectKind,
+    head: Option<HeadId>,
+    exempt: bool,
+) {
+    assert!(seq < n.next_seq);
+    if let Some(b) = before {
+        // Every effect gets a key no earlier effect of its node had.
+        assert!(seq >= b.next_seq);
+        // A paused node starts nothing new, though teardown still runs.
+        if b.paused && !b.phase.is_stopping() && !exempt {
+            assert!(teardown(kind));
+        }
+    }
+    // TL3 enqueues a head only after that exact head passed its checks and review.
+    if kind == EffectKind::Enqueue {
+        assert!(matches!(head, Some(h) if n.approved == Some(h) && n.checked == Some(h)));
+    }
+}
+
+fn rebase_progress_applies(node: &Node, generation: u64) -> bool {
+    node.phase == Phase::Rebasing
+        && node.current() == Some(Item::Await)
+        && node.run == Some(generation)
+}
+
+fn check_apply(event: Event) -> World {
+    let before = any_settled_world(None);
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(&mut after, event.clone(), &mut out, &mut Report::new());
+    // Not vacuous: some world in the bounds is one this event changes.
+    kani::cover!(after != before, "the event changes the world");
+    if let Event::Reply {
+        generation,
+        reply: Reply::ProtectedPaths,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if matches!(
+            b.phase,
+            Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }
+        ) && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::NotActionable));
+            assert_eq!(n.credit, b.credit);
+            assert!(n.question.is_none());
+            assert_eq!(n.plan_retries, b.plan_retries);
+        }
+    }
+    if let Event::NewAdoption { repo, head, .. } = &event {
+        if repo.index().is_some_and(|r| r < before.gates.len()) {
+            assert_eq!(after.nodes.len(), before.nodes.len() + 1);
+            assert_eq!(after.nodes.last().unwrap().proposed, Some(*head));
+            assert!(!after.nodes.last().unwrap().adopted);
+        }
+    }
+    require_consistent(&after);
+    check_nodes(&before, &after);
+    let exempt = match event {
+        Event::Ack { node, .. } => node.index(),
+        Event::Command {
+            node,
+            command: Command::Resume,
+            ..
+        } => node.index(),
+        _ => None,
+    };
+    check_outputs(&before, &after, &out, exempt);
+    check_fail_fast(&before, &after, event);
+    check_fail_fast_funding(&before, &after, event);
+    if let Event::Reply {
+        generation,
+        reply: Reply::ReviewerOutOfRoom,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if b.phase == Phase::Reviewing
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.run_failures, 0);
+            assert_eq!(n.attempt, b.attempt);
+            assert_eq!(n.round, b.round);
+            if b.review_restarted && before.fail_fast {
+                assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+                assert_eq!(n.review_stop, Some(ReviewStop::ReviewerOutOfRoom));
+                assert_eq!(n.credit, b.credit);
+            } else if b.review_restarted {
+                assert!(!n.holds);
+                if b.credit.can_spend(1) {
+                    assert_eq!(n.phase, Phase::Planning { must_split: true });
+                    assert_eq!(n.credit.spent, b.credit.spent + 1);
+                } else {
+                    assert_eq!(n.phase, Phase::AwaitingRob);
+                    assert_eq!(
+                        n.question.unwrap().cont,
+                        Cont::Planning { must_split: true }
+                    );
+                }
+            } else {
+                assert!(n.review_restarted);
+                assert_eq!(n.rechecks, b.rechecks.saturating_add(1));
+                assert_eq!(n.checked, b.checked);
+                if n.rechecks <= FREE_RECHECKS || b.credit.can_spend(1) {
+                    assert_eq!(n.phase, Phase::Reviewing);
+                    assert!(n.generation > b.generation);
+                    assert_eq!(
+                        n.credit.spent,
+                        b.credit.spent + u64::from(n.rechecks > FREE_RECHECKS)
+                    );
+                } else {
+                    assert_eq!(n.phase, Phase::AwaitingRob);
+                    assert_eq!(n.question.unwrap().cont, Cont::Ready(Resume::Reviewing));
+                }
+            }
+        }
+    }
+    if let Event::Fact {
+        fact: Fact::Conflict,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if matches!(b.phase, Phase::Publishing | Phase::AwaitingDelivery) {
+            assert_eq!(
+                n.phase,
+                if b.phase == Phase::AwaitingDelivery {
+                    Phase::Ready(Resume::Rebasing)
+                } else {
+                    Phase::Rebasing
+                }
+            );
+            assert_eq!(n.generation, b.generation + 1);
+            assert_eq!(n.credit, b.credit);
+            assert_eq!(n.holds, b.holds);
+        } else {
+            assert_eq!(n, b, "a repeated Conflict cannot restart the rebase");
+        }
+    }
+    if let Event::Reply {
+        generation,
+        reply: Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if rebase_progress_applies(b, generation) {
+            // Each completed catch-up consumes finite free allowance or credit, or asks Rob.
+            let fuel = |n: &Node| {
+                n.credit.balance() + i128::from(FREE_RECHECKS.saturating_sub(n.rechecks))
+            };
+            assert!(n.phase == Phase::AwaitingRob || fuel(n) < fuel(b));
+        }
+    }
+    // Each of Rob's answers applies only to the question it names, and only
+    // once: anything it changes closes that question.
+    if let Event::Command {
+        command: Command::Answer { question, .. },
+        ..
+    } = event
+    {
+        let mut unchanged = before.nodes[0].clone();
+        unchanged.last_cmd = after.nodes[0].last_cmd;
+        if after.nodes[0] != unchanged {
+            assert!(before.nodes[0].question.is_some_and(|q| q.id == question));
+            assert!(after.nodes[0].question.map_or(true, |q| q.id != question));
+        }
+    }
+    before
+}
+
+fn check_fail_fast(before: &World, after: &World, event: Event) {
+    let mut i = 0;
+    while i < before.nodes.len() {
+        let b = &before.nodes[i];
+        let n = &after.nodes[i];
+        let stopped = n.review_stop != b.review_stop;
+        let publication_body = matches!(
+            event,
+            Event::Ack {
+                node,
+                seq,
+                ack: Ack::BodyPolicyRefused,
+            } if node.index() == Some(i)
+                && b.effect.is_some_and(|e| {
+                    e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr
+                })
+        );
+        if publication_body {
+            assert_eq!(n.review_stop, Some(ReviewStop::PublicationBody));
+        }
+        if !before.fail_fast {
+            assert!(
+                !stopped || publication_body,
+                "without fail_fast only an OpenPr body refusal stops for TL3 review"
+            );
+        } else {
+            assert!(
+                n.attempt <= b.attempt.max(1),
+                "fail_fast starts no new attempt"
+            );
+            assert!(b.replanned || !n.replanned, "fail_fast never re-plans");
+            if matches!(n.phase, Phase::Planning { .. }) {
+                assert!(matches!(
+                    b.phase,
+                    Phase::Planning { .. } | Phase::AwaitingRob
+                ));
+            }
+            // A work failure never asks Rob whether to go on. Only the kernel's
+            // rule-break path, which the planner worker can't reach, still does.
+            // Rob's unclear answer re-asks his open question under a new id; that
+            // clarification is the same question, not a new one.
+            let clarifies = |p: Question, q: Question| {
+                b.phase == Phase::AwaitingRob
+                    && p.kind == q.kind
+                    && p.cont == q.cont
+                    && p.cost == q.cost
+                    && !p.clarified
+                    && q.clarified
+            };
+            let asked = n.question.is_some_and(|q| {
+                q.kind == QKind::CantMeet
+                    && b.question
+                        .map_or(true, |p| p.id != q.id && !clarifies(p, q))
+            });
+            if asked {
+                assert!(
+                    matches!(
+                        event,
+                        Event::Reply {
+                            reply: Reply::PlanLeaf { .. },
+                            ..
+                        }
+                    ),
+                    "fail_fast asks can't-meet only after a broken rule"
+                );
+            }
+        }
+        if stopped {
+            assert!(b.review_stop.is_none());
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert_eq!(n.credit, b.credit);
+            assert!(n.question.is_none());
+        }
+        i += 1;
+    }
+    if let Event::Reply {
+        generation,
+        reply: Reply::PlanCantMeet,
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if before.fail_fast
+            && matches!(b.phase, Phase::Planning { .. })
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+        {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert_eq!(n.review_stop, Some(ReviewStop::PlanCantMeet));
+        }
+    }
+}
+
+fn check_fail_fast_funding(before: &World, after: &World, event: Event) {
+    if let Event::Reply {
+        generation,
+        reply: Reply::MakerNeedsFiles { files, fits },
+        ..
+    } = event
+    {
+        let b = &before.nodes[0];
+        let n = &after.nodes[0];
+        if before.fail_fast
+            && b.phase == Phase::Making
+            && b.current() == Some(Item::Await)
+            && b.run == Some(generation)
+            && before.has_footprint(files)
+            && fits
+            && !files.is_empty()
+            && !b.credit.can_spend(1)
+        {
+            assert_eq!(n.phase, Phase::AwaitingRob);
+            assert!(n.question.is_some_and(
+                |q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making)
+            ));
+            assert!(n.review_stop.is_none());
+        }
+    }
+}
+
+fn check_fail_fast_diverts(phase: Phase, event: Event) {
+    let mut off = any_settled_world(Some(phase));
+    off.fail_fast = false;
+    let mut on = off.clone();
+    on.fail_fast = true;
+    let b = off.nodes[0];
+    let mut out_off = Outbox::new();
+    apply(&mut off, event, &mut out_off, &mut Report::new());
+    let mut out_on = Outbox::new();
+    apply(&mut on, event, &mut out_on, &mut Report::new());
+    on.fail_fast = false;
+    let diverted = on != off;
+    kani::cover!(diverted, "fail_fast stops a retry for TL3 review");
+    kani::cover!(!diverted, "with the flag on, the event does what it did");
+    if diverted {
+        let n = &on.nodes[0];
+        let r = &off.nodes[0];
+        assert_eq!(on.nodes[1], off.nodes[1]);
+        assert_eq!(n.credit, b.credit);
+        let funding = n
+            .question
+            .is_some_and(|q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making));
+        if funding {
+            // An unfunded extension that fits waits for credit instead of a split.
+            assert!(
+                r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
+                    && q.cont == Cont::Planning { must_split: true })
+            );
+            assert!(n.review_stop.is_none());
+        } else {
+            assert_eq!(n.phase, Phase::Stopping(Outcome::Stopped));
+            assert!(n.review_stop.is_some());
+            assert!(out_on.is_empty());
+        }
+        let retried = r.attempt > b.attempt
+            || matches!(r.phase, Phase::Planning { .. })
+            || r.question
+                .is_some_and(|q| matches!(q.kind, QKind::CantMeet | QKind::OutOfCredit));
+        assert!(retried, "fail_fast diverts only a retry");
+    }
+}
+
+fn check_advance(phase: Phase, moves: bool) {
+    let before = any_world(Some(phase));
+    let rank = before.nodes[0].settle_rank();
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
+    // Not vacuous: settle takes a transition from this phase, or, for a phase
+    // that only waits on outside events, a world in it exists. One cover per
+    // harness, so every cover a proof contains is one it can reach.
+    kani::cover!(changed == moves, "the phase moves under settle, or waits");
+    require_consistent(&after);
+    if changed {
+        assert!(after.nodes[0].settle_rank() < rank);
+        assert!(after.nodes[1] == before.nodes[1]);
+        check_nodes(&before, &after);
+        check_outputs(&before, &after, &out, None);
+    } else {
+        assert!(after == before && out.is_empty());
+    }
+}
+
+fn reply(reply: Reply) -> Event {
+    match &reply {
+        Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head } => {
+            kani::assume(head.0 < 8)
+        }
+        _ => {}
+    }
+    Event::Reply {
+        node: NodeId(0),
+        generation: kani::any(),
+        reply,
+    }
+}
+
+fn waiting_dependency_world() -> World {
+    let mut world = World::new(&[1], 1);
+    let mut node = Node::new(RepoId(0));
+    node.phase = Phase::Unplanned;
+    node.credit.ready = true;
+    node.credit.start = 4;
+    node.credit.withheld = true;
+    node.waiting_prerequisite = Some(2761);
+    world.nodes.push(node);
+    world.dependencies.push(Dependency {
+        node: NodeId(0),
+        target: DependencyTarget {
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            request: None,
+        },
+        status: DependencyStatus::Pending,
+        rejected: false,
+    });
+    world
+}
+
+fn check_dependency_delivery() {
+    let mut world = waiting_dependency_world();
+    let before = world.measure();
+    let target = world.dependencies[0].target;
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target,
+            status: DependencyStatus::Delivered,
+        }),
+        &mut out,
+        &mut Report::new(),
+    );
+    assert!(world.measure() < before);
+    assert!(advance(&mut world, 0, &mut out, &mut Report::new()));
+    assert_eq!(world.nodes[0].phase, Phase::Planning { must_split: false });
+    assert_eq!(world.nodes[0].credit.balance(), 4);
+    require_consistent(&world);
+    kani::cover!(world.nodes[0].planning_started, "delivery admits planning");
+}
+
+fn check_dependency_waiting() {
+    let mut world = waiting_dependency_world();
+    let mut out = Outbox::new();
+    let blocked = !advance(&mut world, 0, &mut out, &mut Report::new());
+    assert!(blocked);
+    let node = &world.nodes[0];
+    assert!(!node.holds && !node.pool && node.ticket.is_none() && node.run.is_none());
+    assert!(node.footprint.is_empty());
+    assert_eq!(node.credit.balance(), 0);
+    assert!(out.is_empty());
+    require_consistent(&world);
+    kani::cover!(blocked, "an open prerequisite blocks planning");
+}
+
+fn check_dependency_cycles() {
+    let mut world = World::new(&[3], 3);
+    for _ in 0..3 {
+        world.nodes.push(Node::new(RepoId(0)));
+    }
+    for index in 0..2 {
+        let from: u8 = kani::any();
+        let to: u8 = kani::any();
+        kani::assume(from < 3 && to < 3);
+        world.dependencies.push(Dependency {
+            node: NodeId(u64::from(from)),
+            target: DependencyTarget {
+                kind: PrerequisiteKind::Issue,
+                number: index + 1,
+                request: Some(NodeId(u64::from(to))),
+            },
+            status: DependencyStatus::Pending,
+            rejected: false,
+        });
+    }
+    // The concrete roots and unique external numbers satisfy every other
+    // invariant. Only the prior graph is symbolic in this graph-safety proof.
+    kani::assume(world.dependency_graph_acyclic());
+    // Roots are interchangeable. Fix the owner of the new edge, as the
+    // existing event proofs do, while both prior edges remain arbitrary.
+    let from: u8 = 0;
+    let to: u8 = kani::any();
+    kani::assume(to < 3);
+    let mut out = Outbox::new();
+    apply(
+        &mut world,
+        Event::Fact {
+            node: NodeId(u64::from(from)),
+            fact: Fact::Dependency {
+                target: DependencyTarget {
+                    kind: PrerequisiteKind::Issue,
+                    number: 3,
+                    request: Some(NodeId(u64::from(to))),
+                },
+                status: DependencyStatus::Pending,
+            },
+        },
+        &mut out,
+        &mut Report::new(),
+    );
+    assert!(world.dependency_graph_acyclic());
+    kani::cover!(
+        world.dependencies.last().unwrap().rejected,
+        "a cyclic declaration is rejected"
+    );
+    kani::cover!(
+        !world.dependencies.last().unwrap().rejected,
+        "an acyclic declaration is accepted"
+    );
+}
+
+fn check_dependency_registration() {
+    let mut world = World::new(&[3], 1);
+    world.nodes = kani::vec::exact_vec::<Node, 1>();
+    kani::assume(world.consistent());
+    let phase = world.nodes[0].phase;
+    let started = world.nodes[0].planning_started;
+    apply(
+        &mut world,
+        fact(Fact::Dependency {
+            target: DependencyTarget {
+                kind: PrerequisiteKind::Issue,
+                number: 2762,
+                request: None,
+            },
+            status: kani::any(),
+        }),
+        &mut Outbox::new(),
+        &mut Report::new(),
+    );
+    if started || !matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
+        assert!(
+            world.dependencies.is_empty(),
+            "a started request never gains a prerequisite"
+        );
+    } else {
+        assert_eq!(world.dependencies.len(), 1);
+    }
+    require_consistent(&world);
+    kani::cover!(started, "a started request rejects a declaration");
+    kani::cover!(
+        !world.dependencies.is_empty(),
+        "an unstarted root accepts a declaration"
+    );
+}
+
+fn check_dependency_remove() {
+    let mut world = waiting_dependency_world();
+    world.nodes[0].phase = kani::any();
+    let retained = Dependency {
+        target: DependencyTarget {
+            number: 2762,
+            ..world.dependencies[0].target
+        },
+        status: if kani::any() {
+            DependencyStatus::Abandoned
+        } else {
+            DependencyStatus::Delivered
+        },
+        ..world.dependencies[0]
+    };
+    world.dependencies.push(retained);
+    kani::assume(world.consistent());
+    let phase = world.nodes[0].phase;
+    let target = world.dependencies[0].target;
+    apply(
+        &mut world,
+        fact(Fact::DependencyRemove {
+            kind: target.kind,
+            number: target.number,
+        }),
+        &mut Outbox::new(),
+        &mut Report::new(),
+    );
+    assert_eq!(
+        world.dependencies.len(),
+        if phase == Phase::Ingesting { 1 } else { 2 }
+    );
+    assert_eq!(
+        *world.dependencies.last().unwrap(),
+        retained,
+        "retained prerequisites keep their terminal outcome and identity"
+    );
+    require_consistent(&world);
+    kani::cover!(
+        world.dependencies.len() == 1,
+        "re-ingest removes a changed declaration"
+    );
+    kani::cover!(
+        world.dependencies.len() == 2,
+        "other phases preserve declarations"
+    );
+    kani::cover!(
+        retained.status == DependencyStatus::Abandoned,
+        "abandoned never reverts during re-ingest"
+    );
+}
+
+fn ack(ack: Ack) -> Event {
+    Event::Ack {
+        node: NodeId(0),
+        seq: kani::any(),
+        ack,
+    }
+}
+
+fn fact(fact: Fact) -> Event {
+    if let Fact::PushByOther { head } = fact {
+        kani::assume(head.0 < 8);
+    }
+    Event::Fact {
+        node: NodeId(0),
+        fact,
+    }
+}
+
+fn command(command: Command) -> Event {
+    Event::Command {
+        node: NodeId(0),
+        id: kani::any(),
+        command,
+    }
+}
+
+fn answer(answer: Answer) -> Event {
+    command(Command::Answer {
+        question: kani::any(),
+        answer,
+    })
+}
+
+fn adoption_preparation() -> World {
+    let w = any_world(Some(Phase::Making));
+    let n = &w.nodes[0];
+    kani::assume(n.pos == 0 && n.proposed.is_some());
+    kani::assume(
+        n.effect
+            .is_some_and(|e| e.kind == EffectKind::PrepareWorktree && !e.cancelling),
+    );
+    w
+}
+
+fn check_adoption_at_most_once() {
+    let mut w = adoption_preparation();
+    let before = w.nodes[0];
+    let mut out = Outbox::new();
+    on_ack(
+        &mut w,
+        0,
+        before.effect.unwrap().seq,
+        Ack::Confirmed,
+        &mut out,
+    );
+    let after = w.nodes[0];
+    if before.adopted {
+        kani::cover!(true, "a later prepare preserves the existing head");
+        assert!(after.adopted && after.head == before.head);
+        assert!(after.phase == Phase::Making);
+    } else {
+        kani::cover!(true, "the first prepare adopts the proposed head");
+        assert!(after.adopted && after.head == before.proposed);
+        assert!(after.phase == Phase::Checking);
+    }
+    require_consistent(&w);
+}
+
+fn check_adoption_has_no_maker_credit() {
+    let mut w = adoption_preparation();
+    kani::assume(!w.nodes[0].adopted);
+    let before = w.nodes[0];
+    let mut out = Outbox::new();
+    on_ack(
+        &mut w,
+        0,
+        before.effect.unwrap().seq,
+        Ack::Confirmed,
+        &mut out,
+    );
+    let after = w.nodes[0];
+    kani::cover!(after.phase == Phase::Checking, "adoption reaches checking");
+    assert!(after.phase == Phase::Checking);
+    assert!(after.credit == before.credit);
+    assert!(after.attempt == before.attempt && after.round == before.round);
+    assert!(after.run.is_none() && !after.pool && out.is_empty());
+    require_consistent(&w);
+}
+
+fn gate_world(width: u8) -> World {
+    gate_world_in_phase(width, None)
+}
+
+fn gate_world_in_phase(width: u8, first: Option<Phase>) -> World {
+    gate_world_with_waiters(width, first, false)
+}
+
+fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) -> World {
+    let mut w = World::new(&[width], 4);
+    w.next_ticket = 8;
+    for i in 0..4 {
+        let mut n = Node::new(RepoId(0));
+        n.credit.ready = true;
+        n.credit.start = 4;
+        n.attempt = 1;
+        let files: u64 = kani::any();
+        kani::assume(files > 0 && files < 16);
+        n.footprint = Footprint::inline(files);
+        n.paused = !waiting_only && kani::any();
+        let phase: u8 = kani::any();
+        kani::assume(phase < if waiting_only { 2 } else { 4 });
+        n.phase = match phase {
+            0 => Phase::Ready(Resume::Making),
+            1 if waiting_only => Phase::Unplanned,
+            1 => Phase::Rebasing,
+            2 => Phase::Making,
+            _ => Phase::Unplanned,
+        };
+        if i == 0
+            && let Some(first) = first
+        {
+            n.phase = first;
+        }
+        if n.phase == Phase::Rebasing {
+            n.holds = true;
+            n.pos = 1;
+            n.run = Some(n.generation);
+            n.head = Some(HeadId(1));
+            n.checked = n.head;
+            n.approved = n.head;
+            n.had_pr = true;
+            n.pr_open = true;
+            n.worktree = true;
+        } else if n.phase == Phase::Making {
+            n.holds = true;
+            n.worktree = true;
+            n.pos = 2;
+            n.run = Some(n.generation);
+            n.pool = true;
+        } else if matches!(n.phase, Phase::Ready(_)) {
+            n.ticket = kani::any();
+        }
+        w.nodes.push(n);
+    }
+    kani::assume(w.consistent());
+    w
+}
+
+fn check_gate_grant(width: u8) {
+    let before = gate_world(width);
+    kani::assume(matches!(before.nodes[0].phase, Phase::Ready(_)));
+    let n = before.nodes[0];
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
+    require_consistent(&after);
+    let holders = before.nodes.iter().filter(|n| n.holds).count();
+    kani::cover!(
+        after.nodes[0].holds && holders == usize::from(width - 1),
+        "last available slot granted"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && !slot_free(&before, 0),
+        "full gate or overlapping footprint blocks"
+    );
+    kani::cover!(
+        n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0),
+        "older ticket keeps its place"
+    );
+    let mut older_blocked = false;
+    for j in 1..before.nodes.len() {
+        let other = before.nodes[j];
+        if matches!(other.phase, Phase::Ready(_)) && !other.paused {
+            if let (Some(theirs), Some(mine)) = (other.ticket, n.ticket) {
+                if theirs < mine {
+                    older_blocked |= !slot_free(&before, j);
+                    let runnable = slot_free(&before, j) && first_in_line(&before, j);
+                    if runnable || !before.footprints_disjoint(other.footprint, n.footprint) {
+                        assert!(
+                            !after.nodes[0].holds,
+                            "a runnable or overlapping older ticket prevents this grant"
+                        );
+                    }
+                    if after.nodes[0].holds {
+                        assert!(!runnable);
+                        assert!(before.footprints_disjoint(other.footprint, n.footprint));
+                    }
+                }
+            }
+        }
+    }
+    kani::cover!(
+        after.nodes[0].holds && older_blocked,
+        "a truly disjoint younger leaf passes a file-blocked older waiter"
+    );
+    kani::cover!(
+        n.ticket.is_some()
+            && !n.paused
+            && slot_free(&before, 0)
+            && before.nodes.iter().enumerate().any(|(j, older)| {
+                j != 0
+                    && matches!(older.phase, Phase::Ready(_))
+                    && older
+                        .ticket
+                        .is_some_and(|theirs| theirs < n.ticket.unwrap())
+                    && !slot_free(&before, j)
+                    && !before.footprints_disjoint(older.footprint, n.footprint)
+            })
+            && !after.nodes[0].holds,
+        "a file-blocked older waiter prevents a younger leaf taking another needed file"
+    );
+    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
+    if after.nodes[0].holds {
+        assert!(slot_free(&before, 0) && first_in_line(&before, 0) && !n.paused);
+        assert!(after.nodes[0].ticket.is_none());
+    } else {
+        assert!(!after.nodes[0].pool);
+        if n.ticket.is_some() && !n.paused {
+            assert_eq!(after.nodes[0].ticket, n.ticket);
+        }
+    }
+    if changed {
+        assert!(after.nodes[0].settle_rank() < n.settle_rank());
+    }
+    check_nodes(&before, &after);
+    check_outputs(&before, &after, &out, None);
+}
+
+fn check_gate_planning(width: u8) {
+    let before = gate_world(width);
+    kani::assume(before.nodes[0].phase == Phase::Unplanned);
+    kani::assume(!before.nodes[0].paused);
+    let waiting = before
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.phase, Phase::Ready(_)) && n.ticket.is_some())
+        .count();
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
+    require_consistent(&after);
+    assert_eq!(changed, waiting < usize::from(width));
+    assert!(!after.nodes[0].holds && !after.nodes[0].pool);
+    kani::cover!(
+        waiting == usize::from(width) && !changed,
+        "W waiters block planning"
+    );
+    kani::cover!(
+        waiting == usize::from(width - 1) && changed,
+        "fewer than W waiters admit planning"
+    );
+    if changed {
+        assert!(after.nodes[0].settle_rank() < before.nodes[0].settle_rank());
+    }
+}
+
+fn publishing_ci_transition(infra: bool) -> (World, World) {
+    let before = any_settled_world(Some(Phase::Publishing));
+    let b = &before.nodes[0];
+    kani::assume(b.current() == Some(Item::Do(EffectKind::Enqueue)));
+    kani::assume(!b.waiting_incident);
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    apply(
+        &mut after,
+        fact(Fact::CiFailed { infra }),
+        &mut out,
+        &mut Report::new(),
+    );
+    let n = &after.nodes[0];
+    require_consistent(&after);
+    check_nodes(&before, &after);
+    check_outputs(&before, &after, &out, None);
+    assert_eq!(after.nodes[1], before.nodes[1]);
+    if let Some(effect) = b.effect {
+        assert!(
+            n.effect
+                .is_some_and(|current| current.seq == effect.seq && current.cancelling)
+        );
+    }
+    (before, after)
+}
+
+fn check_publishing_ci_tests() {
+    let (before, after) = publishing_ci_transition(false);
+    let b = &before.nodes[0];
+    let n = &after.nodes[0];
+    assert_ne!(n.phase, Phase::Publishing);
+    if b.round == 0 {
+        assert_eq!(n.round, 1);
+        assert_eq!(n.attempt, b.attempt);
+        assert_eq!(n.credit, b.credit);
+    } else if before.fail_fast {
+        assert_eq!(n.credit, b.credit);
+        assert_eq!(n.review_stop, Some(ReviewStop::CiFailed));
+    } else if b.attempt < 3 {
+        assert_eq!(n.attempt, b.attempt + 1);
+        assert_eq!(n.round, 0);
+        assert_eq!(
+            n.credit.spent,
+            b.credit.spent + u64::from(b.credit.can_spend(1))
+        );
+    } else if !b.replanned {
+        assert!(n.replanned);
+        assert_eq!(
+            n.credit.spent,
+            b.credit.spent + u64::from(b.credit.can_spend(1))
+        );
+    } else {
+        assert_eq!(n.credit, b.credit);
+        assert_eq!(n.phase, Phase::AwaitingRob);
+    }
+    assert!(
+        n.round != b.round
+            || n.credit.spent > b.credit.spent
+            || n.question.is_some()
+            || n.review_stop.is_some()
+    );
+    kani::cover!(
+        before.fail_fast
+            && b.round == 1
+            && b.review_stop.is_none()
+            && n.review_stop == Some(ReviewStop::CiFailed),
+        "fail_fast stops for TL3 review"
+    );
+    kani::cover!(b.round == 0 && n.round == 1, "a free fix round");
+    kani::cover!(
+        b.round == 1 && n.credit.spent > b.credit.spent,
+        "a paid next attempt"
+    );
+    kani::cover!(
+        b.round == 1 && !b.credit.can_spend(1) && n.phase == Phase::AwaitingRob,
+        "exhausted credit asks Rob"
+    );
+    kani::cover!(b.effect.is_some(), "an enqueue is cancelled");
+}
+
+fn check_publishing_ci_earlier_step() {
+    let before = any_settled_world(Some(Phase::Publishing));
+    kani::assume(before.nodes[0].current() != Some(Item::Do(EffectKind::Enqueue)));
+    let mut after = before.clone();
+    apply(
+        &mut after,
+        fact(Fact::CiFailed { infra: kani::any() }),
+        &mut Outbox::new(),
+        &mut Report::new(),
+    );
+    assert_eq!(after, before);
+    kani::cover!(before.nodes[0].pos == 0, "a failure before push is ignored");
+}
+
+fn check_gate_leaf_progress(width: u8) {
+    let mut w = gate_world_in_phase(width, Some(Phase::Ready(Resume::Making)));
+    kani::assume(w.nodes.iter().all(|n| !n.paused));
+    kani::assume(w.nodes[1].phase == Phase::Rebasing);
+    kani::assume(!w.footprints_disjoint(w.nodes[0].footprint, w.nodes[1].footprint));
+    kani::assume(w.nodes[0].ticket.is_some());
+    let ticket = w.nodes[0].ticket.unwrap();
+    for i in 2..4 {
+        kani::assume(matches!(
+            w.nodes[i].phase,
+            Phase::Rebasing | Phase::Ready(_)
+        ));
+        if w.nodes[i].holds {
+            kani::assume(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
+        } else {
+            kani::assume(w.nodes[i].ticket.is_some_and(|theirs| theirs > ticket));
+        }
+    }
+    let full = w.nodes.iter().filter(|n| n.holds).count() == usize::from(width);
+    let chained_waiter = matches!(w.nodes[2].phase, Phase::Ready(_))
+        && matches!(w.nodes[3].phase, Phase::Ready(_))
+        && slot_free(&w, 2)
+        && w.nodes[2].ticket < w.nodes[3].ticket
+        && !w.footprints_disjoint(w.nodes[0].footprint, w.nodes[2].footprint)
+        && w.footprints_disjoint(w.nodes[0].footprint, w.nodes[3].footprint)
+        && w.footprints_disjoint(w.nodes[2].footprint, w.nodes[3].footprint);
+    let mut passed = false;
+    let mut passed_chain = false;
+    for i in 2..4 {
+        let held = w.nodes[i].holds;
+        advance(&mut w, i, &mut Outbox::new(), &mut Report::new());
+        if !held && w.nodes[i].holds {
+            passed = true;
+            passed_chain |= i == 3 && chained_waiter;
+            assert!(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
+        }
+    }
+    assert_eq!(w.nodes[0].ticket, Some(ticket));
+    // Successful teardown of the last conflicting holder, through real paths.
+    on_command(&mut w, 1, 1, Command::Stop, &mut Outbox::new());
+    for _ in 0..5 {
+        advance(&mut w, 1, &mut Outbox::new(), &mut Report::new());
+        if let Some(effect) = w.nodes[1].effect {
+            on_ack(&mut w, 1, effect.seq, Ack::Confirmed, &mut Outbox::new());
+        }
+    }
+    advance(&mut w, 1, &mut Outbox::new(), &mut Report::new());
+    assert!(w.nodes[1].phase.is_closed());
+    assert!(slot_free(&w, 0));
+    // Visit younger leaves first: none can take the newly free slot or files.
+    for i in 2..4 {
+        let held = w.nodes[i].holds;
+        advance(&mut w, i, &mut Outbox::new(), &mut Report::new());
+        assert_eq!(w.nodes[i].holds, held);
+    }
+    advance(&mut w, 0, &mut Outbox::new(), &mut Report::new());
+    assert!(w.nodes[0].holds && w.nodes[0].ticket.is_none());
+    require_consistent(&w);
+    kani::cover!(
+        full && w.nodes[0].holds,
+        "an oldest waiter progresses from a full gate when its last blocker completes"
+    );
+    kani::cover!(
+        passed && w.nodes[0].holds,
+        "an older leaf progresses while a disjoint overtaker remains active"
+    );
+    kani::cover!(
+        passed_chain && w.nodes[0].holds,
+        "passes a waiter blocked by an older overlapping waiter"
+    );
+}
+
+fn spec_key(priority: Priority, ticket: u64) -> (u64, u64) {
+    let level = match priority {
+        Priority::P0 => 0,
+        Priority::P1 => 1,
+        Priority::P2 => 2,
+        Priority::P3 => 3,
+        Priority::Unranked => 4,
+    };
+    (level, ticket)
+}
+
+fn pool_world() -> World {
+    let mut w = World::new(&[3], kani::any());
+    kani::assume(w.pool_capacity <= 1);
+    w.next_ticket = kani::any();
+    kani::assume(w.next_ticket <= 64);
+    for _ in 0..3 {
+        let mut n = Node::new(RepoId(0));
+        n.ticket = kani::any();
+        n.priority = kani::any();
+        w.nodes.push(n);
+    }
+    kani::assume(w.consistent());
+    w
+}
+
+fn check_pool_grant_order() {
+    let before = pool_world();
+    let n = before.nodes[0];
+    kani::assume(n.ticket.is_some());
+    let mut after = before.clone();
+    let mut out = Outbox::new();
+    advance(&mut after, 0, &mut out, &mut Report::new());
+    require_consistent(&after);
+    let mine = spec_key(n.priority, n.ticket.unwrap());
+    let first = before.nodes[1..]
+        .iter()
+        .all(|m| m.ticket.is_none_or(|t| mine < spec_key(m.priority, t)));
+    if after.nodes[0].pool {
+        assert!(
+            first,
+            "a grant goes to the best priority, then the older ticket"
+        );
+        assert!(after.nodes[0].ticket.is_none());
+    } else if before.pool_capacity == 1 {
+        assert!(!first, "the free pool goes to the first waiter in line");
+    }
+    kani::cover!(
+        after.nodes[0].pool
+            && before.nodes[1..]
+                .iter()
+                .any(|m| m.ticket.is_some_and(|t| t < mine.1)),
+        "a better priority passes an older ticket"
+    );
+    kani::cover!(
+        !after.nodes[0].pool && before.pool_capacity == 1,
+        "a better waiter keeps its place"
+    );
+    assert_eq!(&after.nodes[1..], &before.nodes[1..]);
+}
+
+fn check_pool_order_is_strict_priority() {
+    let mut a = Node::new(RepoId(0));
+    let mut b = Node::new(RepoId(0));
+    a.phase = Phase::Ingesting;
+    b.phase = Phase::Ingesting;
+    a.ticket = Some(kani::any());
+    b.ticket = Some(kani::any());
+    a.priority = kani::any();
+    b.priority = kani::any();
+    kani::assume(a.ticket != b.ticket);
+    let (ka, kb) = (pool_key(&a).unwrap(), pool_key(&b).unwrap());
+    // Priority first, whatever the tickets; the older ticket breaks a tie.
+    let expected = a.priority < b.priority || (a.priority == b.priority && a.ticket < b.ticket);
+    assert_eq!(
+        ka < kb,
+        expected,
+        "the pool line is strict priority, then ticket"
+    );
+    kani::cover!(
+        a.priority < b.priority && a.ticket > b.ticket,
+        "a better priority passes an older ticket"
+    );
+    kani::cover!(a.priority == b.priority, "a tie goes by ticket");
+}
+
+include!("api.rs");

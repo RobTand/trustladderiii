@@ -1,0 +1,327 @@
+{
+  "source_sha256": "046d7d68b1c3c51f889153ae9d7331f5231bbca282c7137fe89e5d3e45572bbd",
+  "root_source_sha256": "a8ad2d1e5eab9673f2dbc6c22f95a0bcfa4f5e04d4b9a52e3722450d283e1c5e",
+  "test_scope_sha256": "6d88bc0b134581626237981f77b77b25500cfbdf9f451a464a794071ecf44491",
+  "functions": [
+    {
+      "function": "small_head",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 32,
+      "source_sha256": "db79a9e250eb306524ab77707b839f45b38892849612bb966fb312c3f82bfae6",
+      "copy_sha256": "db79a9e250eb306524ab77707b839f45b38892849612bb966fb312c3f82bfae6",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "small",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 36,
+      "source_sha256": "1894595d1e02de91abfd9da1d7c8726396634b1aa98923a77e62eea811c79289",
+      "copy_sha256": "1894595d1e02de91abfd9da1d7c8726396634b1aa98923a77e62eea811c79289",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "require_consistent",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 103,
+      "source_sha256": "5156060ab8552ef8c6bd7b5b83f6a426abc5b2da34ed4b17857f1417cfa25d73",
+      "copy_sha256": "5156060ab8552ef8c6bd7b5b83f6a426abc5b2da34ed4b17857f1417cfa25d73",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "teardown",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 128,
+      "source_sha256": "e8b152211faccdeab0fda4e72be8c93e774355a96a714f44bb61b02eb6fb6958",
+      "copy_sha256": "e8b152211faccdeab0fda4e72be8c93e774355a96a714f44bb61b02eb6fb6958",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_nodes",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 139,
+      "source_sha256": "8684ace98cb7858dc7234e9c5a65bc496cbfc45f7a609113023753386ad6000b",
+      "copy_sha256": "8684ace98cb7858dc7234e9c5a65bc496cbfc45f7a609113023753386ad6000b",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_outputs",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 165,
+      "source_sha256": "316b49c072fdd01d4365a54f3b9203161ce0603d371f093de0572c3eba7b8a89",
+      "copy_sha256": "316b49c072fdd01d4365a54f3b9203161ce0603d371f093de0572c3eba7b8a89",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_effect",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 197,
+      "source_sha256": "3e04f9d9df932440d473ddb4bbe65434575246b569672601fa09ad89a33858fb",
+      "copy_sha256": "3e04f9d9df932440d473ddb4bbe65434575246b569672601fa09ad89a33858fb",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "rebase_progress_applies",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 220,
+      "source_sha256": "a4dbac2b9a1b3262239fd48c283be89839c788d7058d9e4c29940dc83d7f9470",
+      "copy_sha256": "a4dbac2b9a1b3262239fd48c283be89839c788d7058d9e4c29940dc83d7f9470",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_apply",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 227,
+      "source_sha256": "af94a1c17ed04add5b5fdd80dc74c7aa16ba1a991f19dba228c8224cf4a9e603",
+      "copy_sha256": "af94a1c17ed04add5b5fdd80dc74c7aa16ba1a991f19dba228c8224cf4a9e603",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_fail_fast",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 387,
+      "source_sha256": "e8df29bbb43c772d0b380a1549c03fce13082955492235b165e9502747eb827f",
+      "copy_sha256": "e8df29bbb43c772d0b380a1549c03fce13082955492235b165e9502747eb827f",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_fail_fast_funding",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 483,
+      "source_sha256": "4e1ce1513c839b68d395a5b9b9fdfc4a0e10d9f72f34834ef03c6dead8aa6846",
+      "copy_sha256": "4e1ce1513c839b68d395a5b9b9fdfc4a0e10d9f72f34834ef03c6dead8aa6846",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_fail_fast_diverts",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 514,
+      "source_sha256": "07e5bcf4ce2d40f448ee25ad138e7f7f7ce6a894abff62cd16d102959a9f9beb",
+      "copy_sha256": "07e5bcf4ce2d40f448ee25ad138e7f7f7ce6a894abff62cd16d102959a9f9beb",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_advance",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 559,
+      "source_sha256": "9ef0108efd23847dbd709af41d6244c2dd0d2d87b47a5d92282506b8f7a730de",
+      "copy_sha256": "9ef0108efd23847dbd709af41d6244c2dd0d2d87b47a5d92282506b8f7a730de",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "reply",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 580,
+      "source_sha256": "e294a89ea860fca1e495916ac5d3df9b03e0987d28e9ee9942ecca46e52d9830",
+      "copy_sha256": "e294a89ea860fca1e495916ac5d3df9b03e0987d28e9ee9942ecca46e52d9830",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "waiting_dependency_world",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 597,
+      "source_sha256": "218dd90a4c4e8fc0373467dde99e63330770b94ba046af364cf6e8f1b8604ae9",
+      "copy_sha256": "218dd90a4c4e8fc0373467dde99e63330770b94ba046af364cf6e8f1b8604ae9",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_dependency_delivery",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 619,
+      "source_sha256": "108bd50e1cf07ec2105faba206d9874c3240c3c2f5292b637f742255e7ff7ece",
+      "copy_sha256": "108bd50e1cf07ec2105faba206d9874c3240c3c2f5292b637f742255e7ff7ece",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_dependency_waiting",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 641,
+      "source_sha256": "213c6968d13c59e9b2692d5abc0a7c3100035d7d63b5de3b2d547acc495e3baa",
+      "copy_sha256": "213c6968d13c59e9b2692d5abc0a7c3100035d7d63b5de3b2d547acc495e3baa",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_dependency_cycles",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 655,
+      "source_sha256": "85e228381c9a8975944b992be5b8d36c08435266557a50ec52d8ba04ff6d4c08",
+      "copy_sha256": "85e228381c9a8975944b992be5b8d36c08435266557a50ec52d8ba04ff6d4c08",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_dependency_registration",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 711,
+      "source_sha256": "e563e86dc634aef4eefa09a647e9282c879e64b22bbc6f6d72b7a3ffdb5b5ad6",
+      "copy_sha256": "e563e86dc634aef4eefa09a647e9282c879e64b22bbc6f6d72b7a3ffdb5b5ad6",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_dependency_remove",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 746,
+      "source_sha256": "d8138d7ef1f931488514df5e63007912f804013e69c1b1a5cef2f086d969f08b",
+      "copy_sha256": "d8138d7ef1f931488514df5e63007912f804013e69c1b1a5cef2f086d969f08b",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "ack",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 798,
+      "source_sha256": "63b2ba783cf90ed3f6a744ade07f2ccef7b48307c57ac2b2594b2d818fcebc22",
+      "copy_sha256": "63b2ba783cf90ed3f6a744ade07f2ccef7b48307c57ac2b2594b2d818fcebc22",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "fact",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 806,
+      "source_sha256": "375451c3d726dd174ba39d0eeb58fda37fe618f947dc43aa144584dcc29f0fdb",
+      "copy_sha256": "375451c3d726dd174ba39d0eeb58fda37fe618f947dc43aa144584dcc29f0fdb",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "command",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 816,
+      "source_sha256": "268d78b592b54399269412805de6e2330453d168dc37d3ce369977789d16ffd2",
+      "copy_sha256": "268d78b592b54399269412805de6e2330453d168dc37d3ce369977789d16ffd2",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "answer",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 824,
+      "source_sha256": "4f6d6a977ea0a312f5926cfb198799acb358c4146660af3a99d6f8be6bb97c97",
+      "copy_sha256": "4f6d6a977ea0a312f5926cfb198799acb358c4146660af3a99d6f8be6bb97c97",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "adoption_preparation",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1138,
+      "source_sha256": "463beec1f6267b4a9f6afc482660c387582ef51348c19cf8554e2f943b8d8de8",
+      "copy_sha256": "463beec1f6267b4a9f6afc482660c387582ef51348c19cf8554e2f943b8d8de8",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_adoption_at_most_once",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1149,
+      "source_sha256": "1dc5254f05d44329f7f85ffcbfe43ad14ead555908884a37ecf167485c3a8dff",
+      "copy_sha256": "1dc5254f05d44329f7f85ffcbfe43ad14ead555908884a37ecf167485c3a8dff",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_adoption_has_no_maker_credit",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1173,
+      "source_sha256": "82b8a4ce3b8f3d25bcd59af72a40ec64193ad6cf9ef3504a9e724e3679e05d44",
+      "copy_sha256": "82b8a4ce3b8f3d25bcd59af72a40ec64193ad6cf9ef3504a9e724e3679e05d44",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "gate_world",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1202,
+      "source_sha256": "fd6a84e43df39ce5029334aec3ea3310ccd88d46bf1145f786d51fe4adaa2556",
+      "copy_sha256": "fd6a84e43df39ce5029334aec3ea3310ccd88d46bf1145f786d51fe4adaa2556",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "gate_world_in_phase",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1206,
+      "source_sha256": "b7ae266cf06eb1d68e5094251eb0483d8c64dca54aab1cdf181d9b4560ac021e",
+      "copy_sha256": "b7ae266cf06eb1d68e5094251eb0483d8c64dca54aab1cdf181d9b4560ac021e",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "gate_world_with_waiters",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1210,
+      "source_sha256": "476d31b28a328b6abb5603822338a38858480e50c22e18bf917ad0919c4a22e7",
+      "copy_sha256": "476d31b28a328b6abb5603822338a38858480e50c22e18bf917ad0919c4a22e7",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_gate_grant",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1261,
+      "source_sha256": "d31c630f3fa34bd185aa5c9919933b1d63269c85f753d54bafe6f8199b826e17",
+      "copy_sha256": "d31c630f3fa34bd185aa5c9919933b1d63269c85f753d54bafe6f8199b826e17",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_gate_planning",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1341,
+      "source_sha256": "25d168f0f668260e86231a0aca8c44549299d7ce4d04f6b82cfa7888856b195a",
+      "copy_sha256": "25d168f0f668260e86231a0aca8c44549299d7ce4d04f6b82cfa7888856b195a",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "publishing_ci_transition",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1390,
+      "source_sha256": "228fe1a5812f47506bbe756ec9edc0f70418ad2d3de2a4ac07c8e75761af354a",
+      "copy_sha256": "228fe1a5812f47506bbe756ec9edc0f70418ad2d3de2a4ac07c8e75761af354a",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_publishing_ci_tests",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1417,
+      "source_sha256": "8161dca45b5c451c8a5244ca4f989286405e1dc0e8de4315873fa4f30edd9815",
+      "copy_sha256": "8161dca45b5c451c8a5244ca4f989286405e1dc0e8de4315873fa4f30edd9815",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_publishing_ci_earlier_step",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1534,
+      "source_sha256": "d9b6ac50f8b0f6d756105f6745730365f19432d817a89b359b29d7b3a3f52e3f",
+      "copy_sha256": "d9b6ac50f8b0f6d756105f6745730365f19432d817a89b359b29d7b3a3f52e3f",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_gate_leaf_progress",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1554,
+      "source_sha256": "8075485f106e233cfa67e9ce1aa08a3ceb8f2e865b7e36eeaf2dc2be5ec268c0",
+      "copy_sha256": "8075485f106e233cfa67e9ce1aa08a3ceb8f2e865b7e36eeaf2dc2be5ec268c0",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "spec_key",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1631,
+      "source_sha256": "67a1470565873f6874dc74ae5f4c356dcc710688b43440a27f21d839963bb785",
+      "copy_sha256": "67a1470565873f6874dc74ae5f4c356dcc710688b43440a27f21d839963bb785",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "pool_world",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1644,
+      "source_sha256": "9275f56befb4052d9ff004e526caca9d3e40eddf9e8169112889dd8c749bef11",
+      "copy_sha256": "9275f56befb4052d9ff004e526caca9d3e40eddf9e8169112889dd8c749bef11",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_pool_grant_order",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1659,
+      "source_sha256": "bc71bddac5a3d3c9a641fd2add6e8041b8d521934fbe7a68afb0cf6d8d968e3f",
+      "copy_sha256": "bc71bddac5a3d3c9a641fd2add6e8041b8d521934fbe7a68afb0cf6d8d968e3f",
+      "status": "BYTE_IDENTICAL"
+    },
+    {
+      "function": "check_pool_order_is_strict_priority",
+      "source": "crates/kernel/src/proofs.rs",
+      "line": 1694,
+      "source_sha256": "56c6ce30f94f53426fffcdcf929cf8f7d6d5435bc6dff814713a0c94f0cb5e40",
+      "copy_sha256": "56c6ce30f94f53426fffcdcf929cf8f7d6d5435bc6dff814713a0c94f0cb5e40",
+      "status": "BYTE_IDENTICAL"
+    }
+  ]
+}

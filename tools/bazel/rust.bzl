@@ -448,6 +448,8 @@ def _crate_test(kind, package, name, source, harness, options):
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
         if native.package_name() == "crates/kernel" and source == "tests/obligation_map.rs":
             sources = sources + ["tests/transition_covers.rs", "tests/fail_fast.rs", "tests/scenarios.rs", "tests/step_report.rs", "tests/dependency_safety.rs"]
+        if native.package_name() == "crates/kernel" and source.startswith("tests/kani_"):
+            sources = sources + native.glob(["tests/kani_scenarios/**/*.rs", "tests/mark_handled_equivalence/*.rs"])
         if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":
             sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
@@ -457,6 +459,8 @@ def _crate_test(kind, package, name, source, harness, options):
     compile_data = options["compile_data"]
     if source in ["tests/proof_map.rs", "tests/obligation_map.rs"] and native.package_name() == "crates/kernel":
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
+    if native.package_name() == "crates/kernel" and source.startswith("tests/kani_"):
+        compile_data = compile_data + native.glob(["tests/kani_scenarios/**/*.txt", "tests/kani_scenarios/**/*.json"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
