@@ -3487,8 +3487,15 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
         Duration::from_secs(5),
         || f.root.path().join("query-started").exists(),
     );
+    // Reproduce slow terminal preparation after the bounded native read has begun.
+    std::thread::sleep(Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS + 1));
     f.report(ReportOutcome::Passed, true);
-    f.attach();
+    let attached = f.attach();
+    assert_eq!(
+        attached.last().unwrap()["result"]["observation"]["kind"],
+        "terminal",
+        "{attached:?}"
+    );
     fs::write(f.root.path().join("query-release"), "release").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
@@ -3499,7 +3506,8 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
         .collect();
     assert_eq!(
         terminal.last().unwrap()["result"]["liveness"]["phase"],
-        "terminal"
+        "terminal",
+        "{terminal:?}"
     );
     assert_eq!(
         terminal.last().unwrap()["result"]["liveness"]["authority"],
