@@ -515,7 +515,7 @@ pub(super) fn reply_files_paid(n: Node, union: Footprint) -> (result: ReplyChang
         node: reply_family_values::files_paid(n, union), note: None }),
 ] {
     let mut node = n;
-    let footprint = union;
+    let footprint = n.footprint;
     node.credit = spend_v(node.credit, 1);
     node.footprint = footprint;
     node.holds = false;
