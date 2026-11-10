@@ -4,7 +4,6 @@ use super::*;
 verus! {
 pub(super) proof fn waiting_owner_ok(w: World, i: int)
     requires dependencies::rules_ok(w), 0 <= i < w.nodes@.len(),
-        !dependencies::prerequisites_delivered(w, NodeId(i as u64)),
     ensures dependencies::owner_waiting_ok(w.nodes@[i]),
 {
     vstd::std_specs::vec::axiom_spec_len(&w.nodes);
