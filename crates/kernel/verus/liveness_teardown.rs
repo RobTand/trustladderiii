@@ -45,6 +45,8 @@ pub(super) fn round(w: &mut World, Ghost(k): Ghost<int>)
     proof {
         reveal(context); reveal(clean);
         liveness_bounds::reserves(*w, k, 1);
+        // v2.48: E11.3's staged node_rules(old, b) premise.
+        checking::accepted_node(*w, 1);
     }
     let mut out = Outbox::new();
     let mut report = Report::new();

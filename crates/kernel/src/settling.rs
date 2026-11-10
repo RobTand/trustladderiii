@@ -117,10 +117,11 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, trace: Option<&mut Vec<W
         forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
         result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
     (checking::accepted(*old(w)) && old(w).gates@.len() <= u64::MAX) ==> checking::accepted(*final(w)),
-    forall|i: int| 0 <= i < final(w).nodes@.len()
+    // v2.48 (lead's premise sweep, STAGED pending lead ruling): E6.2 / E6.3 stated from an accepted world only.
+    checking::accepted(*old(w)) ==> forall|i: int| 0 <= i < final(w).nodes@.len()
         && advance_family_post::ready_unobstructed(#[trigger] final(w).nodes@[i]) && oldest_waiter(*final(w), i)
         ==> !scheduler::slot_spec(*final(w), i),
-    forall|i: int| 0 <= i < old(w).nodes@.len()
+    checking::accepted(*old(w)) ==> forall|i: int| 0 <= i < old(w).nodes@.len()
         && advance_family_post::ready_unobstructed(#[trigger] old(w).nodes@[i])
         && old(w).nodes@[i].phase == Phase::Ready(Resume::Making)
         ==> (final(w).nodes@[i].phase == old(w).nodes@[i].phase

@@ -151,7 +151,8 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         on_ack_post(*old(w), *final(w), i as int, seq, ack, *old(out), *final(out)),
     // E11.2 REQ R27: confirming an action a stop cancelled only clears it.
-    (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false }))
+    // v2.48 (lead's premise sweep, STAGED pending lead ruling): E11.2 rows [R27, R25, v2.7 framing] gain node_rules(old, b).
+    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false }))
         ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos
             && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
             && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question
@@ -159,7 +160,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
             && final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
             && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
     // E11.2 REQ R25: confirming a teardown step releases exactly its resource and moves teardown on.
-    (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect {
+    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect {
         Some(e) => e.seq == seq && !e.cancelling && transition_safety::teardown_kind(e.kind)
             && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)),
         None => false,
@@ -175,7 +176,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
             && final(w).nodes@[i as int].pr_open == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::ClosePr { false } else { old(w).nodes@[i as int].pr_open })
             && final(w).nodes@[i as int].worktree == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::RemoveWorktree { false } else { old(w).nodes@[i as int].worktree }),
     // E11.2 framing (v2.7): both matching Confirmed cases keep ticket, generation and next_question.
-    (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
+    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
         Some(e) => e.seq == seq && (e.cancelling || (old(w).nodes@[i as int].phase is Stopping && transition_safety::teardown_kind(e.kind)
             && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))),
         None => false,

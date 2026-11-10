@@ -39,7 +39,8 @@ pub(super) fn finish(w: &mut World, Ghost(k): Ghost<int>)
         final(w).gates@ == old(w).gates@, final(w).file_sets@ == old(w).file_sets@,
 {
     let ghost before = *w;
-    proof { reveal(context); reveal(clean); liveness_bounds::reserves(*w, k, 1); }
+    proof { reveal(context); reveal(clean); liveness_bounds::reserves(*w, k, 1);
+        checking::accepted_node(*w, 1); } // v2.48: E11.3's staged node_rules(old, b) premise
     let mut out = Outbox::new();
     let mut report = Report::new();
     let moved = scheduler::advance(w, 1, &mut out, &mut report);
