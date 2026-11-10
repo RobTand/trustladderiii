@@ -1128,7 +1128,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
-        *old(next_ticket) <= *final(next_ticket),
+        *old(next_ticket) < *final(next_ticket),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
