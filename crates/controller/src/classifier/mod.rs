@@ -214,7 +214,7 @@ mod diagnostic_tests {
                 Answer::Other,
             ] {
                 for bits in 0u16..4096 {
-                    let flag = |bit| bits & (1 << bit) != 0;
+                    let flag = |bit| bits & (1u16 << bit) != 0;
                     let c = Classification {
                         kind,
                         answer,
