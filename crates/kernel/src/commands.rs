@@ -336,28 +336,26 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
                 }),
             _ => true,
         }),
+        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
+        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
+        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
+        old(w).next_question <= final(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> handler_safety::node_rules_v(final(w).nodes@[i as int], final(w).next_question)),
 ] {
-    kernel_snapshot! { before_command_node = w.nodes@[i as int] }
     kernel_snapshot! { before_command_world = *w }
-    w.nodes[i].last_cmd = id;
-    kernel_snapshot! { after_id = w.nodes@[i as int] }
-    kernel_proof! {
-        if node_checked(before_command_world@, before_command_node@) {
-            footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
-            assert(node_checked(*w, w.nodes@[i as int]));
-            if command_progress_input(before_command_node@, Command::Answer { question, answer }) {
-                assert(answer_progress_input(w.nodes@[i as int], question, answer));
-                assert(distance(after_id@) == distance(before_command_node@)) by { reveal(distance); }
-            }
-        }
-    }
     on_answer(w, i, question, answer, out);
+    kernel_snapshot! { after_answer = *w }
+    let mut m = w.nodes[i];
+    m.last_cmd = id;
+    w.nodes[i] = m;
     kernel_proof! {
-        reveal(progress_gate_apply::resume_post);
-    }
-    kernel_proof! {
-        handler_safety::answer_pair_rebase(before_command_node@, after_id@, w.nodes@[i as int],
-            id > before_command_node@.last_cmd, question, answer, w.dependencies@, NodeId(i as u64));
+        apply_command_safety::other_resume_post(before_command_world@.nodes@[i as int], w.nodes@[i as int],
+            id, Command::Answer { question, answer });
+        handler_safety::distance_last_cmd(after_answer@.nodes@[i as int], id);
+        apply_command_safety::answer_pair_after(before_command_world@.nodes@[i as int],
+            after_answer@.nodes@[i as int], id, question, answer, w.dependencies@, NodeId(i as u64));
+        apply_command_safety::answer_after_rules(after_answer@, *w, after_answer@.nodes@[i as int], id);
     }
 }
 }

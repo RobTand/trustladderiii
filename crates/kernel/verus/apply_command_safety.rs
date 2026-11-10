@@ -913,16 +913,54 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 
 
 
-/// Cheaper form (kernel master 11-10): answer_command exports L1's contract only. Consumers get the
-/// table frame (N5 `nodes@ == old.nodes@.update(i, n)`) from answer_command's length and
-/// other-node frame clauses through this one lemma (form rule 3).
+/// Reorder design (kernel master 11-10): the consumers' frame lemma for answer_command. Premises are
+/// answer_command's own clauses over (before, after); conclusions are the table frame and the
+/// world-level node rules (lifted from answer_command's node_rules_v post).
 pub(super) proof fn answer_frame(before: World, after: World, i: usize)
     requires i < before.nodes@.len(),
         after.nodes@.len() == before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
+        after.gates@ == before.gates@,
+        after.file_sets@ == before.file_sets@,
+        after.next_ticket == before.next_ticket,
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> handler_safety::node_rules_v(after.nodes@[i as int], after.next_question),
     ensures after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int]),
 {
     assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
+    if retirement::node_rules(before, before.nodes@[i as int]) {
+        handler_safety::rules_world_update(before, after, before.nodes@[i as int], after.nodes@[i as int]);
+    }
+}
+
+/// Reorder design: answer_pair survives the last_cmd write after on_answer (command_step and the
+/// withheld rule do not read last_cmd). Conclusion over the literal written node; no node premise.
+pub(super) proof fn answer_pair_after(b: Node, a: Node, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::answer_pair(b, a, true, question, answer, table, node),
+        id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, (Node { last_cmd: id, ..a }), id > b.last_cmd, question, answer,
+        table, node),
+{
+    reveal(handler_safety::answer_pair);
+    reveal(handler_safety::command_step);
+}
+
+/// Reorder design: the node rules by value survive the last_cmd write (literal form, no node premise).
+pub(super) proof fn answer_after_rules(before: World, after: World, a: Node, id: u64)
+    requires after.next_question == before.next_question,
+    ensures retirement::node_rules(before, a)
+        ==> handler_safety::node_rules_v((Node { last_cmd: id, ..a }), after.next_question),
+{
+    if retirement::node_rules(before, a) {
+        handler_safety::rules_to_v(before, a);
+        handler_safety::last_cmd_rules_v(a, before.next_question, id);
+    }
 }
 
 }
