@@ -1,10 +1,15 @@
 {
-  "source_head": "c4c8b4770b121d206aa57f1b8a22a63e06f0a80b",
+  "source_head": "e092d64045447061dd6b0e0073f70fa91b327b24",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e865aacbce2fb92354f8ffb852f1d4e5d509758796a87a008db8463a0d6d89b8",
-  "groups": 539,
-  "obligations": 743,
+  "source_sha256": "197d30fb8eecd43d7297607bca583cbbc69fcef46ae9d8f83be31e244bf4f6ff",
+  "groups": 540,
+  "obligations": 744,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_checker_world_intern_footprint",
+      "selector": "kernel::footprint#World::intern_footprint",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_checker_world_new",
       "selector": "kernel#World::new",
