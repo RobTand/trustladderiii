@@ -531,7 +531,7 @@ pub(super) fn reply_files_ask(n: Node, union: Footprint) -> (result: ReplyChange
         kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }),
 ] {
     let mut node = n;
-    let footprint = union;
+    let footprint = n.footprint;
     node.footprint = footprint;
     let result = ReplyChange::Ask { node, kind: QKind::OutOfCredit,
         cont: Cont::Ready(Resume::Making), cost: 1, };
