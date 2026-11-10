@@ -6,7 +6,7 @@ kernel_fn! {
 /// passes changed something. Each internal transition moves a node along a
 /// finite chain, so the loop ends. Kani's unwinding check proves it within the
 /// bounds.
-pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>, report: &mut Report)
+pub(super) fn settle_proved(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut Vec<World>>, report: &mut Report)
     -> (result: u32) [
     requires settle_ready(*old(w)),
     ensures report::settled_forwards(phase_view(old(w).nodes@), phase_view(final(w).nodes@), old(report).entries@, final(report).entries@),
@@ -101,5 +101,23 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
         }
         passes += 1;
     } }
+}
+}
+
+kernel_fn! {
+/// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E6: TRUSTED export wrapper. Contract =
+/// `settle_proved`'s, verbatim, plus one frozen opaque export bundle. The body only calls the
+/// verified `settle_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
+#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, trace: Option<&mut Vec<World>>, report: &mut Report)
+    -> (result: u32) [
+    requires settle_ready(*old(w)),
+    ensures report::settled_forwards(phase_view(old(w).nodes@), phase_view(final(w).nodes@), old(report).entries@, final(report).entries@),
+        settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
+        forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
+        result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+    settle_exports::settle_exports(*old(w), *final(w)),
+] {
+    settle_proved(w, out, trace, report)
 }
 }

@@ -443,6 +443,12 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::events::apply": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified apply_proved; never lands.",
+            "kernel::settling::settle": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified settle_proved; never lands.",
+            "kernel::scheduler::advance": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified advance_proved; never lands.",
+            "kernel::transition_safety::apply_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::advance_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::settle_exports::settle_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::held_answer": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_held": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -1396,7 +1402,7 @@ def verus_proofs():
             "kernel_take_ticket_node": ("kernel#take_ticket_node", 1),
             "kernel_world_checked_definition": ("kernel#world_checked_definition", 1),
             "kernel_world_measure": ("kernel#World::measure", 3),
-            "events": ("kernel::events#apply", 1),
+            "events": ("kernel::events#apply_proved", 1),
             "report_reply_kind": ("kernel::report#ReplyKind::of", 1),
             "report_stop_kind": ("kernel::report#StopCause::from_phase", 1),
             "report_new": ("kernel::report#Report::new", 1),

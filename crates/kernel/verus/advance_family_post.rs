@@ -271,4 +271,42 @@ pub(super) proof fn ready_item(n: Node)
     reveal(items);
 }
 
+/// K5 frozen export E5 (CONTRACTS.md; owner Advance; consumers assembly G5/G6/G19/G20, liveness G22).
+/// TRUSTED at fv-k5-int-dev-1110: `scheduler::advance` ensures it through a trusted wrapper. One opaque
+/// bundle so that advance's proof callers see a single atom; consumers `reveal(advance_exports)`.
+#[verifier::opaque]
+pub(super) open spec fn advance_exports(before: World, after: World, i: usize, moved: bool,
+    ob: Outbox, oa: Outbox) -> bool {
+    let k = i as int;
+    let b = before.nodes@[k];
+    let a = after.nodes@[k];
+    // E5.1 One advance is an internal step the checker composition accepts (internal; feeds R5, R6).
+    ((checking::accepted(before) && before.gates@.len() <= u64::MAX && before.nodes@.len() <= u64::MAX)
+        ==> internal_safety::step_premises(before, after, k)
+            && (b.phase is Closed ==> a.phase is Closed)
+            && (a.credit.withheld ==> b.credit.withheld
+                || !dependencies::prerequisites_delivered(before, NodeId(i as u64)))
+            && (dependencies::prerequisites_delivered(before, NodeId(i as u64))
+                || dependencies::owner_waiting_ok(a)))
+    // E5.2 The Advance arm of the transition relation, exact stutter included (internal).
+    && transition_safety::transition_safety(before, after,
+        transition_safety::Transition::Advance { node: i, moved }, transition_safety::emitted(ob, oa))
+    // E5.3 A new pool place needs pool room and first place in the pool line (REQUIREMENT R7).
+    && (!b.pool && a.pool ==> pool_users(before.nodes@, before.nodes@.len()) < before.pool_capacity
+        && oldest_waiter(before, k))
+    // E5.4 A runnable start that is first in the pool line with room is granted, and leaves the line (REQUIREMENT R8).
+    && (((match current_item(b) { Some(Item::Start(_)) => true, _ => false })
+        && !(b.phase is Closed) && !b.waiting_incident && b.effect.is_none() && !b.paused
+        && b.ticket.is_some()
+        && pool_users(before.nodes@, before.nodes@.len()) < before.pool_capacity && oldest_waiter(before, k))
+        ==> moved && a.pool && a.ticket.is_none())
+    // E5.5 A new gate slot only for an unpaused node with room and no overlapping holder; it keeps its
+    // repository, files, pool place and run, and leaves the line (REQUIREMENTS R9, R10).
+    && (!b.holds && a.holds ==> !b.paused && scheduler::slot_spec(before, k)
+        && a.repo == b.repo && a.footprint == b.footprint && a.ticket.is_none()
+        && a.pool == b.pool && a.run == b.run)
+    // E5.6 A slot holder that is making its change or rebasing keeps its slot (REQUIREMENT R11).
+    && (b.holds && (b.phase == Phase::Making || b.phase == Phase::Rebasing) ==> a.holds)
+}
+
 }

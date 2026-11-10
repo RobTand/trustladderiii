@@ -114,6 +114,9 @@ mod apply_answer_safety;
 #[path = "../verus/apply_command_safety.rs"]
 mod apply_command_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/settle_exports.rs"]
+mod settle_exports;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }

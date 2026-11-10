@@ -6,7 +6,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 #[allow(clippy::collapsible_if)]
-pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
         forall|j: int| 0 <= j < old(w).nodes@.len()
@@ -229,6 +229,138 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             events_lemmas::footprints_after(before_apply@, *w);
         }
     }
+}
+}
+
+kernel_fn! {
+/// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E1: TRUSTED export wrapper. Contract =
+/// `apply_proved`'s, verbatim, plus one frozen opaque export bundle. The body only calls the
+/// verified `apply_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
+#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
+    requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
+        dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
+        forall|j: int| 0 <= j < old(w).nodes@.len()
+            ==> arithmetic_consistent(old(w).nodes@[j])
+                && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
+                && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
+                && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
+    ensures report::agrees(event,
+            phase_view(old(w).nodes@), phase_view(final(w).nodes@), report_input(*old(w), event),
+            old(report).entries@, final(report).entries@,
+            (phase_view(final(w).nodes@), final(report).entries@)),
+(progress_input(*old(w), event)
+            ==> progress_measure(*final(w)) < progress_measure(*old(w))
+                && dependencies::edges_indexable(*final(w))),
+        forall|j: int| 0 <= j < final(w).nodes@.len() ==>
+            settle_shape(final(w).nodes@[j])
+                && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
+        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
+            (old(w).nodes@[j].phase is Closed ==> final(w).nodes@[j].phase is Closed)
+                && final(w).nodes@[j].repo == old(w).nodes@[j].repo
+                && final(w).nodes@[j].last_cmd >= old(w).nodes@[j].last_cmd,
+        old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@, final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        footprint::ordered_table(*final(w)),
+        final(w).file_sets@.len() >= old(w).file_sets@.len(),
+        forall|j: int| 0 <= j < old(w).file_sets@.len()
+            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
+        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
+            final(w).nodes@[j].generation as int <= old(w).nodes@[j].generation as int + 2
+            && final(w).nodes@[j].next_seq as int <= old(w).nodes@[j].next_seq as int + 1
+            && final(w).nodes@[j].credit.start as int <= old(w).nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
+            && final(w).nodes@[j].credit.earned as int + merge_capacity(final(w).nodes@[j])
+                <= old(w).nodes@[j].credit.earned as int + 1
+            && final(w).nodes@[j].credit.added as int <= old(w).nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
+            && final(w).nodes@[j].credit.spent as int <= old(w).nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET,
+        forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len() ==>
+            final(w).nodes@[j].last_cmd == 0
+            && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
+            && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
+            && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
+        (old(w).nodes@.len() > 0 && old(w).nodes@[0].phase == Phase::Unplanned
+            && progress_unplanned::obstructed(old(w).nodes@[0])
+            && event == progress_unplanned::outside_event(old(w).nodes@[0]))
+            ==> final(w).nodes@.len() == old(w).nodes@.len()
+                && (forall|j: int| 1 <= j < old(w).nodes@.len()
+                    ==> final(w).nodes@[j] == old(w).nodes@[j]),
+        match event {
+            Event::Fact { node, fact } => retirement::selected(fact)
+                && node.0 < old(w).nodes@.len() ==> {
+                    final(w).nodes@ == old(w).nodes@.update(node.0 as int,
+                        retirement::fact_node(old(w).nodes@[node.0 as int], fact))
+                    && final(w).next_question == old(w).next_question
+                    && final(w).file_sets@ == old(w).file_sets@
+                    && final(w).dependencies@ == old(w).dependencies@
+                    && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
+                    && match fact {
+                        Fact::Priority(_) => *final(out) == *old(out),
+                        Fact::PrMerged { head, checks_passed } => old(w).nodes@[node.0 as int].had_pr
+                            && old(w).nodes@[node.0 as int].merged.is_none()
+                            && !(old(w).nodes@[node.0 as int].phase is Closed)
+                            && !(old(w).nodes@[node.0 as int].approved == Some(head) && checks_passed)
+                            ==> retirement::unapproved_note(*final(out), node.0 as usize),
+                        _ => true,
+                    }
+                },
+            _ => true,
+        },
+        progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
+        (match event {
+            Event::NewAdoption { repo, head, .. } => repo.0 < old(w).gates@.len() ==>
+                final(w).nodes@.len() == old(w).nodes@.len() + 1
+                && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
+                && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len() ==>
+                (match command {
+                    Command::Answer { question, answer } => handler_safety::answer_pair(
+                        old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int],
+                        id > old(w).nodes@[node.0 as int].last_cmd, question, answer,
+                        final(w).dependencies@, node),
+                    _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+                })
+                && transition_safety::notice_only(*old(out), *final(out), node)
+                && (match command {
+                    Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
+                        && final(w).nodes@[node.0 as int]
+                            != (Node { last_cmd: final(w).nodes@[node.0 as int].last_cmd, ..old(w).nodes@[node.0 as int] })
+                        ==> (match old(w).nodes@[node.0 as int].question {
+                            Some(q) => q.id == question,
+                            None => false,
+                        }) && (match final(w).nodes@[node.0 as int].question {
+                            Some(q) => q.id != question,
+                            None => true,
+                        }),
+                    _ => true,
+                }),
+            Event::Reply { node, generation, reply } => node.0 < old(w).nodes@.len()
+                && transition_safety::fail_fast_event(event) ==> handler_safety::reply_rows(old(w).fail_fast,
+                    transition_safety::retry_due(*old(w), event), transition_safety::funding_due(*old(w), event),
+                    old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int], *old(out), *final(out)),
+            _ => true,
+        }),
+        (match event {
+            Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees } =>
+                old(w).nodes@.len() > 0 ==> port_t860_contracts::reply_post(*old(w), *final(w), 0,
+                    generation, Reply::AuditDisagrees, *old(out), *final(out)),
+            _ => true,
+        }),
+        (match event {
+            Event::NewRequest { .. } | Event::NewAdoption { .. } =>
+                transition_safety::transition_safety(*old(w), *final(w),
+                    transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
+            Event::Command { node, .. } => node.0 < old(w).nodes@.len()
+                && node_checked(*old(w), old(w).nodes@[node.0 as int])
+                ==> transition_safety::transition_safety(*old(w), *final(w),
+                    transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
+            Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
+        }),
+    transition_safety::apply_exports(*old(w), *final(w), event, *old(out), *final(out)),
+] {
+    apply_proved(w, event, out, report)
 }
 }
 

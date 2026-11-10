@@ -40,7 +40,7 @@ pub(super) open spec fn overlapped_by_older(w: World, i: int, ticket: u64) -> bo
 kernel_fn! {
 /// #771: source-connected scheduler wrapper. Context queries are read at the
 /// original branches; the verified local transition writes only this node.
-pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: bool) [
+pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: bool) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         scheduling_safe(*old(w)),
         advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
@@ -143,6 +143,74 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         }
     }
     changed
+}
+}
+
+kernel_fn! {
+/// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E5: TRUSTED export wrapper. Contract =
+/// `advance_proved`'s, verbatim, plus one frozen opaque export bundle. The body only calls the
+/// verified `advance_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
+#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: bool) [
+    requires i < old(w).nodes@.len(), i <= u64::MAX as int,
+        scheduling_safe(*old(w)),
+        advance_pre(old(w).nodes@[i as int], old(w).next_ticket, old(out).len),
+    ensures report::no_new_stop(old(w).nodes@[i as int].phase, final(w).nodes@[i as int].phase,
+            old(report).entries@, final(report).entries@),
+        (!result ==> final(out).len == old(out).len),
+        advance_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).next_ticket, final(w).next_ticket, result),
+        final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        movable(*old(w), i as int) ==> result,
+        node_total(final(w).nodes@) <= node_total(old(w).nodes@),
+        potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
+            <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+        result ==> potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| internal_height(n))
+            < potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
+        final(w).next_ticket as int + potential_prefix(final(w).nodes@, final(w).nodes@.len(), |n: Node| ticket_capacity(n))
+            <= old(w).next_ticket as int + potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| ticket_capacity(n)),
+        open_prefix(final(w).nodes@, final(w).nodes@.len())
+            <= open_prefix(old(w).nodes@, old(w).nodes@.len()),
+        (forall|j: int| 0 <= j < old(w).nodes@.len() ==> settle_shape(old(w).nodes@[j]))
+            ==> scheduling_safe(*final(w))
+                && (forall|j: int| 0 <= j < final(w).nodes@.len() ==> settle_shape(final(w).nodes@[j])),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        old(w).nodes@[i as int].phase == Phase::Unplanned && old(w).nodes@[i as int].pos == 0
+            && old(w).nodes@[i as int].ticket.is_none() ==> {
+                (result ==> final(w).nodes@[i as int].phase == (Phase::Planning { must_split: false }))
+                && result == (!old(w).nodes@[i as int].paused
+                    && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
+                    && dependencies::delivered(old(w).dependencies@, NodeId(i as u64))
+                    && old(w).nodes@[i as int].repo.0 < old(w).gates@.len()
+                    && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
+                        < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
+            },
+        old(w).next_ticket <= final(w).next_ticket,
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            && slot_spec(*old(w), i as int) && oldest_waiter(*old(w), i as int)
+            ==> result && final(w).nodes@[i as int].holds && final(w).nodes@[i as int].ticket.is_none(),
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && !result
+            ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result
+            ==> slot_spec(*old(w), i as int),
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+                && old(w).nodes@[older].phase is Ready
+                && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+                && old(w).nodes@[older].ticket.is_some()
+                && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+                && slot_spec(*old(w), older)
+                && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
+                ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
+    advance_family_post::advance_exports(*old(w), *final(w), i, result, *old(out), *final(out)),
+] {
+    advance_proved(w, i, out, report)
 }
 }
 
