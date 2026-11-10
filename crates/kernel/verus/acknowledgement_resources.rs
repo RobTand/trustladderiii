@@ -301,7 +301,7 @@ pub(super) proof fn confirmed_value_rows(b: Node, r: Node, n: Node, kind: Effect
 
 pub(super) proof fn confirmed_live_question(w: World, b: Node, e: InFlight)
     requires retirement::node_rules(w, b), b.effect == Some(e), !e.cancelling,
-    ensures b.question.is_none(),
+    ensures !b.question.is_none(),
 {
     reveal(retirement::node_rules);
 }
