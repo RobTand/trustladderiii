@@ -335,14 +335,11 @@ pub(super) fn run_failed_value(n: Node) -> (result: ReplyChange) [
 ] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    abandon_operation(&mut node);
-    node.pos = operation_start(node.phase);
-    node.generation += 1;
-    node.run_failures += 1;
+    node = failed_prefix(node);
     if node.run_failures >= 2 {
         // Every second failure raises an incident. Only Rob can clear the second one.
         node.run_failures = 0;
-        node.run_incidents = (node.run_incidents + 1).min(2);
+        node.run_incidents = incident_count(node.run_incidents);
         let needs_rob = node.run_incidents >= 2;
         kernel_proof! { retries_facts::incident(n, node, needs_rob); }
         return ReplyChange::Incident { node, needs_rob };
@@ -586,5 +583,32 @@ pub(super) fn spend_v(c: Credit, cost: u64) -> (result: Credit) [
     let mut m = c;
     m.spend(cost);
     m
+}
+}
+
+kernel_fn! {
+/// The original failed-run prefix, returned with its whole-node equation.
+fn failed_prefix(n: Node) -> (result: Node) [
+    requires n.generation < u64::MAX, n.run_failures < u8::MAX,
+    ensures result == (Node { pos: if n.phase == Phase::Making { 1u8 } else { 0u8 },
+        generation: (n.generation + 1) as u64,
+        run_failures: (n.run_failures + 1) as u8, ..retries_facts::abandoned(n) }),
+] {
+    let mut m = n;
+    abandon_operation(&mut m);
+    m.pos = operation_start(m.phase);
+    m.generation += 1;
+    m.run_failures += 1;
+    m
+}
+}
+
+kernel_fn! {
+/// The original saturated incident count, with its exact result equation.
+fn incident_count(c: u8) -> (result: u8) [
+    requires c <= 2,
+    ensures result == (if c < 2 { (c + 1) as u8 } else { 2u8 }),
+] {
+    (c + 1).min(2)
 }
 }
