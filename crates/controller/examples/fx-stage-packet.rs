@@ -1,4 +1,4 @@
-//! Preparation-only sandbox fixture. Never constructs or calls a native backend.
+//! Sandbox staging and admitted Flux executor qualification.
 //!
 //! Canary packets are staged before an activation pin exists, so this example alone uses
 //! the `activation-qualification` staging gate. Deployed binaries never enable it.

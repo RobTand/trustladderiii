@@ -102,6 +102,64 @@ fn fetch(id: &str, name: &str, root: &Path) -> Result<api::BlobRef> {
     Ok(reference)
 }
 
+fn verify_binary(path: &Path, name: &str) -> Result<()> {
+    let raw = fs::read(path)?;
+    if raw.get(..6) != Some(&b"\x7fELF\x02\x01"[..]) || raw.get(18..20) != Some(&[62, 0][..]) {
+        return Err("production artifact must be ELF amd64".into());
+    }
+    let marker = b"tl3.fx_canary_qualification_staging.v1";
+    if raw.windows(marker.len()).any(|w| w == marker)
+        != (name == "example_fx-stage-packet" || name == "example_test_fx-stage-packet_binary")
+    {
+        return Err("canary staging feature leaked or positive control missing".into());
+    }
+    Ok(())
+}
+
+// Preview only: the outer admitted BuildBuddy action owns terminal collection.
+// Live qualification always uses build(), including its terminal/CAS checks.
+pub fn admitted_preview(inputs: &Inputs) -> Result<Value> {
+    let upload = std::env::var_os("BUILDBUDDY_ARTIFACTS_DIRECTORY")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .ok_or("preview build requires a BuildBuddy artifact directory")?;
+    let root = inputs.out.join("production");
+    fs::create_dir_all(&root)?;
+    let log = root.join("remote.log");
+    let output = fs::File::create(&log)?;
+    let status = Command::new("/bin/bash")
+        .args(["-c", &script(inputs, None)?])
+        .current_dir(&inputs.repo)
+        .env("BUILDBUDDY_ARTIFACTS_DIRECTORY", &root)
+        .stdin(Stdio::null())
+        .stdout(output.try_clone()?)
+        .stderr(output)
+        .status()?;
+    if !status.success() {
+        fs::copy(&log, upload.join("preview-build.log"))?;
+        return Err("admitted preview build failed; collect outer invocation".into());
+    }
+    let record: Value = serde_json::from_slice(&durable::read(&root.join("runtime-build.json"))?)?;
+    if record["base_head"] != inputs.head
+        || record["tree"] != git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])?
+    {
+        return Err("admitted preview source tree differs".into());
+    }
+    let mut artifacts = vec![];
+    for artifact in record["artifacts"].as_array().ok_or("preview inventory")? {
+        let name = artifact["name"].as_str().ok_or("preview artifact name")?;
+        let path = root.join(name);
+        verify_binary(&path, name)?;
+        fs::copy(&path, upload.join(name))?;
+        artifacts.push(identity(&path)?);
+    }
+    fs::copy(&log, upload.join("preview-build.log"))?;
+    fs::copy(root.join("runtime-build.json"), upload.join("runtime-build.json"))?;
+    Ok(json!({"base_head":inputs.head,"overlay_tree":record["tree"],"command_exit":0,
+        "invocation_id":null,"own_verdict":null,"collection":"outer_buildbuddy_action_required",
+        "log":identity(&log)?,"artifacts":artifacts}))
+}
+
 pub fn build(
     inputs: &Inputs,
     name: &str,
@@ -231,16 +289,7 @@ pub fn build(
         if reference.sha256 != artifact["sha256"] || reference.bytes != artifact["bytes"] {
             return Err("remote producer artifact mismatch".into());
         }
-        let raw = fs::read(&reference.path)?;
-        if raw.get(..6) != Some(&b"\x7fELF\x02\x01"[..]) || raw.get(18..20) != Some(&[62, 0][..]) {
-            return Err("production artifact must be ELF amd64".into());
-        }
-        let marker = b"tl3.fx_canary_qualification_staging.v1";
-        if raw.windows(marker.len()).any(|w| w == marker)
-            != (name == "example_fx-stage-packet" || name == "example_test_fx-stage-packet_binary")
-        {
-            return Err("canary staging feature leaked or positive control missing".into());
-        }
+        verify_binary(&reference.path, name)?;
         fs::set_permissions(&reference.path, fs::Permissions::from_mode(0o500))?;
         artifacts.push(identity(&reference.path)?);
     }

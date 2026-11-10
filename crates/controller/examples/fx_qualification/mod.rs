@@ -217,6 +217,18 @@ fn plan(inputs: &Inputs) -> Value {
         "cancel_scope":"one owned ready job only", "image_map_sha256":inputs.image_map_sha256})
 }
 
+fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
+    let planned = plan(inputs);
+    durable::atomic(
+        &inputs.out.join("plan.json"),
+        &serde_json::to_vec_pretty(&planned)?,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&planned)?);
+    Ok(json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
+        "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
+        "builds":builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}))
+}
+
 pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     if args.first().is_some_and(|s| s == "carry") {
         evidence::carry(&args[1..])?;
@@ -272,6 +284,10 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
                 return Ok(retained);
             }
         }
+        if dry && std::env::var_os("BUILDBUDDY_ARTIFACTS_DIRECTORY").is_some() {
+            let preview = bb::admitted_preview(&inputs)?;
+            return dry_result(&inputs, json!([preview]));
+        }
         let build = bb::build(&inputs, "production", None)?;
         let rebuilt = inputs.out.join("production/example_fx-stage-packet");
         if identity(&std::env::current_exe()?)?["sha256"] != identity(&rebuilt)?["sha256"] {
@@ -289,12 +305,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             &serde_json::to_vec_pretty(&planned)?,
         )?;
         if dry {
-            println!("{}", serde_json::to_string_pretty(&planned)?);
-            return Ok(
-                json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
-                "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
-                "builds":state.builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}),
-            );
+            return dry_result(&inputs, serde_json::to_value(&state.builds)?);
         }
         let input_path = inputs.out.join("inputs.json");
         if !input_path.exists() {
