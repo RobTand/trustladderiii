@@ -84,23 +84,24 @@ PY
 '''
 
 
-def registry_read(suffix):
-    request = urllib.request.Request('http://' + REPOSITORY.split('/')[0] + '/v2/tl3/tessera/' + suffix,
+def registry_read(suffix, repository=REPOSITORY):
+    request = urllib.request.Request('http://' + repository.split('/')[0] + '/v2/' + repository.split('/', 1)[1] + '/' + suffix,
                                     headers={'Accept': 'application/vnd.oci.image.manifest.v1+json'})
     with urllib.request.urlopen(request, timeout=60) as response:
         return response.read(4 * 1024 * 1024 + 1)
 
 
-def verify_registry(digest, config_digest):
+def verify_registry(digest, config_digest, *, repository=REPOSITORY):
     if not re.fullmatch(DIGEST, digest) or not re.fullmatch(DIGEST, config_digest):
         raise ValueError('invalid registry digest')
-    raw = registry_read('manifests/' + digest)
+    read = registry_read if repository == REPOSITORY else lambda suffix: registry_read(suffix, repository)
+    raw = read('manifests/' + digest)
     if 'sha256:' + sha(raw) != digest:
         raise ValueError('registry manifest digest mismatch')
     manifest = json.loads(raw)
     if manifest['config']['digest'] != config_digest:
         raise ValueError('registry manifest names a different config')
-    raw = registry_read('blobs/' + config_digest)
+    raw = read('blobs/' + config_digest)
     if 'sha256:' + sha(raw) != config_digest:
         raise ValueError('registry config digest mismatch')
     config = json.loads(raw)
@@ -109,8 +110,10 @@ def verify_registry(digest, config_digest):
     return {'manifest_digest': digest, 'config_digest': config_digest, 'platform': 'linux/amd64'}
 
 
-def main():
-    manifest, inputs = load_inputs(Path(__file__).with_name('images'))
+def publish_image(manifest, inputs, *, profile, installer, stage_inputs, manifest_path):
+    if profile not in ('tessera', 'prismaquant'):
+        raise ValueError('unknown image profile')
+    repository = 'dl380g10:5000/tl3/' + profile
     job = os.environ.get('FLUX_JOB_ID', '')
     scratch = Path(os.environ.get('TMPDIR', '/missing'))
     if (os.geteuid() == 0 or socket.gethostname().split('.')[0] != 'dl380g10'
@@ -134,26 +137,18 @@ def main():
             or (base['Os'], base['Architecture']) != ('linux', 'amd64')):
         raise ValueError('local base config/platform mismatch')
     affinity = sorted(os.sched_getaffinity(0))
-    name = 'tl3-tessera-' + job
-    tag = REPOSITORY + ':flux-' + job + '-' + manifest['requirements_sha256'][:12]
-    with tempfile.TemporaryDirectory(prefix='tessera-image-', dir=scratch) as directory:
+    name = 'tl3-' + profile + '-' + job
+    tag = repository + ':flux-' + job + '-' + manifest['requirements_sha256'][:12]
+    with tempfile.TemporaryDirectory(prefix=profile + '-image-', dir=scratch) as directory:
         stage = Path(directory)
-        # Keep each hashed requirement and its continuation lines together.
-        lock = inputs['tessera-gate/resolved-requirements.txt'].decode()
-        blocks = re.split(r'(?m)(?=^[A-Za-z0-9][A-Za-z0-9_.-]*(?:==| @ ))', lock)
-        torch = [block for block in blocks if block.startswith('torch==')]
-        packages = [block for block in blocks if not block.startswith('torch==')]
-        if len(torch) != 1:
-            raise ValueError('resolved lock must contain one CPU Torch pin')
-        (stage / 'torch.txt').write_text(''.join(torch))
-        (stage / 'packages.txt').write_text(''.join(packages))
+        stage_inputs(stage, inputs)
         (stage / 'affinity.json').write_text(json.dumps(affinity))
         try:
             command = ['podman', 'run', '--pull=never', '--cgroups=disabled', '--name', name,
                        '--volume', str(stage) + ':/input:ro', '--volume', str(out) + ':/receipts:rw']
             for variable in THREADS:
                 command += ['--env', variable + '=1']
-            command += ['--entrypoint', '/bin/sh', manifest['base_image'], '-ec', install_script()]
+            command += ['--entrypoint', '/bin/sh', manifest['base_image'], '-ec', installer()]
             subprocess.run(command, env=env, stdin=subprocess.DEVNULL, check=True)
             config_digest = run(['podman', 'commit', '--format', 'oci', '--change',
                                  'ENV PATH=/opt/tl3/bin:/usr/local/bin:/usr/bin:/bin', name, tag])
@@ -169,17 +164,18 @@ def main():
                     '--digestfile', str(push_digest), tag, 'docker://' + tag],
                    env=env, stdin=subprocess.DEVNULL, check=True)
     digest = push_digest.read_text().strip()
-    verified = verify_registry(digest, config_digest)
+    verified = verify_registry(digest, config_digest, repository=repository)
     # Runtime preflight requires the immutable reference in the local rootless store.
-    subprocess.run(['podman', 'pull', '--tls-verify=false', REPOSITORY + '@' + digest],
+    subprocess.run(['podman', 'pull', '--tls-verify=false', repository + '@' + digest],
                    env=env, stdin=subprocess.DEVNULL, check=True)
     artifacts = {p.name: sha(p.read_bytes()) for p in out.iterdir() if p.is_file()}
-    receipt = dict(schema='tl3.tessera-image-build.v1', flux_job_id=job,
+    receipt = dict(schema='tl3.' + profile + '-image-build.v1', flux_job_id=job,
                    tl3_head=run(['git', 'rev-parse', 'HEAD']),
                    tl3_tree=run(['git', 'rev-parse', 'HEAD^{tree}']),
                    builder_sha256=sha(Path(__file__).read_bytes()),
-                   inputs_manifest_sha256=sha(Path(__file__).with_name('images').joinpath('tessera-inputs.json').read_bytes()),
-                   inputs=manifest, registry_ref=REPOSITORY + '@' + digest, registry_tag=tag,
+                   profile_builder_sha256=manifest.get('profile_builder_sha256'),
+                   inputs_manifest_sha256=sha(manifest_path.read_bytes()),
+                   inputs=manifest, registry_ref=repository + '@' + digest, registry_tag=tag,
                    affinity=affinity, artifacts=artifacts, **verified)
     raw = (json.dumps(receipt, sort_keys=True, indent=2) + '\n').encode()
     path = out / 'image-receipt.json'
@@ -188,6 +184,25 @@ def main():
     # Captain authenticates stdout; bind the retained receipt and its artifacts to it.
     print(json.dumps({'image_receipt_sha256': sha(raw), 'registry_ref': receipt['registry_ref'],
                       'config_digest': config_digest}), flush=True)
+
+
+def stage_tessera_inputs(stage, inputs):
+    # Keep each hashed requirement and its continuation lines together.
+    lock = inputs['tessera-gate/resolved-requirements.txt'].decode()
+    blocks = re.split(r'(?m)(?=^[A-Za-z0-9][A-Za-z0-9_.-]*(?:==| @ ))', lock)
+    torch = [block for block in blocks if block.startswith('torch==')]
+    packages = [block for block in blocks if not block.startswith('torch==')]
+    if len(torch) != 1:
+        raise ValueError('resolved lock must contain one CPU Torch pin')
+    (stage / 'torch.txt').write_text(''.join(torch))
+    (stage / 'packages.txt').write_text(''.join(packages))
+
+
+def main():
+    manifest, inputs = load_inputs(Path(__file__).with_name('images'))
+    publish_image(manifest, inputs, profile='tessera', installer=install_script,
+                  stage_inputs=stage_tessera_inputs,
+                  manifest_path=Path(__file__).with_name('images') / 'tessera-inputs.json')
 
 
 if __name__ == '__main__':

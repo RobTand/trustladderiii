@@ -13,6 +13,8 @@ def main():
     parser.add_argument("--profile", choices=("sandbox", "prismaquant", "tessera"), default="sandbox")
     parser.add_argument("--tag")
     args = parser.parse_args()
+    if args.profile == "prismaquant":
+        raise ValueError("use flux_prismaquant_image.py with a pinned Python 3.12 base and hashed lock")
     args.tag = args.tag or ("tl3-harness:t5" if args.profile == "sandbox" else f"tl3-harness:{args.profile}")
     owner = os.environ.get("FLUX_JOB_ID")
     if not owner:

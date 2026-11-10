@@ -1,5 +1,6 @@
 """Submit the configured generator and import only its verified output artifact."""
 import base64
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -80,6 +81,9 @@ def make_generator_tool(worktree, *, restore_only=False):
         patterns = list(getattr(worktree, "generated_files", ()))
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
+        demand = getattr(worktree, "generator_demand", None)
+        if demand is not None:
+            settings = replace(settings, cpus=demand["cpus"], mem_gb=demand["mem_gb"])
         generator.configured_argv(command)
         selected = generator.budget(settings.cpus, settings.mem_gb,
                                     getattr(worktree, "generator_timeout_s", generator.TIMEOUT))

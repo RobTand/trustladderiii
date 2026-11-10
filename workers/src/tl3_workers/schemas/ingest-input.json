@@ -94,6 +94,16 @@
           "minimum": 1,
           "maximum": 600
         },
+        "generator_cpus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "generator_mem_gb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
         "generator": {
           "type": "string",
           "minLength": 1,

@@ -478,6 +478,12 @@ impl Supervisor {
         }) {
             forecast["generated_files"] = json!(repository.generated_files);
             forecast["generator_timeout_s"] = json!(repository.generator_timeout_s.unwrap_or(120));
+            let generator_demand = repository
+                .generator_demand
+                .or(repository.test_demand)
+                .unwrap_or_default();
+            forecast["generator_cpus"] = json!(generator_demand.cpus);
+            forecast["generator_mem_gb"] = json!(generator_demand.mem_gb);
             if let Some(generator) = &repository.generator {
                 forecast["generator"] = json!(generator);
             }

@@ -77,6 +77,20 @@ pub struct Forecast {
     )]
     #[schemars(with = "Integer<1, 600>")]
     pub generator_timeout_s: Option<Integer<1, 600>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Integer<1, 10>")]
+    pub generator_cpus: Option<Integer<1, 10>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Integer<1, 24>")]
+    pub generator_mem_gb: Option<Integer<1, 24>>,
     /// Configured argv command, executed only by the admitted run_generator action.
     #[serde(
         default,
@@ -273,6 +287,8 @@ impl SchemaOrder for Forecast {
                     "generated_files",
                     "generator_available",
                     "generator_timeout_s",
+                    "generator_cpus",
+                    "generator_mem_gb",
                     "generator",
                 ],
             ),
@@ -368,6 +384,8 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
     let order12 = <Text<0, 65536>>::order();
     let order13 = <Text<0, 16384>>::order();
     let order14 = <PublicationBranch>::order();
+    let generator_cpus = <Integer<1, 10>>::order();
+    let generator_mem_gb = <Integer<1, 24>>::order();
     let path = format!("{}/ingest-input.json", crate::SCHEMA_DIRECTORY);
     let text = render::render(
         &path,
@@ -422,6 +440,14 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                 TypeUse {
                     pointer: "/properties/forecast/properties/generator_timeout_s",
                     order: &order8,
+                },
+                TypeUse {
+                    pointer: "/properties/forecast/properties/generator_cpus",
+                    order: &generator_cpus,
+                },
+                TypeUse {
+                    pointer: "/properties/forecast/properties/generator_mem_gb",
+                    order: &generator_mem_gb,
                 },
                 TypeUse {
                     pointer: "/properties/protected_paths/items",

@@ -25,6 +25,13 @@ py_binary(
 )
 
 py_binary(
+    name = "flux_prismaquant_image",
+    srcs = ["flux_prismaquant_image.py", "flux_tessera_image.py"],
+    data = glob(["images/**"]),
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
     name = "verify",
     srcs = ["verify.py"],
     visibility = ["//visibility:public"],

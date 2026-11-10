@@ -337,6 +337,8 @@ def run(model, request, worktree, emit):
     worktree.generated_files = tuple(forecast.get("generated_files", ()))
     worktree.generator = forecast.get("generator")
     worktree.generator_timeout_s = forecast.get("generator_timeout_s", 120)
+    worktree.generator_demand = ({"cpus": forecast["generator_cpus"], "mem_gb": forecast["generator_mem_gb"]}
+                                 if "generator_cpus" in forecast and "generator_mem_gb" in forecast else None)
     worktree.protected_paths = tuple(inputs.get("protected_paths", ()))
     worktree.generator_state = session.with_suffix(".generator") if session else None
 

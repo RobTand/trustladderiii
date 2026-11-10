@@ -41,6 +41,20 @@ pub struct Forecast {
     )]
     #[schemars(with = "Integer<1, 600>")]
     pub generator_timeout_s: Option<Integer<1, 600>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Integer<1, 10>")]
+    pub generator_cpus: Option<Integer<1, 10>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Integer<1, 24>")]
+    pub generator_mem_gb: Option<Integer<1, 24>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -237,6 +251,8 @@ impl SchemaOrder for Forecast {
                     "generator",
                     "generator_available",
                     "generator_timeout_s",
+                    "generator_cpus",
+                    "generator_mem_gb",
                 ],
             ),
             (
@@ -263,6 +279,8 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
     let order5 = <Integer<1, 600>>::order();
     let order6 = <super::reviewer_input::Memory>::order();
     let order7 = <Text<1, 256>>::order();
+    let generator_cpus = <Integer<1, 10>>::order();
+    let generator_mem_gb = <Integer<1, 24>>::order();
     let path = format!("{}/planner-input.json", crate::SCHEMA_DIRECTORY);
     let text = render::render(
         &path,
@@ -321,6 +339,14 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                 TypeUse {
                     pointer: "/properties/forecast/properties/generator_timeout_s",
                     order: &order5,
+                },
+                TypeUse {
+                    pointer: "/properties/forecast/properties/generator_cpus",
+                    order: &generator_cpus,
+                },
+                TypeUse {
+                    pointer: "/properties/forecast/properties/generator_mem_gb",
+                    order: &generator_mem_gb,
                 },
                 TypeUse {
                     pointer: "/properties/memories/items",

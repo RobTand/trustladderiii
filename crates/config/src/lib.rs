@@ -413,9 +413,12 @@ pub struct Repository {
     pub generator_timeout_s: Option<u32>,
     #[serde(default)]
     pub container_image: Option<String>,
-    /// CPU and memory reservation for this repository's Flux tests and generators.
+    /// CPU and memory reservation for this repository's Flux tests.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
+    /// Independent generator reservation; absent inherits test_demand.
+    #[serde(default)]
+    pub generator_demand: Option<TestDemand>,
     /// Pass the runtime coordinator URI to repositories that submit nested Flux work.
     #[serde(default)]
     pub pass_flux_uri: bool,
@@ -1107,10 +1110,14 @@ impl Config {
             let field = format!("github.repos[{index}]");
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
-            if let Some(demand) = repo.test_demand {
+            for (kind, demand) in [
+                ("test_demand", repo.test_demand),
+                ("generator_demand", repo.generator_demand),
+            ] {
+                let Some(demand) = demand else { continue };
                 if !(1..=10).contains(&demand.cpus) {
                     return Err(invalid(
-                        format!("{field}.test_demand.cpus"),
+                        format!("{field}.{kind}.cpus"),
                         format!(
                             "repository {}/{}: use 1 to 10 CPUs; dl380g10 plain limit is 10 cores / 24 GiB",
                             repo.owner, repo.name
@@ -1119,7 +1126,7 @@ impl Config {
                 }
                 if !(1..=24).contains(&demand.mem_gb) {
                     return Err(invalid(
-                        format!("{field}.test_demand.mem_gb"),
+                        format!("{field}.{kind}.mem_gb"),
                         format!(
                             "repository {}/{}: use 1 to 24 GiB; dl380g10 plain limit is 10 cores / 24 GiB",
                             repo.owner, repo.name

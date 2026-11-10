@@ -1,0 +1,20 @@
+{
+  "commit": "2c0c028d2bd87ae1665e339c9c6ec07e7fc7df32",
+  "files": {
+    "prismaquant.txt": "e01f525cba6881f8f52dcfe342b5173d8ac316b7c50768e0cfccf4d2f3a538ac"
+  },
+  "platform": "linux/amd64",
+  "python": "3.12",
+  "repository": "RobTand/prismaquant",
+  "requirements_sha256": "e01f525cba6881f8f52dcfe342b5173d8ac316b7c50768e0cfccf4d2f3a538ac",
+  "schema": "tl3.prismaquant-image-inputs.v1",
+  "subject_installed": true,
+  "system_packages": [
+    "build-essential",
+    "git",
+    "ca-certificates",
+    "libgomp1",
+    "bubblewrap"
+  ],
+  "upstream_path": "tools/bazel/requirements_linux_x86_64.txt"
+}
