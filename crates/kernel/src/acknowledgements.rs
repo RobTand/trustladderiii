@@ -923,7 +923,7 @@ fn ack_permanent_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox
     let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } });
     if n.phase.is_stopping() {
         let id = nq;
-        let next_question = nq + 1;
+        let next_question = nq;
         let m = Node { question: Some(Question { id, kind: QKind::CleanupFailed,
             cont: Cont::Nowhere, cost: 0, clarified: false }), ..n };
         let output = ack_append_value(output, Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: id } });
