@@ -1382,3 +1382,56 @@ async fn publication_token_quota_keeps_its_existing_recovery_class() {
         matches!(github.installation_token().await,Err(Error::RateLimited {retry_after}) if retry_after==Duration::from_secs(60))
     );
 }
+
+#[tokio::test]
+async fn compare_encodes_both_refs_and_reads_ancestry() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    get(
+        &server,
+        "/repos/owner/sandbox/compare/release%2Fmain...topic%2Fchange",
+        json!({"status":"diverged","behind_by":2}),
+    )
+    .await;
+    let comparison = github
+        .compare("owner/sandbox", "release/main", "topic/change")
+        .await
+        .unwrap();
+    assert_eq!(comparison.status, ComparisonStatus::Diverged);
+    assert_eq!(comparison.behind_by, 2);
+}
+
+#[tokio::test]
+async fn compare_preserves_http_and_response_error_classes() {
+    for (status, response) in [
+        (503, json!({})),
+        (404, json!({})),
+        (200, json!({"status":"ahead"})),
+        (200, json!({"status":"behind","behind_by":0})),
+    ] {
+        let server = MockServer::start().await;
+        let mut opts = options(&server);
+        opts.max_retries = 0;
+        let github = client_with_options(&server, opts).await;
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/sandbox/compare/base...head"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = github
+            .compare("owner/sandbox", "base", "head")
+            .await
+            .unwrap_err();
+        if status == 200 {
+            assert!(matches!(error, Error::Response));
+            assert_eq!(
+                error.failure_class(),
+                FailureClass::Transient("invalid_response")
+            );
+        } else {
+            assert!(matches!(error, Error::Http { status: actual } if actual == status));
+            assert_eq!(error.failure_class(), Error::Http { status }.failure_class());
+        }
+    }
+}

@@ -152,6 +152,7 @@ impl Respond for Api {
             }
             ("GET", "/repos/owner/sandbox/rules/branches/main" | "/repos/owner/sandbox/rules/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
+            ("GET", path) if path.starts_with("/repos/owner/sandbox/compare/") => ResponseTemplate::new(200).set_body_json(json!({"status":"ahead","behind_by":0})),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => ResponseTemplate::new(200).set_body_json(json!({"workflow_runs":[]})),
             ("GET", "/repos/owner/sandbox/pulls/100/files") => ResponseTemplate::new(200).set_body_json(json!([])),

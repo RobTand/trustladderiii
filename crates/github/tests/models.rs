@@ -67,3 +67,42 @@ fn actions_check_accepts_a_null_output_title() {
     assert_eq!(check.name, "Sandbox tests");
     assert_eq!(check.app.unwrap().slug, "github-actions");
 }
+
+#[test]
+fn comparison_parses_github_status_and_behind_count() {
+    for (status, expected, behind) in [
+        ("ahead", ComparisonStatus::Ahead, 0),
+        ("identical", ComparisonStatus::Identical, 0),
+        ("behind", ComparisonStatus::Behind, 3),
+        ("diverged", ComparisonStatus::Diverged, 2),
+    ] {
+        let comparison: Comparison = serde_json::from_value(json!({
+            "status":status,"behind_by":behind,"ahead_by":7,"commits":[]
+        }))
+        .unwrap();
+        assert_eq!(comparison.status, expected);
+        assert_eq!(comparison.behind_by, behind);
+    }
+}
+
+#[test]
+fn comparison_rejects_missing_malformed_or_inconsistent_ancestry() {
+    for response in [
+        json!({"status":"ahead"}),
+        json!({"behind_by":0}),
+        json!({"status":"unknown","behind_by":0}),
+        json!({"status":"ahead","behind_by":null}),
+        json!({"status":"ahead","behind_by":-1}),
+        json!({"status":"ahead","behind_by":0.5}),
+        json!({"status":"ahead","behind_by":"0"}),
+        json!({"status":"ahead","behind_by":1}),
+        json!({"status":"identical","behind_by":1}),
+        json!({"status":"behind","behind_by":0}),
+        json!({"status":"diverged","behind_by":0}),
+    ] {
+        assert!(
+            serde_json::from_value::<Comparison>(response.clone()).is_err(),
+            "uninterpretable ancestry must not become contains: {response}"
+        );
+    }
+}

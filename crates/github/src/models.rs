@@ -223,6 +223,21 @@ pub struct CheckSuite {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Comparison {
+    pub status: ComparisonStatus,
+    pub behind_by: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonStatus {
+    Ahead,
+    Behind,
+    Diverged,
+    Identical,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Branch {
     pub name: String,
     pub commit: Commit,

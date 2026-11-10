@@ -21,6 +21,9 @@ struct DirectState {
     live_base_after_checks: Option<String>,
     branch_status_after_checks: Option<u16>,
     checks_read: bool,
+    comparison: Option<Value>,
+    compare_status: Option<u16>,
+    comparisons: Vec<String>,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -79,6 +82,12 @@ impl Respond for DirectApi {
                     return ResponseTemplate::new(status);
                 }
             }
+        }
+        if method == "GET" && path.starts_with("/repos/owner/sandbox/compare/") {
+            let mut direct = self.direct.lock().unwrap();
+            direct.comparisons.push(path.to_owned());
+            return ResponseTemplate::new(direct.compare_status.unwrap_or(200))
+                .set_body_json(direct.comparison.clone().unwrap_or_else(|| json!({"status":"ahead","behind_by":0})));
         }
         if method == "PUT" && path == "/repos/owner/sandbox/pulls/100/merge" {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -148,8 +157,16 @@ impl DirectFixture {
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {
         self.start_controller(settings, self.open(settings))
     }
-    fn start_controller(&self, settings: &tl3_config::Store, mut controller: Controller) -> (Controller, Delivery) {
-        controller.intake(LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
+    fn start_controller(&self, settings: &tl3_config::Store, controller: Controller) -> (Controller, Delivery) {
+        self.start_proposed(settings, controller, None)
+    }
+    fn start_proposed(&self, settings: &tl3_config::Store, mut controller: Controller, proposed: Option<tl3_controller::adoption::ProposedPullRequest>) -> (Controller, Delivery) {
+        let issue = LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] };
+        if let Some(proposed) = proposed {
+            ingress::apply(&mut controller, tl3_controller::cli::Input::ProposedIssue { issue, proposed }).unwrap();
+        } else {
+            controller.intake(issue).unwrap();
+        }
         let mut enqueue = None;
         for _ in 0..100 {
             let progressed = controller.drive_once_with(|boundary, key| {
@@ -355,6 +372,104 @@ fn m3_unchanged_checked_base_merges() {
     assert_eq!(direct.successes, 1);
     assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+}
+
+#[test]
+fn m3_adopted_head_behind_unchanged_base_enters_rebase() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_adopted_behind");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().comparison = Some(json!({"status":"diverged","behind_by":2}));
+    let proposed = tl3_controller::adoption::ProposedPullRequest {
+        number: 17, head: "a".repeat(40), head_repository: "owner/sandbox".into(),
+    };
+    let (mut controller, delivery) = fixture.start_proposed(&settings, fixture.open(&settings), Some(proposed));
+    assert!(controller.world().unwrap().nodes[0].adopted, "exercise a genuinely adopted request");
+    assert_eq!(delivery.head_sha.as_deref(), Some("a".repeat(40).as_str()));
+    let snapshot = controller.snapshot().unwrap();
+    let report = snapshot.rows.iter().find(|row| row.table == "check_reports" && row.id == format!("0:{}", delivery.head_sha.as_deref().unwrap())).expect("adopted head needs passing checked-base evidence");
+    assert_eq!(report.value["base_sha"], "c".repeat(40));
+    assert_eq!(report.value["pass"], true);
+    m3_conflict(&mut controller, &fixture, &settings);
+    let state = fixture.api.state.lock().unwrap();
+    assert_eq!(state.base_tip, "c".repeat(40));
+    assert_eq!(state.pull["base"]["sha"], state.base_tip);
+    assert_eq!(state.pull["mergeable"], true);
+    drop(state);
+    let key = hex::encode(delivery.key.as_bytes());
+    let record: Value = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct").join(format!("{key}.base-moved"))).expect("an adopted head behind its checked base needs a durable reason")).unwrap();
+    assert_eq!(record["checked_base"], "c".repeat(40));
+    assert_eq!(record["current_base"], "c".repeat(40));
+    assert_eq!(record["reason"], format!("head does not contain checked base {}; behind_by 2", "c".repeat(40)));
+    assert_eq!(fixture.direct.lock().unwrap().comparisons, vec![format!("/repos/owner/sandbox/compare/{}...{}", "c".repeat(40), "a".repeat(40))]);
+}
+
+#[test]
+fn m3_head_containing_checked_base_merges_after_compare() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_contains_base");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let direct = fixture.direct.lock().unwrap();
+    assert!(!direct.comparisons.is_empty(), "merge must first confirm checked-base ancestry");
+    let expected = format!("/repos/owner/sandbox/compare/{}...{}", "c".repeat(40), delivery.head_sha.as_deref().unwrap());
+    assert!(direct.comparisons.iter().all(|path| path == &expected));
+    assert_eq!(direct.puts.len(), 1);
+    assert_eq!(direct.successes, 1);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+}
+
+fn m3_compare_error(settings: &tl3_config::Store, response: Value, status: u16) {
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(settings);
+    drain(&mut controller);
+    fixture.check(Some("success"));
+    {
+        let mut direct = fixture.direct.lock().unwrap();
+        direct.comparison = Some(response);
+        direct.compare_status = Some(status);
+        direct.comparisons.clear();
+    }
+    let error = fixture.adapter(settings).execute(&delivery).expect_err("an unreadable comparison must remain a read error");
+    let tl3_controller::Error::Adapter(source) = &error else { panic!("original GitHub error must propagate: {error}"); };
+    let original = source.downcast_ref::<tl3_github::Error>().expect("retain the GitHub error type");
+    if status == 200 {
+        assert!(matches!(original, tl3_github::Error::Response), "malformed compare must remain a schema error: {error}");
+        assert_eq!(original.failure_class(), tl3_github::FailureClass::Transient("invalid_response"));
+    } else {
+        assert!(matches!(original, tl3_github::Error::Http { status: actual } if *actual == status), "original HTTP error must propagate: {error}");
+        assert_eq!(original.failure_class(), tl3_github::Error::Http { status }.failure_class());
+    }
+    let direct = fixture.direct.lock().unwrap();
+    assert!(direct.puts.is_empty());
+    assert_eq!(direct.comparisons.len(), 1);
+    drop(direct);
+    let key = hex::encode(delivery.key.as_bytes());
+    let receipt = fixture.root.path().join("direct").join(format!("{key}.base-moved"));
+    let records: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).expect("the accepted delivery has a real records directory").map(|entry| entry.unwrap().path()).collect();
+    assert!(!records.contains(&receipt), "a failed compare read must not write a base-moved receipt");
+}
+
+#[test]
+fn m3_failed_compare_preserves_read_error_without_receipt() {
+    let mut database = support::Database::start();
+    m3_compare_error(&database.create("m3_compare_failed"), json!({}), 503);
+}
+
+#[test]
+fn m3_malformed_compare_preserves_read_error_without_receipt() {
+    let mut database = support::Database::start();
+    m3_compare_error(&database.create("m3_compare_malformed"), json!({"status":"ahead"}), 200);
+}
+
+#[test]
+fn m3_inconsistent_compare_preserves_read_error_without_receipt() {
+    let mut database = support::Database::start();
+    m3_compare_error(&database.create("m3_compare_inconsistent"), json!({"status":"behind","behind_by":0}), 200);
 }
 
 #[test]
