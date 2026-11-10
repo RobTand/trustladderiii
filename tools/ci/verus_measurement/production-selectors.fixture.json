@@ -1,10 +1,70 @@
 {
-  "source_head": "3e77877e483b5d32ddd1ac3abc847e3d70324d05",
+  "source_head": "3bed7aeb0d0c7159fd555653a9b755e2e43c4b23",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "90f0262bc25f11100c0956084866a1fbd1bb71fd6945168be2f22c0c3f88feb7",
-  "groups": 915,
-  "obligations": 1123,
+  "source_sha256": "4392d4f4436ec40e04236cb3ea2b7262441c97351726aba6f47db7b172c7c11d",
+  "groups": 927,
+  "obligations": 1135,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
+      "selector": "kernel::event_frames#out_of_range_stutter_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_event_frames_reveal_out_of_range_stutter_rows",
+      "selector": "kernel::event_frames_reveal#out_of_range_stutter_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_rows_unwithheld",
+      "selector": "kernel::answer_owner#owner_rows_unwithheld",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_same",
+      "selector": "kernel::answer_owner#owner_same",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_unclear",
+      "selector": "kernel::answer_owner#owner_unclear",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_continue",
+      "selector": "kernel::answer_owner#owner_continue",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_no_retry",
+      "selector": "kernel::answer_owner#owner_no_retry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_no_credit",
+      "selector": "kernel::answer_owner#owner_no_credit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_stopped",
+      "selector": "kernel::answer_owner#owner_stopped",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_cleanup",
+      "selector": "kernel::answer_owner#owner_cleanup",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_awaiting_owner",
+      "selector": "kernel::answer_owner#awaiting_owner",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_n4c_after_last_cmd",
+      "selector": "kernel::answer_owner#n4c_after_last_cmd",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_post_teardown_missing_rows",
       "selector": "kernel::advance_family_post#teardown_missing_rows",
