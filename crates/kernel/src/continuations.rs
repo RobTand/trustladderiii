@@ -51,8 +51,12 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
 ] {
     kernel_snapshot! { before_go_on = w.nodes@[i as int] }
     continue_node(&mut w.nodes[i], i, q, deposit, out);
+    kernel_snapshot! { continued = w.nodes@[i as int] }
     w.withhold_dependency_credit(i);
     kernel_proof! {
+        assert(distance(w.nodes@[i as int]) == distance(continued@)) by {
+            reveal(distance);
+        }
         if before_go_on@.phase == Phase::AwaitingRob {
             handler_safety::continue_step(before_go_on@, w.nodes@[i as int]);
         }
