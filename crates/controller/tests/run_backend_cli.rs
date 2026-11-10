@@ -4734,6 +4734,7 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
             before.last().unwrap()["result"]["cleanup"]["stopped"],
             false
         );
+        assert!(f.state().cleanup_retry_ms.is_some());
         let events = if cancelled {
             vec![
                 json!({"name":"exception","context":{"type":"cancel","severity":0}}),
@@ -4744,6 +4745,11 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
         };
         f.events(&events);
         let terminal = f.attach();
+        assert!(f.state().cleanup_retry_ms.is_none());
+        assert!(
+            !f.scratch_inputs().is_empty(),
+            "retiring cleanup retry state must still reach the exact scratch proof on first attach"
+        );
         assert_eq!(
             terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
             if cancelled { "cancelled" } else { "infra-lost" },
