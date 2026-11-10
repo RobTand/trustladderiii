@@ -389,7 +389,7 @@ pub(super) fn cleared_fact_arm(n: Node, i: usize, by_rob: bool)
     let m = &mut value;
     if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
         m.waiting_incident = false;
-        m.incident_needs_rob = false;
+        m.incident_needs_rob = true;
     }
     kernel_proof! {
         assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::IncidentCleared { by_rob })));
