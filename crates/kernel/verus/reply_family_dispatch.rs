@@ -414,7 +414,7 @@ pub(super) proof fn plan_check_bounds(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan_check(n)),
-        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint != n.footprint,
 {
     reveal(reply_family_values::plan_check);
     reply_family_facts::stopped_review(n, ReviewStop::PlanCantMeet);
