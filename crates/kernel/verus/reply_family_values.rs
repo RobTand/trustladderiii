@@ -143,6 +143,7 @@ pub(super) open spec fn plan_retry(n: Node, fast: bool, cant_meet: bool) -> Repl
         cost: 1 } }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn rung(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
     if fast { ReplyChange::Done { node: retirement::stopped(
         Node { review_stop: Some(step), ..n }, Outcome::Stopped), note: None } }
@@ -164,6 +165,7 @@ pub(super) open spec fn rung(n: Node, fast: bool, step: ReviewStop) -> ReplyChan
         cont: Cont::Ready(Resume::Making), cost: 1 } }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn failed_round(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
     if n.round == 0 { ReplyChange::Done {
         node: retirement::phased(Node { round: 1, ..n }, if n.holds { Phase::Making }
@@ -171,6 +173,7 @@ pub(super) open spec fn failed_round(n: Node, fast: bool, step: ReviewStop) -> R
     else { rung(n, fast, step) }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn recheck(n: Node, target: Phase) -> ReplyChange {
     let m = Node { rechecks: if n.rechecks < 255 { (n.rechecks + 1) as u8 }
         else { 255u8 }, ..n };

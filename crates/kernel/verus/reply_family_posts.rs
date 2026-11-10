@@ -133,4 +133,106 @@ pub(super) proof fn retry_lift(before: World, after: World, i: int, r: ReplyChan
 {
     reveal(retry_bounds);
 }
+
+pub(super) proof fn rung_posts(n: Node, fast: bool, nq: u64, step: ReviewStop,
+    i: int, ob: Outbox, oa: Outbox)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        reply_family_values::resolved(reply_family_values::rung(n, fast, step), i, ob, oa),
+    ensures ({ let r = reply_family_values::rung(n, fast, step);
+        let z = reply_family_values::finish(nq, r);
+        reply_family_values::retry_bound(n, nq, r)
+        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && reply_family_values::next_question(nq, r) as int <= nq as int + 1
+        && (!(n.phase is Closed || n.phase is Stopping) && fast ==>
+            z.review_stop.is_some() && z.credit == n.credit && oa.len == ob.len
+                && z.phase == Phase::Stopping(Outcome::Stopped) && z.question.is_none())
+        && (!(n.phase is Closed || n.phase is Stopping) && !fast ==>
+            transition_safety::retried(n, z) && z.review_stop == n.review_stop)
+        && (!(n.phase is Closed || n.phase is Stopping) ==>
+            handler_safety::ladder(fast, true, n, z, ob, oa)) }),
+{
+    reveal(reply_family_values::rung);
+    let z = reply_family_values::finish(nq, reply_family_values::rung(n, fast, step));
+    if fast {
+        reply_family_facts::stopped_review(n, step);
+        if !(n.phase is Closed || n.phase is Stopping) {
+            handler_safety::stop_ladder(n, step, ob);
+        }
+    } else {
+        if n.attempt < 3 {} else if !n.replanned {} else {}
+        handler_safety::retry_ladder(n, z, ob, oa);
+    }
+}
+
+pub(super) proof fn failed_round_posts(n: Node, fast: bool, nq: u64, step: ReviewStop,
+    i: int, ob: Outbox, oa: Outbox)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        reply_family_values::resolved(reply_family_values::failed_round(n, fast, step), i, ob, oa),
+    ensures ({ let r = reply_family_values::failed_round(n, fast, step);
+        let z = reply_family_values::finish(nq, r);
+        reply_family_values::retry_bound(n, nq, r)
+        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && reply_family_values::next_question(nq, r) as int <= nq as int + 1
+        && (!(n.phase is Closed || n.phase is Stopping) ==>
+            handler_safety::ladder(fast, n.round != 0, n, z, ob, oa)) }),
+{
+    reveal(reply_family_values::failed_round);
+    if n.round == 0 {
+        let z = reply_family_values::finish(nq, reply_family_values::failed_round(n, fast, step));
+        handler_safety::same_ladder(fast, n, z, ob, oa);
+    } else {
+        rung_posts(n, fast, nq, step, i, ob, oa);
+    }
+}
+
+pub(super) proof fn plan_retry_posts(n: Node, fast: bool, nq: u64, cant_meet: bool,
+    i: int, ob: Outbox, oa: Outbox)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        reply_family_values::resolved(reply_family_values::plan_retry(n, fast, cant_meet), i, ob, oa),
+    ensures ({ let r = reply_family_values::plan_retry(n, fast, cant_meet);
+        let z = reply_family_values::finish(nq, r);
+        reply_family_values::retry_bound(n, nq, r)
+        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && reply_family_values::next_question(nq, r) as int <= nq as int + 1
+        && (n.phase is Planning ==> handler_safety::ladder(fast, cant_meet, n, z, ob, oa))
+        && (fast && cant_meet && n.phase is Planning ==>
+            z.phase == Phase::Stopping(Outcome::Stopped)
+                && z.review_stop == Some(ReviewStop::PlanCantMeet)) }),
+{
+    reveal(reply_family_values::plan_retry);
+    let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 }
+        else { 255u8 }, ..n };
+    let z = reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet));
+    if fast && cant_meet {
+        reply_family_facts::stopped_review(m, ReviewStop::PlanCantMeet);
+        if n.phase is Planning {
+            handler_safety::stop_ladder(m, ReviewStop::PlanCantMeet, ob);
+            handler_safety::ladder_rebase(fast, true, n, m, z, ob, oa);
+        }
+    } else if n.phase is Planning {
+        if cant_meet { handler_safety::retry_ladder(n, z, ob, oa); }
+        else { handler_safety::same_ladder(fast, n, z, ob, oa); }
+    }
+}
+
+pub(super) proof fn recheck_posts(n: Node, nq: u64, target: Phase,
+    i: int, ob: Outbox, oa: Outbox)
+    requires !(target is Closed), node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        reply_family_values::resolved(reply_family_values::recheck(n, target), i, ob, oa),
+    ensures ({ let r = reply_family_values::recheck(n, target);
+        let z = reply_family_values::finish(nq, r);
+        reply_family_values::retry_bound(n, nq, r)
+        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && reply_family_values::next_question(nq, r) as int <= nq as int + 1
+        && handler_safety::keeps_review_stop(n, z)
+        && (ordinary_await(n) && n.phase == Phase::Rebasing && target == Phase::Checking
+            ==> distance(z) < distance(n)) }),
+{
+    reveal(reply_family_values::recheck);
+    let z = reply_family_values::finish(nq, reply_family_values::recheck(n, target));
+    handler_safety::keep_review_stop(n, z);
+    reveal(distance);
+    reveal_with_fuel(phase_rank, 3);
+    reveal(continuation_rank);
+}
 }

@@ -164,14 +164,15 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast, old(w).nodes@[i as int].round != 0, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
-] proof [reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
     let change = failed_round_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report);
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
+        reply_family_posts::failed_round_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, step,
+            i as int, before_out@, *out);
+        reply_family_posts::retry_lift(before@, *w, i as int, change, before_out@, *out);
     }
 }
 }
@@ -198,14 +199,15 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
             && final(out).len == old(out).len && final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped)
             && final(w).nodes@[i as int].question.is_none(),
         !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) && !old(w).fail_fast ==> transition_safety::retried(old(w).nodes@[i as int], final(w).nodes@[i as int]) && final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
-] proof [reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
     let change = next_rung_node(w.nodes[i], i, w.fail_fast, w.next_question, step, report);
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
+        reply_family_posts::rung_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, step,
+            i as int, before_out@, *out);
+        reply_family_posts::retry_lift(before@, *w, i as int, change, before_out@, *out);
     }
 }
 }
@@ -257,20 +259,15 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         old(w).fail_fast && cant_meet && old(w).nodes@[i as int].phase is Planning ==>
             final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped)
                 && final(w).nodes@[i as int].review_stop == Some(ReviewStop::PlanCantMeet),
-] proof [reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
     let change = plan_retry_node(w.nodes[i], w.fail_fast, w.next_question, cant_meet);
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
-        if before@.nodes@[i as int].phase is Planning {
-            reply_family_safety::plan_retry_ladder(before@.nodes@[i as int], before@.fail_fast,
-                before@.next_question, cant_meet, change, before_out@, *out, i as int);
-        }
-    }
-    kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
+        reply_family_posts::plan_retry_posts(before@.nodes@[i as int], before@.fail_fast, before@.next_question, cant_meet,
+            i as int, before_out@, *out);
+        reply_family_posts::retry_lift(before@, *w, i as int, change, before_out@, *out);
     }
 }
 }
@@ -291,14 +288,15 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         handler_safety::keeps_review_stop(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
+] {
     kernel_snapshot! { before = *w }
     kernel_snapshot! { before_out = *out }
     let change = recheck_node(w.nodes[i], w.next_question, target);
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
-        reveal(retirement::stopped); reveal(retirement::incident);
-        reveal(handler_safety::ladder); reveal(handler_safety::keeps_review_stop);
+        reply_family_posts::recheck_posts(before@.nodes@[i as int], before@.next_question, target,
+            i as int, before_out@, *out);
+        reply_family_posts::retry_lift(before@, *w, i as int, change, before_out@, *out);
     }
 }
 }
@@ -374,10 +372,8 @@ pub(super) fn failed_round_node(n: Node, i: usize, fast: bool, nq: u64, step: Re
     ensures report::failed_round(old(report).entries@, final(report).entries@,
             NodeId(i as u64), report::failure_cause(step)),
         result == reply_family_values::failed_round(n, fast, step),
-        reply_family_values::retry_bound(n, nq, result),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, result)),
-
-] proof [reveal(retirement::stopped); reveal(retirement::incident);] {
+        reply_family_values::callable(result),
+] {
     kernel_snapshot! { before_report = report.entries@ }
     let mut node = n;
     let mut note: Option<Notice> = None;
@@ -394,11 +390,11 @@ kernel_proof! { report::lemmas::failure_kind(step); }
             NodeId(i as u64), cause); }
 
     }
-    let m = &mut node;
-    if m.round == 0 {
+
+    if node.round == 0 {
         // The fix round resumes the maker's session. It's free.
-        m.round = 1;
-        set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
+        node.round = 1;
+        node = set_phase_v(node, if node.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
 
     } else {
 
@@ -409,6 +405,7 @@ kernel_proof! { report::lemmas::failure_kind(step); }
                 if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) } else { None });
             report::lemmas::append_failed_round(before_report@, report.entries@, NodeId(i as u64), cause);
         }
+        kernel_proof! { reveal(reply_family_values::failed_round); }
         return result;
 
     }
@@ -416,6 +413,7 @@ kernel_proof! { report::lemmas::failure_kind(step); }
         report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), cause);
         report::lemmas::append_failed_round(before_report@, report.entries@, NodeId(i as u64), cause);
     }
+    kernel_proof! { reveal(reply_family_values::failed_round); }
     ReplyChange::Done { node, note }
 }
 }
@@ -429,10 +427,8 @@ pub(super) fn next_rung_node(n: Node, i: usize, fast: bool, nq: u64, step: Revie
                 if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
                 else { None })),
         result == reply_family_values::rung(n, fast, step),
-        reply_family_values::retry_bound(n, nq, result),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, result)),
-
-] proof [reveal(retirement::stopped); reveal(retirement::incident);] {
+        reply_family_values::callable(result),
+] {
     kernel_snapshot! { before_report = report.entries@ }
     let mut node = n;
     let mut note: Option<Notice> = None;
@@ -449,33 +445,37 @@ if step == ReviewStop::MakerCantMeet {
             if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) } else { None });
     }
     let fail_fast = fast;
-    let m = &mut node;
+
     if fail_fast {
-        stop_for_review(m, step);
-    } else if m.attempt < 3 {
-        m.attempt += 1;
-        m.review_restarted = false;
-        m.round = 0;
-        if m.credit.can_spend(1) {
-            m.credit.spend(1);
-            set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
+        node = stop_for_review_v(node, step);
+    } else if node.attempt < 3 {
+        node.attempt += 1;
+        node.review_restarted = false;
+        node.round = 0;
+        if node.credit.can_spend(1) {
+            node.credit = spend_v(node.credit, 1);
+            node = set_phase_v(node, if node.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
         } else {
+            kernel_proof! { reveal(reply_family_values::rung); }
             return ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1, };
         }
-    } else if !m.replanned {
-        m.replanned = true;
-        m.holds = false;
-        if m.credit.can_spend(1) {
-            m.credit.spend(1);
-            m.plan_retries = 0;
-            set_phase(m, Phase::Planning { must_split: false });
+    } else if !node.replanned {
+        node.replanned = true;
+        node.holds = false;
+        if node.credit.can_spend(1) {
+            node.credit = spend_v(node.credit, 1);
+            node.plan_retries = 0;
+            node = set_phase_v(node, Phase::Planning { must_split: false });
             note = Some(Notice::Note(NoteKind::Replanned));
         } else {
+            kernel_proof! { reveal(reply_family_values::rung); }
             return ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: false }, cost: 1, };
         }
     } else {
+        kernel_proof! { reveal(reply_family_values::rung); }
         return ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Ready(Resume::Making), cost: 1 };
     }
+    kernel_proof! { reveal(reply_family_values::rung); }
     ReplyChange::Done { node, note }
 }
 }
@@ -558,31 +558,28 @@ kernel_fn! {
 pub(super) fn plan_retry_node(n: Node, fast: bool, nq: u64, cant_meet: bool) -> (result: ReplyChange) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result == reply_family_values::plan_retry(n, fast, cant_meet),
-        reply_family_values::retry_bound(n, nq, result),
-        fast && cant_meet && n.phase is Planning ==>
-            reply_family_values::finish(nq, result).phase == Phase::Stopping(Outcome::Stopped)
-                && reply_family_values::finish(nq, result).review_stop == Some(ReviewStop::PlanCantMeet),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, result)),
-
-] proof [reveal(reply_family_values::plan_retry); reveal(retirement::stopped); reveal(retirement::incident);] {
+        reply_family_values::callable(result),
+] {
     let mut node = n;
     let mut note: Option<Notice> = None;
 let fail_fast = fast;
-    let m = &mut node;
-    m.plan_retries = m.plan_retries.saturating_add(1);
-    let phase = m.phase;
+
+    node.plan_retries = node.plan_retries.saturating_add(1);
+    let phase = node.phase;
 
     if fail_fast && cant_meet {
-        stop_for_review(m, ReviewStop::PlanCantMeet);
+        node = stop_for_review_v(node, ReviewStop::PlanCantMeet);
 
-    } else if m.plan_retries < 2 {
+    } else if node.plan_retries < 2 {
         // Re-run once, with the reason or the next model on the planner's ladder.
-        set_phase(m, phase);
+        node = set_phase_v(node, phase);
     } else {
-        m.plan_retries = 0;
+        node.plan_retries = 0;
         let must_split = matches!(phase, Phase::Planning { must_split: true });
+        kernel_proof! { reveal(reply_family_values::plan_retry); }
         return ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Planning { must_split }, cost: 1 };
     }
+    kernel_proof! { reveal(reply_family_values::plan_retry); }
     ReplyChange::Done { node, note }
 }
 }
@@ -592,27 +589,24 @@ kernel_fn! {
 pub(super) fn recheck_node(n: Node, nq: u64, target: Phase) -> (result: ReplyChange) [
     requires !(target is Closed), node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result == reply_family_values::recheck(n, target),
-        reply_family_values::retry_bound(n, nq, result),
-        (ordinary_await(n) && n.phase == Phase::Rebasing && target == Phase::Checking
-            ==> distance(reply_family_values::finish(nq, result)) < distance(n)),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, result)),
-
-] proof [reveal(retirement::stopped); reveal(retirement::incident); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+        reply_family_values::callable(result),
+] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-let m = &mut node;
-    m.rechecks = m.rechecks.saturating_add(1);
-    let free = m.rechecks <= FREE_RECHECKS;
-    if free || m.credit.can_spend(1) {
+
+    node.rechecks = node.rechecks.saturating_add(1);
+    let free = node.rechecks <= FREE_RECHECKS;
+    if free || node.credit.can_spend(1) {
         if !free {
-            m.credit.spend(1);
+            node.credit = spend_v(node.credit, 1);
         }
         if !target.holding() {
-            m.holds = false;
+            node.holds = false;
         }
-        set_phase(m, target);
+        node = set_phase_v(node, target);
 
     } else {
+        kernel_proof! { reveal(reply_family_values::recheck); }
         return ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(if target == Phase::Reviewing {
                 Resume::Reviewing
             } else {
@@ -620,6 +614,7 @@ let m = &mut node;
             }), cost: 1, };
 
     }
+    kernel_proof! { reveal(reply_family_values::recheck); }
     ReplyChange::Done { node, note }
 }
 }
