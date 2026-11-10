@@ -83,7 +83,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         }
     }
     kernel_proof! {
-        if !withhold { handler_safety::unwithheld_same(n1); }
         handler_safety::answer_pair_intro(before_answer@, n1, w.nodes@[i as int], id, answer,
             w.dependencies@, NodeId(i as u64));
     }

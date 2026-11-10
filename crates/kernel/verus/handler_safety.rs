@@ -137,20 +137,37 @@ pub(super) proof fn unwithheld_same(n: Node)
 {
 }
 
+/// K5-L1: command_step reads only these rows of its second node, so a node
+/// that agrees with an answered node on them keeps the step. Plain node
+/// parameters, no constructed node, so the rows are literal goals.
+pub(super) proof fn step_rows_carry(b: Node, x: Node, y: Node)
+    requires command_step(b, x),
+        y.proposed == x.proposed, y.adopted == x.adopted, y.phase == x.phase,
+        y.review_stop == x.review_stop, y.attempt == x.attempt, y.replanned == x.replanned,
+        y.question == x.question, y.credit.merge_credited == x.credit.merge_credited,
+        y.credit.withheld == x.credit.withheld,
+    ensures command_step(b, y),
+{
+    reveal(command_step);
+}
+
 /// K5-L1: on_answer's write-back then guarded withholding gives the pair.
-/// The final node is the answered node with only its flag changed, so the
-/// restored node is the answered node itself and command_step carries over.
+/// Only the rows command_step reads are carried from the answered node.
 pub(super) proof fn answer_pair_intro(b: Node, answered: Node, n: Node, question: u64,
     answer: Answer, table: Seq<Dependency>, node: NodeId)
     requires command_step(b, answered), answered.credit.withheld == b.credit.withheld,
-        n == unwithheld(answered, n.credit.withheld),
+        n.proposed == answered.proposed, n.adopted == answered.adopted,
+        n.phase == answered.phase, n.review_stop == answered.review_stop,
+        n.attempt == answered.attempt, n.replanned == answered.replanned,
+        n.question == answered.question,
+        n.credit.merge_credited == answered.credit.merge_credited,
         n.credit.withheld == (if answer_withholds(b, question, answer) {
             dependencies::withheld_after(b.credit.withheld, n.planning_started, n.phase,
                 n.credit.ready, table, node)
         } else { b.credit.withheld }),
     ensures answer_pair(b, n, true, question, answer, table, node),
 {
-    assert(unwithheld(n, b.credit.withheld) == answered);
+    step_rows_carry(b, answered, unwithheld(n, b.credit.withheld));
     reveal(answer_pair);
 }
 
