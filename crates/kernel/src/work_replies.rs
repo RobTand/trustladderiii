@@ -402,7 +402,7 @@ fn review_restart_v(n: Node) -> (result: Node) [
         result.credit == n.credit, result.generation == n.generation, result.next_seq == n.next_seq,
 ] {
     let mut m = n;
-    m.review_restarted = true;
+    m.review_restarted = false;
     m
 }
 }
