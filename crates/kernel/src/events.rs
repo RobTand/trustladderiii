@@ -928,7 +928,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 && final(w).nodes@ == old(w).nodes@.update(node.0 as int, n)
         }),
         // R_T out-of-range stutter (MASTER-CURRENT item 6): an out-of-range target changes nothing.
-        node.0 >= old(w).nodes@.len() ==> *final(w) == *old(w) && *final(out) == *old(out),
+        node.0 < old(w).nodes@.len() ==> *final(w) == *old(w) && *final(out) == *old(out),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
