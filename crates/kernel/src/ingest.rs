@@ -203,7 +203,7 @@ fn finish_ingest_v(n: Node, size: u8, early_end: Option<EarlyEnd>) -> (result: N
     ensures result == reply_family_values::ingested(n, size, early_end),
 ] {
     let mut m = n;
-    finish_ingest_node(&mut m, size, early_end);
+    finish_ingest_node(&mut m, size, None);
     m
 }
 }
