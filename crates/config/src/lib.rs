@@ -197,6 +197,22 @@ fn evidence_tools() -> Vec<ToolCapability> {
     }]
 }
 
+/// Canonical paths whose contents can change test execution.
+/// The harness copy is checked against this declaration by its parity test.
+pub const TEST_CONFIGURATION_PATHS: &[&str] = &[
+    "**/conftest.py",
+    "pytest.toml",
+    ".pytest.toml",
+    "**/pytest.toml",
+    "**/.pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "tox.ini",
+    "noxfile.py",
+    "setup.cfg",
+    "pyproject.toml",
+];
+
 impl Default for Planning {
     fn default() -> Self {
         Self {
@@ -207,20 +223,15 @@ impl Default for Planning {
                 ("review".into(), 5_000),
             ]
             .into(),
-            protected_paths: [
-                ".github/**",
-                ".mergify.yml",
-                ".mergify.yaml",
-                "**/conftest.py",
-                "pytest.ini",
-                ".pytest.ini",
-                "tox.ini",
-                "noxfile.py",
-                "setup.cfg",
-                "pyproject.toml",
-            ]
-            .map(String::from)
-            .to_vec(),
+            protected_paths: [".github/**", ".mergify.yml", ".mergify.yaml"]
+                .into_iter()
+                .map(String::from)
+                .chain(
+                    TEST_CONFIGURATION_PATHS
+                        .iter()
+                        .map(|path| (*path).to_owned()),
+                )
+                .collect(),
         }
     }
 }

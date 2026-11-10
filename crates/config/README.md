@@ -186,6 +186,16 @@ repository's patterns. Other repositories do not inherit that entry's additions.
 Both lists require valid repository-relative globs without parent traversal,
 backslashes or control characters. Empty patterns are rejected.
 
+The mandatory test-configuration filenames come from
+`TEST_CONFIGURATION_PATHS` in `src/lib.rs`. `pytest.toml`, `.pytest.toml` and `conftest.py` are protected at the
+repository root and in subdirectories. Names are case-sensitive.
+
+The defaults apply even when the live file lists its own `protected_paths`.
+An owner retaining an older controller that replaces defaults must add
+`"pytest.toml", ".pytest.toml", "**/pytest.toml", "**/.pytest.toml"` to
+`[planning].protected_paths` in the live `tl3.toml`. This release needs no live
+configuration edit to enforce those paths.
+
 ## Repository generators
 
 Each `[[github.repos]]` entry accepts optional `generated_files` globs and a
@@ -393,3 +403,14 @@ rule files fail. An empty list adds no check.
 A new failure returns the test selector and assertion to the maker before
 publication. See [the harness guide](../../harness/README.md#repository-rule-tests)
 for execution and result details.
+
+Dependency and packaging edits do not gain a new refusal rule. The controller
+adds `coverage_note` to review input from changed paths between the check base
+and exact head. Its text starts with `not covered by checks: dependency or
+packaging file changed:` and lists matching paths. Checks use an image built
+from frozen dependency inputs; they do not install the candidate repository.
+The note preserves existing check verdicts, including configuration refusals.
+It covers dependency basenames at every depth: `*requirements*.txt`,
+`requirements*.in`, `constraints*.txt`, `constraints*.in`, `uv.lock`, `setup.py`,
+`setup.cfg`, `poetry.lock`, `Pipfile*`, `MANIFEST.in`, and `pyproject.toml`.
+The Git query disables rename detection, so both sides of a rename count.

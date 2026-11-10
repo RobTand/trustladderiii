@@ -21,7 +21,7 @@ def test_schema_inventory():
         "601e53cf2b07578499a15b1f026ae9e374add04d88fa1098c02c6e7c715e9520"
     )
     assert set(CURRENT["schemas"]) == set(CLOSURE_PATHS) | {"maker-input.json", "maker-reply.json", "check-report.json",
-                                                                      "audit-input.json", "ingest-input.json"}
+                                                                      "audit-input.json", "ingest-input.json", "reviewer-input.json"}
     # #832 and #826 add worker/operator contracts outside every model prompt.
     expected = set(BASE["schemas"]) | {"plan-check-provenance.json", "execution-failure.json",
                                        "worker-execution.json"}
@@ -52,3 +52,12 @@ def test_t839_current_schema_preserves_frozen_values_and_order(name):
     assert [key for key, _ in properties].count("prerequisite_closures") == 1
     properties[:] = [pair for pair in properties if pair[0] != "prerequisite_closures"]
     assert pairs == BASE["schemas"][name]
+
+
+def test_c6_reviewer_schema_only_adds_optional_coverage_note():
+    pairs = json.loads(json.dumps(CURRENT["schemas"]["reviewer-input.json"]))
+    properties = dict(pairs)["properties"]
+    assert [key for key, _ in properties].count("coverage_note") == 1
+    assert "coverage_note" not in dict(pairs)["required"]
+    properties[:] = [pair for pair in properties if pair[0] != "coverage_note"]
+    assert pairs == BASE["schemas"]["reviewer-input.json"]

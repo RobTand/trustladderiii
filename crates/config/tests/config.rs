@@ -2196,3 +2196,20 @@ fn x7_legacy_flux_config_fields_are_refused() {
         assert!(error.contains(field), "{error}");
     }
 }
+
+#[test]
+fn c6_default_patterns_match_root_and_nested_pytest_paths() {
+    let paths = tl3_config::Planning::default().effective_protected_paths();
+    for name in ["pytest.toml", ".pytest.toml", "tests/pytest.toml", "tests/deep/.pytest.toml"] {
+        assert!(tl3_config::path_is_protected(name, &paths), "unprotected {name}");
+    }
+    assert!(!tl3_config::path_is_protected("tests/Pytest.toml", &paths));
+}
+
+#[test]
+fn c6_every_configuration_constant_entry_reaches_the_defaults() {
+    let paths = tl3_config::Planning::default().protected_paths;
+    for pattern in tl3_config::TEST_CONFIGURATION_PATHS {
+        assert!(paths.contains(&pattern.to_string()));
+    }
+}

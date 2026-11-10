@@ -352,6 +352,13 @@ pub struct ReviewerInput {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
+    #[schemars(with = "Text<1, UNBOUNDED>")]
+    pub coverage_note: Option<Text<1, UNBOUNDED>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "String")]
     pub scope_diff: Option<String>,
     /// Historical selected failures without verified complete-unit head outcomes. These remain unresolved even when no test file was edited.
@@ -665,6 +672,7 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                         "check_base_sha",
                         "head_sha",
                         "diff",
+                        "coverage_note",
                         "scope_diff",
                         "unresolved_displaced_failures",
                         "edited_selected_tests",
@@ -696,6 +704,7 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                     "/properties/edited_selected_tests",
                     &["type", "items", "minItems"],
                 ),
+                ("/properties/coverage_note", &["type", "minLength"]),
                 ("/properties/checks", &["type", "description", "items"]),
                 ("/properties/checks/items", &["$ref", "properties"]),
                 (

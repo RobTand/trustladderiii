@@ -151,7 +151,22 @@ pub fn run(s: &Schedule, current: bool) -> Run {
 }
 pub fn compare(s: &Schedule) -> Run {
     let old = run(s, false);
-    let new = run(s, true);
+    let mut current = s.clone();
+    let previous_reads = usize::from(s.snapshot.rows.iter().any(|row| {
+        row.table == "check_reports" && row.value["selected_failures"].is_array()
+    }));
+    current.tapes.entry("changed_paths".into()).or_default()
+        .insert(previous_reads, Read::Value(json!([])));
+    let mut new = run(&current, true);
+    if let Some(index) = new.trace.iter().position(|call| call["op"] == "validate_inputs") {
+        let added = new.trace.remove(index - 1);
+        assert_eq!(added["op"], "changed_paths");
+        assert_eq!(added["args"], json!([
+            s.delivery.checks.as_ref().unwrap().base_sha,
+            s.delivery.head_sha.as_ref().unwrap()
+        ]));
+        assert_eq!(added["outcome"], json!({"ok":[]}));
+    }
     if old != new {
         let dir = std::env::var("TEST_UNDECLARED_OUTPUTS_DIR")
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
