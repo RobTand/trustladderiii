@@ -3612,6 +3612,13 @@ impl Controller {
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        commit.rows.push(put(
+                            "footprint_addition_requests",
+                            node.0.to_string(),
+                            adapters::workers::review::remember_addition_requests(
+                                snapshot, &node.0.to_string(), &reply,
+                            )?,
+                        ));
                         let paths = tl3_contracts::footprint::Footprint::new(paths)
                             .map_err(Error::Invalid)?;
                         let request = request(snapshot, node)?;

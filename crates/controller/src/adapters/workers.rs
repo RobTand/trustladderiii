@@ -740,6 +740,14 @@ impl Supervisor {
             }
             request["resume_session"] = json!(resume_review);
         }
+        if role == "reviewer" {
+            let envelope_bytes = serde_json::to_vec(&request)?.len()
+                - serde_json::to_vec(&request["inputs"])?.len();
+            review::fit_issue(
+                &mut request["inputs"],
+                crate::run_backend::durable::MAX_BYTES.saturating_sub(envelope_bytes),
+            )?;
+        }
         Ok(request)
     }
 

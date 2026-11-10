@@ -469,7 +469,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                             serde_json::to_string(&request["inputs"]).unwrap()
                         );
                     }
-                    if matches!(role, "ingest" | "audit") {
+                    if matches!(role, "ingest" | "audit" | "reviewer") {
                         assert_eq!(
                             request["inputs"]["issue"]["title"],
                             "Production Materials issue"

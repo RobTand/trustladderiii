@@ -14,7 +14,7 @@ fn reviewer_input_accepts_every_harness_vector() {
     for (index, parsed) in contract_vectors::parsed().into_iter().enumerate() {
         let name = &parsed.name;
         let mut store = Store::open(&db.create(&format!("contract_vector_{index}"))).unwrap();
-        // A forced check's review also carries the issue (#393).
+        // Every review carries the request, including ordinary checks.
         store
             .put_worker_materials(
                 "0",
@@ -29,6 +29,7 @@ fn reviewer_input_accepts_every_harness_vector() {
                     json!([{"description":"Contract vector", "verification":"test"}]),
                 ),
                 ("check_reports", json!({})),
+                ("plans", json!({"files":["README.md"]})),
             ],
         );
         let report = snapshot
@@ -42,6 +43,9 @@ fn reviewer_input_accepts_every_harness_vector() {
             review::inputs(&f.delivery(), &mut store, &snapshot, None).unwrap_or_else(|error| {
                 panic!("{name}: reviewer-input.json rejects the vector: {error}")
             });
+        assert_eq!(inputs["issue"]["title"], "Contract vector", "{name}");
+        assert_eq!(inputs["footprint_additions"], json!([]), "{name}");
+        assert_eq!(inputs["issue_truncated"], false, "{name}");
         assert_eq!(
             inputs["checks"], parsed.vector["results"],
             "{name}: review must see the harness results unchanged"

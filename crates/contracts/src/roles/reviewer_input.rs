@@ -226,11 +226,19 @@ impl Goal {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(
-    description = "The request's issue, bounded; supplied when a check carries a forcing (#393)."
+    description = "The request's issue, bounded; supplied for every review."
 )]
 pub struct Issue {
     pub title: Text<0, 1000>,
     pub body: Text<0, 16000>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FootprintAddition {
+    pub path: NonEmpty,
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "NonEmpty")]
+    pub why: Option<NonEmpty>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -369,7 +377,7 @@ pub struct ReviewerInput {
     )]
     #[schemars(with = "List<NonEmpty, 1, UNBOUNDED>")]
     pub edited_selected_tests: Option<List<NonEmpty, 1, UNBOUNDED>>,
-    /// The request's issue, bounded; supplied when a check carries a forcing (#393).
+    /// The request's issue, bounded; supplied for every review.
     #[serde(
         default,
         deserialize_with = "present",
@@ -377,6 +385,14 @@ pub struct ReviewerInput {
     )]
     #[schemars(with = "Issue")]
     pub issue: Option<Issue>,
+    /// True when title or body was shortened to fit the issue or input bound.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "bool")]
+    pub issue_truncated: Option<bool>,
+    /// Effective footprint paths absent from the stored plan, with maker reasons when stored. Missing means the plan was unavailable.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<FootprintAddition>")]
+    pub footprint_additions: Option<Vec<FootprintAddition>>,
     /// The stored harness check report's results, unchanged. Their shape is generated from the Rust contract types (check-report.json).
     #[schemars(with = "Vec<CheckResultSchema>")]
     pub checks: Vec<CheckResult>,
@@ -669,6 +685,8 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                         "unresolved_displaced_failures",
                         "edited_selected_tests",
                         "issue",
+                        "issue_truncated",
+                        "footprint_additions",
                         "checks",
                         "test_evidence",
                         "review_fixes",
@@ -696,6 +714,11 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                     "/properties/edited_selected_tests",
                     &["type", "items", "minItems"],
                 ),
+                ("/properties/footprint_additions", &["type", "items", "description"]),
+                ("/properties/footprint_additions/items", &["type", "properties", "required", "additionalProperties"]),
+                ("/properties/footprint_additions/items/properties", &["path", "why"]),
+                ("/properties/footprint_additions/items/properties/path", &["type", "minLength"]),
+                ("/properties/footprint_additions/items/properties/why", &["type", "minLength"]),
                 ("/properties/checks", &["type", "description", "items"]),
                 ("/properties/checks/items", &["$ref", "properties"]),
                 (
