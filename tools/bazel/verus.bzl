@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::holds_item": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::holds_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::grant_facts": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::start_unobstructed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::pool_grant": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -761,8 +763,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "ranks_advance_blocked_value": ("kernel::ranks#advance_blocked_value", 1),
+            "ranks_advance_idle_value": ("kernel::ranks#advance_idle_value", 1),
+            "advance_family_post_holds_frame_intro": ("kernel::advance_family_post#holds_frame_intro", 1),
+            "advance_family_rules_holds_from_frame": ("kernel::advance_family_rules#holds_from_frame", 1),
             "ranks_advance_do_value": ("kernel::ranks#advance_do_value", 1),
-            "advance_family_post_holds_phase_items": ("kernel::advance_family_post#holds_phase_items", 1),
             "ranks_start_grant_value": ("kernel::ranks#start_grant_value", 1),
             "advance_family_post_grant_no_new": ("kernel::advance_family_post#grant_no_new", 1),
             "advance_family_post_grant_from_fields": ("kernel::advance_family_post#grant_from_fields", 1),
