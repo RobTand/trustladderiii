@@ -72,6 +72,53 @@ impl Flux {
         Ok(())
     }
 
+    fn report_unreadable_owner(&self, key: &str, pending: &mut BTreeMap<String, Owner>) {
+        // Debt retains the last-known identity independently of state.json. This
+        // read preserves incidents only; it cannot establish stop evidence.
+        let debts = self.options.journal_root.join("cleanup-debt");
+        if !debts.is_symlink() {
+            for runtime in std::fs::read_dir(&debts).into_iter().flatten().flatten() {
+                let runtime = runtime.path();
+                if runtime.is_symlink() || !runtime.is_dir() {
+                    continue;
+                }
+                for debt in std::fs::read_dir(runtime).into_iter().flatten().flatten() {
+                    let path = debt.path();
+                    if path.is_symlink()
+                        || !path.file_name().is_some_and(|name| {
+                            name.to_str().is_some_and(|name| name.starts_with(&format!("{key}.")))
+                        })
+                    {
+                        continue;
+                    }
+                    let intent = read(&path)
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<SubmissionIntent>(&bytes).ok());
+                    if let Some(intent) = intent.filter(|intent| {
+                        intent.correlation == key && token(&intent.owner)
+                    }) {
+                        pending.insert(
+                            format!("{key}:{}", intent.owner),
+                            Owner {
+                                owner: intent.owner,
+                                correlation: intent.correlation,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        // Keep the diagnostic incident too. With no readable retained identity,
+        // only this surrogate can be named; guessing could close the wrong owner.
+        pending.insert(
+            key.into(),
+            Owner {
+                owner: "maintenance-error".into(),
+                correlation: key.into(),
+            },
+        );
+    }
+
     fn report_busy(
         &self,
         key: &str,
@@ -103,13 +150,7 @@ impl Flux {
             }
             Err(error) => {
                 self.maintenance_error(key, &error.to_string(), now);
-                pending.insert(
-                    key.into(),
-                    Owner {
-                        owner: "maintenance-error".into(),
-                        correlation: key.into(),
-                    },
-                );
+                self.report_unreadable_owner(key, pending);
             }
         }
     }
@@ -267,13 +308,7 @@ impl Flux {
                     {
                         self.maintenance_error(&key, &error.to_string(), now);
                     }
-                    pending.insert(
-                        key.clone(),
-                        Owner {
-                            owner: "maintenance-error".into(),
-                            correlation: key,
-                        },
-                    );
+                    self.report_unreadable_owner(&key, &mut pending);
                 }
             }
         }
