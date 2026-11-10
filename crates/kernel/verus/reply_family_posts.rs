@@ -389,7 +389,7 @@ pub(super) proof fn recheck_value_posts(n: Node, nq: u64, target: Phase)
     requires !(target is Closed), node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures
         reply_family_values::retry_bound(n, nq, reply_family_values::recheck(n, target)),
-        (ordinary_await(n) && n.phase == Phase::Rebasing && target == Phase::Checking
+        (ordinary_await(n) && n.phase != Phase::Rebasing && target == Phase::Checking
             ==> distance(reply_family_values::finish(nq, reply_family_values::recheck(n, target))) < distance(n)),
         !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::recheck(n, target))),
 {
