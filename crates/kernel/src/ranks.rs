@@ -953,9 +953,16 @@ kernel_fn! {
             advance_family_post::slot(*old(node), *final(node),
     *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out), result),
         *old(next_ticket) <= *final(next_ticket),
+        advance_family_post::ready_unobstructed(*old(node))
+            ==> advance_family_post::slot_grant(*old(node), *final(node), context, result),
     ] {
         kernel_proof! { advance_family_post::slot_bounds(*node, *next_ticket, _out.len); }
         let v = advance_slot_value(*node, *next_ticket, context);
+        kernel_proof! {
+            if advance_family_post::ready_unobstructed(*node) {
+                advance_family_post::slot_grant_from_value(*node, *next_ticket, context, v);
+            }
+        }
         kernel_proof! {
             advance_family_post::slot_bridge(*node, *next_ticket, context, *_out, _report.entries@, v);
         }
@@ -1129,7 +1136,14 @@ kernel_fn! {
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
         *old(next_ticket) <= *final(next_ticket),
+        advance_family_post::ready_unobstructed(*old(node))
+            ==> advance_family_post::slot_grant(*old(node), *final(node), context, result),
     ] {
+        kernel_proof! {
+            if advance_family_post::ready_unobstructed(*node) {
+                advance_family_post::ready_item(*node);
+            }
+        }
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out, report);

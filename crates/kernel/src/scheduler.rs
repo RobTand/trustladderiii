@@ -81,6 +81,13 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
         old(w).next_ticket <= final(w).next_ticket,
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            && slot_spec(*old(w), i as int) && oldest_waiter(*old(w), i as int)
+            ==> result && final(w).nodes@[i as int].holds && final(w).nodes@[i as int].ticket.is_none(),
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && !result
+            ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result
+            ==> slot_spec(*old(w), i as int),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
