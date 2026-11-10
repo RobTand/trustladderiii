@@ -32,7 +32,7 @@ pub(super) fn resolve_reply_value(change: ReplyChange, nq: u64, i: usize)
             let mut notes = Outbox::new();
             kernel_proof! { reveal(empty_outbox); }
             match note {
-                Some(value) => notice(&mut notes, i, value),
+                Some(value) => {},
                 None => {},
             }
             (node, nq, notes)
