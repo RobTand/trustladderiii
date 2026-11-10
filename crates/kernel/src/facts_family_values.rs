@@ -957,7 +957,7 @@ pub(in super::super) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize,
         }
         return (value, next_question, notes);
     }
-    notice(&mut notes, i, Notice::Note(NoteKind::OutsidePush));
+    notice(&mut notes, i, Notice::Note(NoteKind::PrClosed));
     let published = matches!(value.phase,
         Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing));
     if published {
