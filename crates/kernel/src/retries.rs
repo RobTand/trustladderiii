@@ -731,7 +731,7 @@ fn next_rung_replan_ask(node: Node) -> (result: ReplyChange) [
     requires node.generation < u64::MAX,
     ensures result == reply_family_values::rung_replan_ask(node), reply_family_values::callable(result),
 ] proof [reveal(reply_family_values::rung_replan_ask);] {
-    ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: false }, cost: 1, }
+    ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: true }, cost: 1, }
 }
 }
 
