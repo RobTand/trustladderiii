@@ -1,10 +1,45 @@
 {
-  "source_head": "49b894eb13f5324e6b3d2d6fb0d4544da0e4173b",
+  "source_head": "1a1035352a79aa5c33a8bc719982a9869cf6bfcb",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "a220784d628c7bf97ebc9304f137a2e841ad49b04ce08c70e317d902310bbd34",
-  "groups": 625,
-  "obligations": 823,
+  "source_sha256": "d515ca21a19a211bd2748768477d43e43abe52df8d04cfab2b653eb062b0e3e1",
+  "groups": 632,
+  "obligations": 830,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_command_frames_command_frame_rows_intro",
+      "selector": "kernel::command_frames#command_frame_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_command_rows_intro",
+      "selector": "kernel::command_frames#command_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_reveal_command_frame_rows_reveal",
+      "selector": "kernel::command_frames_reveal#command_frame_rows_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_reveal_command_rows_project",
+      "selector": "kernel::command_frames_reveal#command_rows_project",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_stop_frame_value",
+      "selector": "kernel::command_frame_producers#stop_frame_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_cr_frame_value",
+      "selector": "kernel::command_frame_producers#cr_frame_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_pause_frame_value",
+      "selector": "kernel::command_frame_producers#pause_frame_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_answer_rules_rules_incident",
       "selector": "kernel::answer_rules#rules_incident",
