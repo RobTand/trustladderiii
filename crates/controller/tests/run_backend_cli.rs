@@ -1559,6 +1559,10 @@ jobs) if [ "$mode" = query-error ]; then exit 1; fi; if [ "$mode" = quiet-jobs ]
         touch "$fixture/query-started"
         while ! test -e "$fixture/query-release"; do /bin/sleep 0.01; done
     fi
+    if [ "$mode" = terminal-query ] || [ "$mode" = terminal-query-error ]; then
+        mv "$fixture/query-terminal-state.json" "$(cat "$fixture/query-state-path")"
+        if [ "$mode" = terminal-query-error ]; then exit 1; fi
+    fi
     cat "$fixture/jobs.json";;
 cancel) printf 'acknowledged\n';;
 resource)
@@ -3468,51 +3472,56 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
     );
     fs::write(f.root.path().join("mode"), "normal").unwrap();
     jobs("RUN");
-    // Hold one native query across a terminal commit from a separate CLI process.
-    fs::write(f.root.path().join("mode"), "held-query").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
-        .args(["--config", f.config.to_str().unwrap()])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    writeln!(
-        child.stdin.take().unwrap(),
-        "{}",
-        json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})
-    )
-    .unwrap();
-    wait_until(
-        "held liveness query started",
-        Duration::from_secs(5),
-        || f.root.path().join("query-started").exists(),
-    );
-    // Reproduce slow terminal preparation after the bounded native read has begun.
-    std::thread::sleep(Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS + 1));
     f.report(ReportOutcome::Passed, true);
+    let before_terminal = f.state();
     let attached = f.attach();
     assert_eq!(
         attached.last().unwrap()["result"]["observation"]["kind"],
         "terminal",
         "{attached:?}"
     );
-    fs::write(f.root.path().join("query-release"), "release").unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
-    let terminal: Vec<Value> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        terminal.last().unwrap()["result"]["liveness"]["phase"],
-        "terminal",
-        "{terminal:?}"
-    );
-    assert_eq!(
-        terminal.last().unwrap()["result"]["liveness"]["authority"],
-        "committed_terminal"
-    );
+    let committed = f.state();
+    let expected = &attached.last().unwrap()["result"]["observation"]["terminal"];
+    let owner = Owner {
+        owner: f.intent.owner.clone(),
+        correlation: f.intent.correlation.clone(),
+    };
+    let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
+    fs::write(
+        f.root.path().join("query-state-path"),
+        f.options
+            .journal_root
+            .join(&f.intent.correlation)
+            .join("state.json")
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    for mode in ["terminal-query", "terminal-query-error"] {
+        // Replay the pre-commit snapshot; native I/O publishes the verified terminal.
+        // Report preparation and attach need not fit inside a native query's deadline.
+        journal
+            .transaction(&owner, |dir, _| api::durable::save(dir, &before_terminal))
+            .unwrap();
+        api::durable::atomic(
+            &f.root.path().join("query-terminal-state.json"),
+            &serde_json::to_vec(&committed).unwrap(),
+        )
+        .unwrap();
+        fs::write(f.root.path().join("mode"), mode).unwrap();
+        let calls = native_calls(&f.calls(), "jobs --json ");
+        let frames = f.call(
+            json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}),
+        );
+        assert_eq!(native_calls(&f.calls(), "jobs --json "), calls + 1);
+        let live = &frames.last().unwrap()["result"]["liveness"];
+        assert_eq!(live["phase"], "terminal", "{mode}: {frames:?}");
+        assert_eq!(
+            live["authority"], "committed_terminal",
+            "{mode}: {frames:?}"
+        );
+        assert_eq!(live["terminal"], *expected, "{mode}: {frames:?}");
+    }
 }
 
 #[test]
