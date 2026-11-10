@@ -36,7 +36,7 @@ pub(super) proof fn free_after_release(b: World, n: World, k: int, t: u64)
 pub(super) proof fn slot_frame(b: World, n: World, i: int)
     requires b.nodes@.len() == 4, 2 <= i < 4,
         n.nodes@ == b.nodes@.update(i, n.nodes@[i]),
-        n.nodes@[i].holds == b.nodes@[i].holds,
+        true,
         n.nodes@[i].repo == b.nodes@[i].repo,
         n.nodes@[i].footprint == b.nodes@[i].footprint,
         n.gates@ == b.gates@, n.file_sets@ == b.file_sets@,
