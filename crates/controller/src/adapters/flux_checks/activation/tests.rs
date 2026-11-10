@@ -541,3 +541,33 @@ fn canary_qualification_gate_never_marks_an_activated_stager_and_refuses_records
     );
     assert_refusal(Stager::new(&config), "flux.activation");
 }
+
+#[test]
+fn x7_activation_survives_broker_identity_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let cli = root.path().join("cli");
+    fs::write(&cli, "unchanged tool").unwrap();
+    let mut options = backend::Options {
+        executable: cli.clone(), arguments: vec![], environment: BTreeMap::new(),
+        instance_generation: "before".into(), uri: "local:///before".into(),
+        journal_root: root.path().join("journal"),
+        bootstrap: backend::HostBootstrap { cli, config: root.path().join("options.json") },
+    };
+    let record = DeploymentRecord {
+        schema: "tl3.fx_activation.v1".into(), qualification_sha256: qualification_sha256(),
+        producer_commit: "a".repeat(40),
+        instance_generation_sha256: identity(&options.instance_generation).unwrap(),
+        endpoint_sha256: identity(&options.uri).unwrap(), backend_options_sha256: identity(&options).unwrap(),
+        backend_cli_sha256: executable_sha256(&options.bootstrap.cli).unwrap(),
+        executable_sha256: executable_sha256(&options.executable).unwrap(),
+        staging_root_sha256: identity(&root.path()).unwrap(), container_mode: ContainerMode::InJob,
+        acceptance_scope: AcceptanceScope::PlannedFreshInit, profiles: vec![],
+    };
+    let activation = RuntimeActivation { record, qualification: serde_json::from_slice(PIN).unwrap() };
+    options.instance_generation = "after/reboot".into();
+    options.uri = "local:///after/run/local-0".into();
+    options.environment.insert("FLUX_URI".into(), options.uri.clone());
+    activation.validate_options(&options).unwrap();
+    fs::write(&options.executable, "changed tool").unwrap();
+    assert!(activation.validate_options(&options).is_err());
+}

@@ -6342,3 +6342,42 @@ fn concurrent_attach_and_early_observe_commit_one_binding() {
     assert_eq!(native_calls(&f.calls(), "jobs -a "), 2, "{}", f.calls());
     assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{}", f.calls());
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through admitted compute"]
+fn x7_plain_slot_matches_consumer_shape() {
+    let f = Fixture::new();
+    assert_eq!(f.submit()["kind"], "accepted");
+    let spec: Value = serde_json::from_slice(&fs::read(f.intent.output_dir.join("original-jobspec.json")).unwrap()).unwrap();
+    assert_eq!(spec["resources"], json!([{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":2},{"type":"memory","count":1}]}]));
+    let args = fs::read_to_string(f.root.path().join("args")).unwrap();
+    assert!(!args.lines().any(|arg| matches!(arg, "-N" | "-N1" | "-c" | "-g")));
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through admitted compute"]
+fn x7_request_environment_is_closed_and_names_the_refused_key() {
+    let mut f = Fixture::new();
+    f.request.environment.insert("UNRECOGNIZED_NAME".into(), "benign".into());
+    let frames = f.call(json!({"op":"prepare_intent","request":f.request,"owner":{"owner":f.intent.owner,"correlation":f.intent.correlation}}));
+    let frame = frames.last().unwrap();
+    assert_eq!(frame["kind"], "error", "{frame}");
+    assert!(frame.to_string().contains("UNRECOGNIZED_NAME"), "{frame}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through admitted compute"]
+fn x7_flux_uri_is_controller_owned_and_opt_in() {
+    for enabled in [false, true] {
+        let f = Fixture::new();
+        let mut request = serde_json::to_value(&f.request).unwrap();
+        request["pass_flux_uri"] = json!(enabled);
+        let frames = f.call(json!({"op":"prepare_intent","request":request,"owner":{"owner":f.intent.owner,"correlation":f.intent.correlation}}));
+        assert_ne!(frames.last().unwrap()["kind"], "error", "{frames:?}");
+        let intent = frames.last().unwrap()["result"]["intent"].clone();
+        let frames = f.call(json!({"op":"submit","request":request,"intent":intent}));
+        assert_eq!(frames.last().unwrap()["result"]["submission"]["kind"], "accepted", "{frames:?}");
+        let spec: Value = serde_json::from_slice(&fs::read(f.intent.output_dir.join("original-jobspec.json")).unwrap()).unwrap();
+        assert_eq!(spec["attributes"]["system"]["environment"].get("FLUX_URI"), enabled.then(|| json!(f.options.uri)).as_ref());
+    }
+}

@@ -151,6 +151,16 @@ class FluxAdmissionTests(unittest.TestCase):
             return 0, b'42', b''
         self.fail('unexpected native fixture command')
 
+    def test_x7_plain_memory_ceiling_is_24_gib(self):
+        self.intent['memory_gib'] = 25
+        spec = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
+        with self.assertRaisesRegex(RuntimeError, 'resource'):
+            fx.validate_spec(self.intent, fx.digest(fx.encoded(self.intent)), spec)
+
+    def test_x7_broker_restart_is_receipt_evidence(self):
+        self.drift = True
+        fx.binding()
+
     def submissions(self):
         return sum(call[:2] == ('job', 'submit') for call in self.calls)
 
