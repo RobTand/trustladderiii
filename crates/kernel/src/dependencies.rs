@@ -49,6 +49,12 @@ kernel_fn! {
 fn record_note(out: &mut Outbox, i: usize, dependency: Dependency) -> (result: ()) [
     requires old(out).len < OUTBOX,
     ensures final(out).len <= old(out).len + 1,
+        old(out).len <= final(out).len,
+        forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            _ => false,
+        },
+        forall|k: int| 0 <= k < old(out).len ==> #[trigger] final(out).items@[k] == old(out).items@[k],
         !dependency.rejected && dependency.status != DependencyStatus::Abandoned ==> *final(out) == *old(out),
         !dependency.rejected && dependency.status == DependencyStatus::Abandoned ==>
             final(out).len == old(out).len + 1 && final(out).items@[old(out).len as int]
@@ -1401,6 +1407,12 @@ impl World {
                 && target == old(self).dependencies@[0].target ==>
                     dependency_retirement::fact_result(*old(self), *final(self), status, *old(out), *final(out)),
             final(out).len <= old(out).len + 1,
+            old(out).len <= final(out).len,
+            forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+                Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+                _ => false,
+            },
+            forall|k: int| 0 <= k < old(out).len ==> #[trigger] final(out).items@[k] == old(out).items@[k],
             (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
                 ==> delivery_changed(*old(self), *final(self), i as int, target)
                     && progress::progress_measure(*final(self)) + 1 == progress::progress_measure(*old(self))
@@ -1615,6 +1627,12 @@ impl World {
                 None => old(self).dependencies@.push(dependency),
             },
             final(out).len <= old(out).len + 1,
+            old(out).len <= final(out).len,
+            forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+                Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+                _ => false,
+            },
+            forall|k: int| 0 <= k < old(out).len ==> #[trigger] final(out).items@[k] == old(out).items@[k],
             !dependency.rejected && dependency.status != DependencyStatus::Abandoned ==> *final(out) == *old(out),
             !dependency.rejected && dependency.status == DependencyStatus::Abandoned ==>
                 final(out).len == old(out).len + 1 && final(out).items@[old(out).len as int]
