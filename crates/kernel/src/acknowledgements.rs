@@ -763,7 +763,7 @@ kernel_fn! {
 fn ack_resources_value(n: Node, kind: EffectKind) -> (result: Node) [
     ensures result == resources_spec(n, kind),
 ] {
-    Node { fx_failures: 0, fx_incidents: 0,
+    Node { fx_failures: n.fx_failures, fx_incidents: 0,
         run: if kind == EffectKind::StopRun { None } else { n.run },
         pool: if kind == EffectKind::StopRun { false } else { n.pool },
         job: if kind == EffectKind::WithdrawJob { None } else { n.job },
