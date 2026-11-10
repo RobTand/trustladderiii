@@ -172,6 +172,107 @@ def test_backend_cli_refuses_invalid_frames_without_pb_fallback(backend_cli, res
         runtime.launch_context()
 
 
+@pytest.mark.parametrize('session', [False, True])
+@pytest.mark.parametrize('inflight', ['cleanup_limits', 'cleanup_runtime'])
+def test_cancel_sigterm_during_inflight_cleanup_survives_unit_wave(tmp_path, session, inflight):
+    """StopUnit signals every member, including sessions outside the task group."""
+    import os
+    import subprocess
+    import time
+
+    root = tmp_path
+    executable = root / 'backend-cli'
+    executable.write_text(f'''#!{sys.executable}
+import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path({str(root)!r})
+session = '--session' in sys.argv
+for line in sys.stdin:
+    request = json.loads(line)
+    command = request['command'] if session else request
+    operation = command['op']
+    if operation == {inflight!r}:
+        helper = subprocess.Popen([sys.executable, '-c',
+            "import os,pathlib,time; p=pathlib.Path(" + repr(str(root)) + "); "
+            "(p/'helper-ready').write_text(str(os.getpid())); "
+            "exec(\\\"while not (p/'release').exists(): time.sleep(0.01)\\\")"])
+        (root/'cli-ready').write_text(json.dumps(dict(pid=os.getpid(), group=os.getpgrp(),
+                                                     session=os.getsid(0), helper=helper.pid)))
+        if helper.wait() != 0:
+            sys.exit(91)
+    result = dict(op=operation)
+    if operation == 'cleanup_limits':
+        result['limits'] = dict(helper_budget_seconds=1, native_timeout_seconds=2,
+            idle_timeout_seconds=3, max_progress_frames=4, max_frame_bytes=4096,
+            max_response_bytes=16384)
+    elif operation == 'launch_context':
+        result['context'] = dict(owner='owner', correlation='correlation',
+            output_dir=str(root/'correlation'), run=dict(job='fixture'), request_digest='a'*64)
+    else:
+        result['cleanup'] = dict(stopped=True)
+    frame = dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='result', result=result)
+    if session: frame['request_id'] = request['request_id']
+    print(json.dumps(frame), flush=True)
+    if not session: break
+''')
+    executable.chmod(0o700)
+    (root / 'options.json').write_text('{}')
+    output = root / 'correlation'
+    output.mkdir()
+    source = str(Path(__file__).resolve().parents[1] / 'src')
+    action = f'''
+import json, os, pathlib, signal, sys
+sys.path.insert(0, {source!r})
+from tl3_harness import runtime
+root = pathlib.Path({str(root)!r})
+runtime.BACKEND_OUTPUT_ROOT = root
+try:
+    with runtime.cancellation_unwind():
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            result = runtime.backend_request(dict(op='cleanup_runtime', owner='owner', correlation='correlation'))
+            (root/'result.json').write_text(json.dumps(result))
+finally:
+    runtime.close_backend_session()
+'''
+    environment = dict(os.environ, TL3_EXECUTION_BACKEND='flux', TL3_RUN_BACKEND_CLI=str(executable),
+                       TL3_RUN_BACKEND_CONFIG=str(root / 'options.json'), TL3_RUN_BACKEND_SESSION=str(int(session)),
+                       TL3_RUN_OWNER='owner', TL3_RUN_CORRELATION='correlation', FLUX_JOB_ID='fixture',
+                       TL3_RUN_DIAGNOSTIC_DIR=str(output), OUT=str(output))
+    process = subprocess.Popen([sys.executable, '-I', '-B', '-c', action], env=environment,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    members = []
+    try:
+        deadline = time.monotonic() + 10
+        while not ((root / 'cli-ready').exists() and (root / 'helper-ready').exists()):
+            assert process.poll() is None, process.communicate()
+            assert time.monotonic() < deadline, 'cleanup request did not reach the signal barrier'
+            time.sleep(0.01)
+        ready = json.loads((root / 'cli-ready').read_text())
+        members = [ready['pid'], ready['helper']]
+        assert ready['group'] != process.pid and ready['session'] != process.pid
+        assert int((root / 'helper-ready').read_text()) == ready['helper']
+        assert (output / 'action-sigterm.json').is_file(), 'first TERM must have started action unwind'
+        # Match control-group delivery, not killpg(action.pid): sessions do not shield members.
+        for pid in [process.pid, *members]:
+            os.kill(pid, signal.SIGTERM)
+        (root / 'release').touch()
+        stdout, stderr = process.communicate(timeout=10)
+        diagnostics = [json.loads(p.read_text()) for p in output.glob('backend-cli-*.json')]
+        assert not diagnostics, f'in-flight {inflight} lost to unit SIGTERM: {diagnostics}'
+        assert process.returncode == 143, (process.returncode, stdout, stderr)
+        assert json.loads((root / 'result.json').read_text()) == dict(op='cleanup_runtime', cleanup=dict(stopped=True))
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+        for pid in members:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 @pytest.fixture
 def cleanup_cli(backend_cli):
     reply, calls = backend_cli
