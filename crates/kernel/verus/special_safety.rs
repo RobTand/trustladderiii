@@ -653,7 +653,6 @@ mod aggregate_command_assembly {
                         stop_frame_reveal::n4_frames_reveal(
                             before.nodes@[node.0 as int], w.nodes@[node.0 as int]);
                         if command is Resume {
-                            resume_apply_projection::endpoint(before, w, node, id);
                         }
                         aggregate_command_rows::acceptance(before, w, node, command);
                     } else {
