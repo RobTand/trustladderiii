@@ -103,10 +103,8 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     kernel_proof! {
         match command {
             Command::Answer { .. } => apply_command_safety::answer_frame(before_rules_world@, *w, i),
-            _ => {}
+            _ => assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])),
         }
     }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }

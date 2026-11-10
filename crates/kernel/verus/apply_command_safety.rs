@@ -925,35 +925,66 @@ pub(super) proof fn answer_frame(before: World, after: World, i: usize)
 }
 
 /// SPLIT: answer_pair carries across record_last_cmd. Premises are record_last_cmd's per-field posts
-/// (n written, a its input), verbatim; no node equation.
+/// (every field but last_cmd), verbatim, as r19_bridge's; no node equation in the caller.
 pub(super) proof fn answer_pair_fields(b: Node, a: Node, n: Node, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires handler_safety::answer_pair(b, a, true, question, answer, table, node),
         id > b.last_cmd,
+        n.phase == a.phase,
+        n.pos == a.pos,
+        n.repo == a.repo,
+        n.footprint == a.footprint,
+        n.generation == a.generation,
+        n.next_seq == a.next_seq,
+        n.effect == a.effect,
+        n.run == a.run,
+        n.job == a.job,
+        n.pool == a.pool,
+        n.ticket == a.ticket,
+        n.holds == a.holds,
+        n.paused == a.paused,
+        n.question == a.question,
+        n.attempt == a.attempt,
+        n.round == a.round,
+        n.replanned == a.replanned,
+        n.plan_retries == a.plan_retries,
+        n.audit_rounds == a.audit_rounds,
+        n.early_end == a.early_end,
+        n.run_failures == a.run_failures,
+        n.run_incidents == a.run_incidents,
+        n.fx_failures == a.fx_failures,
+        n.fx_incidents == a.fx_incidents,
+        n.waiting_incident == a.waiting_incident,
+        n.incident_needs_rob == a.incident_needs_rob,
         n.proposed == a.proposed,
         n.adopted == a.adopted,
-        n.phase == a.phase,
-        n.review_stop == a.review_stop,
-        n.attempt == a.attempt,
-        n.replanned == a.replanned,
-        n.question == a.question,
+        n.head == a.head,
+        n.checked == a.checked,
+        n.approved == a.approved,
+        n.merged == a.merged,
+        n.pr_open == a.pr_open,
+        n.had_pr == a.had_pr,
+        n.worktree == a.worktree,
+        n.rechecks == a.rechecks,
+        n.review_restarted == a.review_restarted,
         n.credit == a.credit,
+        n.priority == a.priority,
+        n.review_stop == a.review_stop,
         n.planning_started == a.planning_started,
+        n.waiting_prerequisite == a.waiting_prerequisite,
     ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
 {
+    assert(n == (Node { last_cmd: n.last_cmd, ..a }));
     reveal(handler_safety::answer_pair);
-    command_step_fields(b, handler_safety::unwithheld(a, b.credit.withheld),
-        handler_safety::unwithheld(n, b.credit.withheld));
+    let u = handler_safety::unwithheld(a, b.credit.withheld);
+    command_step_last_cmd(b, u, n.last_cmd);
+    assert(handler_safety::unwithheld(n, b.credit.withheld) == (Node { last_cmd: n.last_cmd, ..u }));
 }
 
-/// SPLIT: command_step reads only these fields of its second node.
-pub(super) proof fn command_step_fields(b: Node, x: Node, y: Node)
-    requires handler_safety::command_step(b, x),
-        y.proposed == x.proposed, y.adopted == x.adopted, y.phase == x.phase,
-        y.review_stop == x.review_stop, y.attempt == x.attempt, y.replanned == x.replanned,
-        y.question == x.question, y.credit.merge_credited == x.credit.merge_credited,
-        y.credit.withheld == x.credit.withheld,
-    ensures handler_safety::command_step(b, y),
+/// SPLIT: command_step does not read last_cmd.
+pub(super) proof fn command_step_last_cmd(b: Node, n: Node, id: u64)
+    requires handler_safety::command_step(b, n),
+    ensures handler_safety::command_step(b, (Node { last_cmd: id, ..n })),
 {
     reveal(handler_safety::command_step);
 }
