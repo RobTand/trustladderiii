@@ -269,7 +269,7 @@ fn confirmed_agenda_adopt(n: Node, head: HeadId) -> (result: Node) [
     requires n.generation < u64::MAX,
     ensures result == agenda_adopt_spec(n, head),
 ] {
-    let m = Node { adopted: true, head: Some(head), checked: None, ..n };
+    let m = Node { adopted: true, head: None, checked: None, ..n };
     Node { generation: m.generation + 1, phase: Phase::Checking, pos: 0, ticket: None,
         effect: match m.effect {
             Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
