@@ -50,7 +50,7 @@ fn record_note(out: &mut Outbox, i: usize, dependency: Dependency) -> (result: (
     requires old(out).len < OUTBOX,
     ensures final(out).len <= old(out).len + 1,
         old(out).len <= final(out).len,
-        forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+        forall|k: int| old(out).len <= k < final(out).len ==> match #[trigger] final(out).items@[k] {
             Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
             _ => false,
         },
@@ -1408,7 +1408,7 @@ impl World {
                     dependency_retirement::fact_result(*old(self), *final(self), status, *old(out), *final(out)),
             final(out).len <= old(out).len + 1,
             old(out).len <= final(out).len,
-            forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+            forall|k: int| old(out).len <= k < final(out).len ==> match #[trigger] final(out).items@[k] {
                 Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
                 _ => false,
             },
@@ -1628,7 +1628,7 @@ impl World {
             },
             final(out).len <= old(out).len + 1,
             old(out).len <= final(out).len,
-            forall|k: int| old(out).len <= k < final(out).len ==> match final(out).items@[k] {
+            forall|k: int| old(out).len <= k < final(out).len ==> match #[trigger] final(out).items@[k] {
                 Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
                 _ => false,
             },
