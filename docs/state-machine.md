@@ -701,6 +701,8 @@ missed one costs Rob a manual clear. #309 tracks precise attribution.
 
 ## Q47: required checks before enqueue
 
+Historical queue rule. Current Direct reports infrastructure check failures without requesting a workflow rerun; accepted infrastructure failures leave AwaitingDelivery unchanged. See the implementation record and source citations in [Publishing](state-table.md#publishing). The queue retirement is recorded under TD / PRD #878; this record does not establish a separate approval to drop automatic reruns for still-required Direct checks.
+
 Rob, 2026-11-01 approved handling CI failures during Publishing at the enqueue
 step. TL3 waits for the approved head's required checks before adding
 `tl3-queue`. A code failure takes the existing failed-round path, cancels the
@@ -743,6 +745,8 @@ TL3 decides on the check-suite and check-run webhooks it already receives, with 
 A pending or missing required check is a legitimate wait, not a stall. The held enqueue arms no allowance timer, and a look at it never spends a retry. An incident clears when its head stops being the node's head or approved head, or the node closes, because that kernel result is evidence the head no longer matters.
 
 ### Q52 and #447 clarifications (#735)
+
+Historical queue rules. Direct propagates status-read errors: a non-rate-limited 403 or a 404 becomes a permanent delivery refusal with a diagnostic and delivery effect incident, rather than the check-setup incident described below. See [Publishing](state-table.md#publishing) for current source citations.
 
 #735 moved these decisions into pure functions with Kani proofs, and recorded what the controller already does. None of this is a new rule.
 
