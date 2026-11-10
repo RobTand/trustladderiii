@@ -100,7 +100,7 @@ pub(super) proof fn value_node_rows(b: Node, n: Node, fast: bool, i: usize, fact
 
 pub(super) proof fn ordinary_distance(b: Node, n: Node, fact: Fact)
     requires n == retirement::fact_node(b, fact), arithmetic_consistent(b),
-        fact == Fact::IncidentCleared { by_rob: true },
+        fact == (Fact::IncidentCleared { by_rob: true }),
         b.waiting_incident, b.effect.is_none(), (!b.paused || b.phase is Stopping),
         !(b.phase is Closed),
     ensures distance(n) < distance(b),
