@@ -355,9 +355,9 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
             Node { last_cmd: id, ..before_rules_world@.nodes@[i as int] }));
     }
-    on_answer_exact(w, i, question, answer, out);
+    on_answer(w, i, question, answer, out);
     kernel_proof! {
-        apply_command_safety::answer_mid_world(before_rules_world@, mid_world@, *w, i, id, question,
+        apply_command_safety::answer_world_f(before_rules_world@, mid_world@, *w, i, id, question,
             answer, before_out@, *out);
     }
 }

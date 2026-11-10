@@ -588,10 +588,9 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
 }
 
 
-/// L1 re-stack: the node on_answer_exact leaves, i.e. the answered node and then L1's guarded
+/// L1 re-stack: the answered node and then L1's guarded
 /// withholding (withhold_dependency_credit's exact post, over the answered node's fields).
-/// Opaque so that answer_command's query holds it as one term (revealed by on_answer_exact and
-/// the held_* row lemmas only).
+/// Opaque; revealed by the held_* row lemmas only.
 #[verifier::opaque]
 pub(super) open spec fn held_answer(n: Node, nq: u64, id: u64, answer: Answer, table: Seq<Dependency>,
     node: NodeId) -> Node {
@@ -911,26 +910,12 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 }
 
 
-/// L1 re-stack: the node on_answer_exact leaves is held_answer, from its branch facts (the
-/// reveal lives here, not in kernel::answers, whose module context every answers query shares).
-pub(super) proof fn held_answer_is(n: Node, nq: u64, id: u64, answer: Answer, table: Seq<Dependency>,
-    node: NodeId, v: Node)
-    requires handler_safety::answer_withholds(n, id, answer) ==>
-            v == handler_safety::unwithheld(apply_answer_values::answered(n, nq, id, answer).0,
-                v.credit.withheld)
-            && v.credit.withheld == dependencies::withheld_after(
-                apply_answer_values::answered(n, nq, id, answer).0.credit.withheld, v.planning_started,
-                v.phase, v.credit.ready, table, node),
-        !handler_safety::answer_withholds(n, id, answer) ==> v == apply_answer_values::answered(n, nq, id, answer).0,
-    ensures v == held_answer(n, nq, id, answer, table, node),
-{
-    reveal(held_answer);
-}
 
-/// L1 re-stack (answer_command fix 2): answer_command's ensures from the mid world (after the
-/// last_cmd write) and on_answer_exact's ensures over (mid, after), both verbatim premises, so
-/// the entry only matches literals; the bridge to answer_world is here, with no mutable borrow.
-pub(super) proof fn answer_mid_world(before: World, mid: World, after: World, i: usize, id: u64,
+/// Option 3 (kernel master 11-10): answer_command's ensures from the mid world (after the last_cmd
+/// write) and L1's on_answer's ensures over (mid, after), both verbatim premises. Rows move from the
+/// written node to b by field access; node_checked carries as in L1's answer_command; N1 by the
+/// rules chain to mid; the pair by answer_pair_last_cmd; the table by extensionality.
+pub(super) proof fn answer_world_f(before: World, mid: World, after: World, i: usize, id: u64,
     question: u64, answer: Answer, ob: Outbox, oa: Outbox)
     requires i < before.nodes@.len(),
         node_headroom(before.nodes@[i as int]),
@@ -945,19 +930,53 @@ pub(super) proof fn answer_mid_world(before: World, mid: World, after: World, i:
         mid.fail_fast == before.fail_fast,
         mid.file_sets@ == before.file_sets@,
         mid.dependencies@ == before.dependencies@,
-        after.nodes@ == mid.nodes@.update(i as int, apply_command_safety::held_answer(
-            mid.nodes@[i as int], mid.next_question, question, answer, mid.dependencies@,
-            NodeId(i as u64))),
-        after.next_question == apply_answer_values::answered(
-            mid.nodes@[i as int], mid.next_question, question, answer).1,
+        (node_checked(mid, mid.nodes@[i as int])
+            && answer_progress_input(mid.nodes@[i as int], question, answer)
+            ==> distance(after.nodes@[i as int]) < distance(mid.nodes@[i as int])),
+        (mid.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == mid.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == mid.nodes@[i as int].footprint,
+        (settle_shape(mid.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == mid.nodes@.len(),
+        forall|j: int| 0 <= j < mid.nodes@.len() && j != i
+            ==> after.nodes@[j] == mid.nodes@[j],
+        after.nodes@[i as int].generation as int <= mid.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == mid.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == mid.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == mid.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= mid.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= mid.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == mid.nodes@[i as int].last_cmd,
         after.next_ticket == mid.next_ticket,
+        after.next_question as int <= mid.next_question as int + 1,
         after.gates@ == mid.gates@,
         after.pool_capacity == mid.pool_capacity,
         after.fail_fast == mid.fail_fast,
         after.file_sets@ == mid.file_sets@,
         after.dependencies@ == mid.dependencies@,
         oa.len <= ob.len + 1,
+        after.nodes@[i as int].proposed == mid.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == mid.nodes@[i as int].adopted,
+        (mid.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == mid.nodes@[i as int].phase),
+        handler_safety::answer_pair(mid.nodes@[i as int], after.nodes@[i as int], true, question, answer,
+            after.dependencies@, NodeId(i as u64)),
         transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (node_checked(mid, mid.nodes@[i as int])
+            && after.nodes@[i as int] != mid.nodes@[i as int]
+            ==> (match mid.nodes@[i as int].question {
+                Some(q) => q.question == question,
+                None => false,
+            }) && (match after.nodes@[i as int].question {
+                Some(q) => q.question != question,
+                None => true,
+            })),
+
+        (after.nodes@[i as int].holds ==> mid.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> mid.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == mid.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        mid.next_question <= after.next_question,
+        (retirement::node_rules(mid, mid.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
     ensures (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
             && command_progress_input(before.nodes@[i as int], (Command::Answer { question, answer }))
@@ -1017,12 +1036,25 @@ pub(super) proof fn answer_mid_world(before: World, mid: World, after: World, i:
             ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
-    assert(mid.nodes@[i as int] == Node { last_cmd: id, ..b });
-    nodes_rewrite_frame(before.nodes@, i as int, Node { last_cmd: id, ..b }, after.nodes@[i as int]);
-    answered_parts(b, before.next_question, id, question, answer);
-    answered_held_parts(b, before.next_question, id, question, answer, before.dependencies@,
-        NodeId(i as u64));
-    answer_world(before, after, i, id, question, answer, ob, oa);
+    let a = Node { last_cmd: id, ..b };
+    let n = after.nodes@[i as int];
+    assert(mid.nodes@[i as int] == a);
+    if node_checked(before, b) {
+        footprint::valid_under_table_growth(before, mid, a.footprint);
+        assert(node_checked(mid, a));
+        handler_safety::distance_last_cmd(b, id);
+        if command_progress_input(b, Command::Answer { question, answer }) {
+            assert(answer_progress_input(a, question, answer));
+        }
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, a);
+    }
+    answer_pair_last_cmd(b, id, n, question, answer, after.dependencies@, NodeId(i as u64));
+    other_resume_post(b, n, id, Command::Answer { question, answer });
+    assert(after.nodes@ =~= before.nodes@.update(i as int, n));
 }
 
 }

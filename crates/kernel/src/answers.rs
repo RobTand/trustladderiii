@@ -55,7 +55,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
@@ -95,6 +94,9 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 // An answer that left the node AwaitingRob withholds nothing.
                 handler_safety::unwithheld_same(before_answer@);
             }
+            if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
+                apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
+            }
         }
     }
     kernel_proof! {
@@ -112,63 +114,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
             handler_safety::rules_world_update(before_answer_rules@, *w,
                 before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
         }
-    }
-}
-}
-
-kernel_fn! {
-/// K5 design 4: on_answer's unchanged statements with an exact, per-field world post,
-/// so answer_command transfers one node equation and no field rows.
-pub(super) fn on_answer_exact(w: &mut World, i: usize, id: u64, answer: Answer,
-    out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]),
-        old(w).next_question < u64::MAX,
-    ensures final(w).nodes@ == old(w).nodes@.update(i as int, apply_command_safety::held_answer(
-            old(w).nodes@[i as int], old(w).next_question, id, answer, old(w).dependencies@,
-            NodeId(i as u64))),
-        final(w).next_question == apply_answer_values::answered(
-            old(w).nodes@[i as int], old(w).next_question, id, answer).1,
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).file_sets@ == old(w).file_sets@,
-        final(w).dependencies@ == old(w).dependencies@,
-        final(out).len <= old(out).len + 1,
-        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
-] {
-    kernel_snapshot! { before_exact = *w }
-    kernel_snapshot! { before_answer = w.nodes@[i as int] }
-    let withhold = match w.nodes[i].question {
-        Some(q) => w.nodes[i].phase == Phase::AwaitingRob
-            && q.id == id
-            && matches!(answer, Answer::Continue | Answer::AddCredit(_))
-            && allowed(q.kind, answer),
-        None => false,
-    };
-    kernel_proof! {
-        assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
-    }
-    let (n1, nq1, note) = answer_value(w.nodes[i], w.next_question, id, answer);
-    w.nodes[i] = n1;
-    if withhold {
-        w.withhold_dependency_credit(i);
-        kernel_proof! {
-            let n = w.nodes@[i as int];
-            assert(n == handler_safety::unwithheld(n1, n.credit.withheld));
-        }
-    }
-    kernel_proof! {
-        apply_command_safety::held_answer_is(before_answer@, before_exact@.next_question, id, answer,
-            before_exact@.dependencies@, NodeId(i as u64), w.nodes@[i as int]);
-        assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, w.nodes@[i as int]));
-    }
-    w.next_question = nq1;
-    match note {
-        Some(x) => notice(out, i, x),
-        None => {}
     }
 }
 }
