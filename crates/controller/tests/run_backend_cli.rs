@@ -7728,3 +7728,61 @@ fn cleanup_maintenance_terminal_debt_is_loud_without_a_noop_timer() {
     );
     assert!(!cleanup_debts(&f).is_empty());
 }
+
+// These maintenance faults need only a journal. Keep all paths inside a temp dir;
+// no native runtime, resolver, shared mount or cleanup helper is consulted.
+fn maintenance_temp_backend(root: &Path) -> tl3_controller::adapters::run_backend::flux::Flux {
+    tl3_controller::adapters::run_backend::flux::Flux::new(Options {
+        executable: root.join("unused-flux"),
+        arguments: vec![],
+        environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+        instance_file: root.join("unused-INSTANCE"),
+        journal_root: root.join("journal"),
+        bootstrap: HostBootstrap {
+            cli: root.join("unused-bootstrap"),
+            config: root.join("unused-config"),
+        },
+    })
+    .unwrap()
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "corrupt-owner";
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    api::durable::maintenance_failure(&journal, key, "retained failure", 0).unwrap();
+    let errors = journal.join("maintenance-errors");
+    let _permissions = MaintenancePermissions(errors.clone());
+    fs::set_permissions(&errors, fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(errors.join("permission-probe"))
+        .unwrap_err();
+    assert_eq!(probe.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(0));
+    for _ in 0..3 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(!backend.cleanup_maintenance(now).unwrap().pending.is_empty());
+        assert!(
+            backend.clone().next_cleanup_maintenance_ms().unwrap().unwrap() >= now + 300_000,
+            "elapsed unrewritable failure must back off from the last maintenance pass"
+        );
+        assert_eq!(api::durable::maintenance_failures(&journal).unwrap()[0].next_attempt_ms, 0);
+    }
+    assert_eq!(
+        maintenance_temp_backend(root.path()).next_cleanup_maintenance_ms().unwrap(),
+        Some(0),
+        "restart must promptly report retained elapsed failure"
+    );
+    assert_eq!(fs::read(dir.join("state.json")).unwrap(), b"{truncated");
+}
