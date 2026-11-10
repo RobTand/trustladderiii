@@ -304,7 +304,8 @@ class FreshInitTests(unittest.TestCase):
              patch.object(deploy, "run", side_effect=transport), \
              patch.object(deploy, "listener_ready", return_value=True), \
              patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"), \
-             patch.object(deploy, "verify_stability", side_effect=failure):
+             (patch.object(deploy, "verify_stability", side_effect=failure)
+              if failure is not None else contextlib.nullcontext()):
             yield args
 
     def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
@@ -316,6 +317,7 @@ class FreshInitTests(unittest.TestCase):
         starts = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "start"]]
         self.assertEqual(starts, ["tl3-postgres.service", "tl3d.service", "tl3-mlflow.service",
                                   "tl3-status.service", "tl3-console.service"])
+        self.assertTrue(any("--property=NRestarts" in call for call in self.calls))
         reset_index = next(i for i, call in enumerate(self.calls) if "fresh-database" in call)
         controller_index = self.calls.index(["systemctl", "--user", "start", "tl3d.service"])
         self.assertLess(reset_index, controller_index)
@@ -460,6 +462,78 @@ class FreshInitTests(unittest.TestCase):
                     self.assertTrue((fixture.backup / "data/pg_wal/segment").exists())
                 finally:
                     fixture.doCleanups()
+
+    def cleanup_transport(self, stopped_states=None, failed_stop=None):
+        stopped_states = stopped_states or {}
+        self.states.update({unit: "active" for unit in
+                            (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")})
+        self.calls.clear()
+
+        def transport(command, **kwargs):
+            argv = list(map(str, command))
+            if argv[:3] == ["systemctl", "--user", "stop"]:
+                self.assertEqual(kwargs["timeout"], 150)
+                self.states[argv[3]] = stopped_states.get(argv[3], "inactive")
+                if argv[3] == failed_stop:
+                    self.calls.append(argv)
+                    raise RuntimeError("stop response lost")
+            return self.transport_run(command, **kwargs)
+
+        return patch.object(deploy, "run", side_effect=transport)
+
+    def cleanup_stops(self):
+        return [call[3] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
+
+    def test_worker_guard_cleanup_accepts_failed_services_after_explicit_stop(self):
+        expected = ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                    deploy.WORKER_SLICE, "tl3-postgres.service"]
+        for failed in (*deploy.CLIENT_UNITS, "tl3-postgres.service"):
+            with self.subTest(failed=failed), self.cleanup_transport({failed: "failed"}):
+                deploy.freeze_fresh_attempt(self.home)
+                self.assertEqual(self.cleanup_stops(), expected)
+                self.assertEqual(self.states[failed], "failed")
+                self.assertFalse(any("reset-failed" in call for call in self.calls))
+
+    def test_worker_guard_cleanup_continues_after_stop_error_when_unit_is_quiescent(self):
+        expected = ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                    deploy.WORKER_SLICE, "tl3-postgres.service"]
+        for failed in expected:
+            with self.subTest(failed=failed), self.cleanup_transport(failed_stop=failed):
+                with self.assertRaisesRegex(RuntimeError, "NOT established.*stop response lost"):
+                    deploy.freeze_fresh_attempt(self.home)
+                self.assertEqual(self.cleanup_stops(), expected)
+                self.assertTrue(all(state == "inactive" for state in self.states.values()))
+
+    def test_worker_guard_cleanup_rejects_noninactive_slice_after_stop(self):
+        for state in ("active", "activating", "deactivating", "unknown", "", "failed"):
+            with self.subTest(state=state), self.cleanup_transport({deploy.WORKER_SLICE: state}):
+                with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                    deploy.freeze_fresh_attempt(self.home)
+                self.assertIn(deploy.WORKER_SLICE, self.cleanup_stops())
+                self.assertNotIn("tl3-postgres.service", self.cleanup_stops())
+                self.assertEqual(self.states["tl3-postgres.service"], "active")
+
+    def test_worker_guard_failed_service_with_lingering_worker_is_not_frozen(self):
+        with self.cleanup_transport({"tl3d.service": "failed"}), self.recorded_worker():
+            with self.assertRaisesRegex(RuntimeError, "NOT established.*recorded TL3"):
+                deploy.freeze_fresh_attempt(self.home)
+            self.assertIn(deploy.WORKER_SLICE, self.cleanup_stops())
+            self.assertNotIn("tl3-postgres.service", self.cleanup_stops())
+
+    def test_worker_guard_cleanup_collects_each_stop_and_verification_error(self):
+        def transport(command, **kwargs):
+            self.calls.append(list(command))
+            raise RuntimeError("stop failed")
+
+        self.states.update({unit: "active" for unit in deploy.CLIENT_UNITS})
+        with patch.object(deploy, "run", side_effect=transport), \
+             patch.object(deploy, "unit_state", side_effect=lambda unit: self.states[unit]):
+            with self.assertRaisesRegex(RuntimeError, "NOT established") as caught:
+                deploy.freeze_fresh_attempt(self.home)
+        for unit in deploy.CLIENT_UNITS:
+            self.assertIn(unit, str(caught.exception))
+        self.assertEqual(str(caught.exception).count("stop failed"), len(deploy.CLIENT_UNITS))
+        self.assertEqual(self.cleanup_stops(), ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS)])
 
     def test_worker_guard_cleanup_failure_keeps_postgres_and_preserves_original(self):
         for failed in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service"):
