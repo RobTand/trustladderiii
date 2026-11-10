@@ -366,7 +366,7 @@ pub(super) fn incident_value(n: Node, i: usize, needs_rob: bool) -> (result: (No
             == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } }),
 ] {
     let m = incident_node(n, needs_rob);
-    let notes = incident_notes(i, needs_rob);
+    let notes = incident_notes(i, !needs_rob);
     (m, notes)
 }
 }
