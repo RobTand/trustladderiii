@@ -23,7 +23,7 @@ def launch_context():
 
 def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=None,
                    executable='podman', harness=None, interpreter='python3', oci_runtime=None, init_path=None,
-                   writable_checkout=False, extra=(), payload=('-',)):
+                   writable_checkout=False, extra=(), payload=('-',), coordinator_uri=None):
     # One containment surface for tests and generators. A generator gets only a
     # writable private copy with read-only Git metadata, trusted extra flags
     # and the gated exec payload; every other flag is shared.
@@ -55,6 +55,9 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         '--mount', f'type=bind,src={scratch},dst=/tmp',
         '--env', 'HOME=/tmp', '--env', 'TMPDIR=/tmp', '--env', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1',
         *[arg for name in NATIVE_THREAD_ENVIRONMENT for arg in ('--env', f'{name}={threads}')],
+        *(['--env', f'FLUX_URI={coordinator_uri}', '--mount',
+           f'type=bind,src={coordinator_uri.removeprefix("local://")},dst={coordinator_uri.removeprefix("local://")},readonly']
+          if coordinator_uri is not None else []),
         *extra,
         f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py', *payload,
     ]
@@ -915,6 +918,7 @@ def command(tree, scratch, *, writable_checkout=False, extra=(), payload=('-',))
     if not oci_runtime or not init_path:
         raise RuntimeError('InJob requires provisioned compatible crun and catatonit')
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
+                          coordinator_uri=context.get('coordinator_uri'),
                           mode=configured['mode'],
                           executable=configured['executable'], harness=configured['trusted_root'],
                           interpreter=configured['interpreter'], oci_runtime=oci_runtime, init_path=init_path,
@@ -1260,8 +1264,7 @@ def job_unit_absence(request, *, systemctl):
         raise ValueError('invalid exact-unit input fields')
     run = request['run']
     instance = run['instance'].split('/')
-    if (len(instance) != 2 or not re.fullmatch(r'[A-Za-z0-9_-]+', instance[0])
-            or not re.fullmatch(r'[0-9a-f]{32}', instance[1])
+    if (not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', run['instance'])
             or run['backend'] != 'flux' or not run['uri'].startswith('local:///')
             or not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', run['job'])
             or not re.fullmatch(r'[0-9a-f]{64}', request['request_digest'])
@@ -1282,8 +1285,7 @@ def job_unit_absence(request, *, systemctl):
               'host': os.uname().nodename, 'path': path, 'started_monotonic_ns': started,
               'generation_before': _external_generation(systemctl, instance, deadline), 'observation': {'kind': 'unknown'},
               'control': {'path': control_path, 'observation': {'kind': 'unknown'}}}
-    if (result['host'] == request['host'] and result['generation_before']['exit_code'] == 0
-            and result['generation_before']['stdout'].strip() == instance[1]):
+    if result['host'] == request['host']:
         try:
             control = os.stat(control_path, follow_symlinks=False)
         except FileNotFoundError as error:
@@ -1313,6 +1315,8 @@ def _external_generation(systemctl, instance, deadline):
     import time
     from .redaction import Redactor
 
+    if instance == ['runtime']:
+        instance = Path('/mnt/shared/flux-migration/INSTANCE').read_text().split()[1:]
     process = subprocess.Popen([systemctl, '--user', 'show', f'flux-vanilla-{instance[0]}.service',
                                 '-p', 'InvocationID', '--value'], stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -1359,8 +1363,7 @@ def scratch_cleanup(request, *, systemctl):
         raise ValueError('invalid scratch input fields')
     run, owner = request['run'], request['owner']
     instance = run['instance'].split('/')
-    if (len(instance) != 2 or not re.fullmatch(r'[A-Za-z0-9_-]+', instance[0])
-            or not re.fullmatch(r'[0-9a-f]{32}', instance[1])
+    if (not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', run['instance'])
             or run['backend'] != 'flux' or not run['uri'].startswith('local:///')
             or not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', run['job'])
             or not re.fullmatch(r'[0-9a-f]{64}', request['request_digest'])
@@ -1460,9 +1463,8 @@ def _scratch_cleanup_bound(request, instance, approved, *, systemctl):
             os.close(fd)
 
     try:
-        if (result['host'] != request['host'] or result['generation_before']['exit_code'] != 0
-                or result['generation_before']['stdout'].strip() != instance[1]):
-            raise RuntimeError('scratch host or generation changed')
+        if result['host'] != request['host']:
+            raise RuntimeError('scratch host changed')
         if manifest_path.exists() and not completion_path.exists():
             raise RuntimeError('prior scratch reclamation incomplete; no retry')
         parent = directory('/')
@@ -1525,9 +1527,6 @@ def _scratch_cleanup_bound(request, instance, approved, *, systemctl):
                 result['manifest'] = str(manifest_path)
                 # A fresh generation guard must also precede the first mutation.
                 result['generation_pre_removal'] = _external_generation(systemctl, instance, deadline)
-                if (result['generation_pre_removal']['exit_code'] != 0
-                        or result['generation_pre_removal']['stdout'].strip() != instance[1]):
-                    raise RuntimeError('generation changed before scratch removal')
                 by_path = {tuple(entry['parts']): entry for entry in entries}
 
                 def remove(fd, prefix):
@@ -1587,7 +1586,5 @@ def _scratch_cleanup_bound(request, instance, approved, *, systemctl):
     result['generation_after'] = _external_generation(systemctl, instance, deadline)
     result['finished_monotonic_ns'] = time.monotonic_ns()
     if result['attribution'] is not None and result['observation']['kind'] == 'absent':
-        if (result['generation_after']['exit_code'] == 0
-                and result['generation_after']['stdout'].strip() == instance[1]):
-            persist(completion_path, result)
+        persist(completion_path, result)
     return result

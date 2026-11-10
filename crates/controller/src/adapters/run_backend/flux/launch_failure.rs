@@ -175,7 +175,8 @@ struct JobUnitAbsenceInput<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GenerationObservation {
-    exit_code: i32,
+    #[serde(rename = "exit_code")]
+    _exit_code: i32,
     stdout: String,
     stderr: String,
 }
@@ -251,12 +252,8 @@ fn absence_matches(record: &Record, nonce: &str, observation: &JobUnitAbsence) -
     let Some(binding) = &record.binding else {
         return Ok(false);
     };
-    let generation = binding.id.instance.rsplit('/').next().unwrap_or("");
-    let generation_matches = |facts: &GenerationObservation| {
-        facts.exit_code == 0
-            && facts.stdout.len() <= 16384
-            && facts.stderr.len() <= 16384
-            && facts.stdout.trim() == generation
+    let bounded_observation = |facts: &GenerationObservation| {
+        facts.stdout.len() <= 16384 && facts.stderr.len() <= 16384
     };
     let mut last_local_observation = 0;
     for execution in record.container_launches.keys() {
@@ -286,8 +283,8 @@ fn absence_matches(record: &Record, nonce: &str, observation: &JobUnitAbsence) -
             observation.control.observation,
             ControlObservation::Directory
         )
-        && generation_matches(&observation.generation_before)
-        && generation_matches(&observation.generation_after)
+        && bounded_observation(&observation.generation_before)
+        && bounded_observation(&observation.generation_after)
         && matches!(
             observation.observation,
             UnitObservation::Absent { errno: 2 }
@@ -424,6 +421,7 @@ mod tests {
                 ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
             ]
             .into(),
+            instance_file: None,
             instance_generation: record.intent.instance.clone(),
             uri: record.intent.uri.clone(),
             journal_root: journal.path().to_owned(),
@@ -509,6 +507,7 @@ mod tests {
                 ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
             ]
             .into(),
+            instance_file: None,
             instance_generation: record.intent.instance.clone(),
             uri: record.intent.uri.clone(),
             journal_root: journal.path().to_owned(),

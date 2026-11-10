@@ -86,6 +86,8 @@ pub struct LaunchContext {
     pub output_dir: PathBuf,
     pub progress: ProgressPolicy,
     pub native_threads: NonZeroU32,
+    #[serde(default)]
+    pub coordinator_uri: Option<String>,
     pub runtime: ExecutionRuntime,
     pub runtime_identity: RuntimeIdentity,
     pub placement: LaunchPlacement,
@@ -302,6 +304,8 @@ pub struct Request {
     pub reservation: Reservation,
     pub runner: RunnerIdentity,
     pub environment: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub pass_flux_uri: bool,
     pub runtime: RuntimeIdentity,
     pub scratch_root: PathBuf,
     pub no_progress_seconds: Option<NonZeroU32>,
@@ -602,10 +606,31 @@ pub struct Options {
     pub executable: PathBuf,
     pub arguments: Vec<String>,
     pub environment: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub instance_file: Option<PathBuf>,
     pub instance_generation: String,
     pub uri: String,
     pub journal_root: PathBuf,
     pub bootstrap: HostBootstrap,
+}
+
+impl Options {
+    pub fn resolved_uri(&self) -> Result<String> {
+        let Some(locator) = &self.instance_file else { return Ok(self.uri.clone()); };
+        let raw = durable::read(locator)?;
+        if raw.len() > 4096 { return Err(BackendError::invalid("INSTANCE locator exceeds bound")); }
+        let text = std::str::from_utf8(&raw).map_err(|_| BackendError::invalid("invalid INSTANCE locator"))?;
+        let parts: Vec<_> = text.split_whitespace().collect();
+        if parts.len() != 2 || !absolute(std::path::Path::new(parts[0])) || !token(parts[1]) {
+            return Err(BackendError::invalid("INSTANCE requires an absolute prefix and run name"));
+        }
+        let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")?;
+        let rank = match hostname.trim() {
+            "dl380g10" => 0, "sparky" => 1, "sparklina" => 2,
+            _ => return Err(BackendError::invalid("no native Flux broker on coordinator host")),
+        };
+        Ok(format!("local://{}/runs/{}/run/local-{rank}", parts[0], parts[1]))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

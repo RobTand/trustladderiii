@@ -74,9 +74,12 @@ installation_id = 1
 # selected_tests = 200
 # Optional repo-wide rules, run as regression checks on every leaf and round.
 # always_tests = ["tests/test_rules.py"]
-# Optional CPU-only PB reservation for Checking and maker run_tests. Default: 1 CPU, 2 GiB.
-# Integers only: cpus 1..16, mem_gb 1..64. No GPU field.
-# test_demand = { cpus = 4, mem_gb = 12 }
+# CPU-only demand per parallel process. Default: 1 CPU, 2 GiB.
+# Integers only: cpus 1..10, mem_gb 1..24. Flux admission also checks parallel 4
+# against the dl380g10 plain-slot limit of 10 cores / 24 GiB.
+# test_demand = { cpus = 2, mem_gb = 6 }
+# PrismaQuant only: controller-owned coordinator URI for test and generator jobs.
+# pass_flux_uri = true
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
 
 [models]
@@ -127,17 +130,16 @@ container_image = "sha256:000000000000000000000000000000000000000000000000000000
 
 # Flux is opt-in. These are offline placeholders, not qualified runtime settings.
 # [flux]
-# instance_generation = "operator-assigned-generation"
+# instance_file = "/mnt/shared/flux-migration/INSTANCE"
 # executable = "/opt/flux/bin/flux"
 # backend_cli = "/opt/tl3/bin/tl3-run-backend"
 # container_mode = "own_scope" # explicit selection; runtime qualification is separate
 # runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
-# uri = "local:///run/flux/local-0"
 # environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
 # staging_root = "/mnt/shared/tl3-inputs"
 # output_root = "/mnt/shared/flux-out/tl3"
 # container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-# A generation must change after instance history is lost, even if the URI stays fixed.
+# Broker starttime and config hash are receipts; activation binds code, images and tools.
 # Inputs are immutable. Mutable work belongs in job-owned local scratch, never /mnt/shared.
 # Only the selected backend's settings are validated; Flux never falls back to PB.
 

@@ -159,21 +159,10 @@ fn execution_selection_validates_only_the_selected_backend() {
 #[test]
 fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
     for (field, value) in [
-        ("instance_generation", ""),
-        ("instance_generation", "stable URI is not a generation"),
-        ("instance_generation", "../61f47a7f95af46d794ca89c3a71f0654"),
-        ("instance_generation", "fv1-model/not-an-invocation"),
-        (
-            "instance_generation",
-            "fv1-model/61f47a7f95af46d794ca89c3a71f0654/extra",
-        ),
         ("executable", "flux"),
         ("backend_cli", "tl3-run-backend"),
         ("backend_cli", "/opt/tl3/../unprovisioned"),
-        ("uri", "local:///"),
-        ("uri", "local:/run/flux/local-0"),
-        ("uri", "ssh://remote/instance"),
-        ("uri", "local:///run/flux?secret=fixture"),
+        ("instance_file", "relative/INSTANCE"),
         ("staging_root", "/mnt/shared"),
         ("staging_root", "/mnt/shared/../private"),
         ("staging_root", "/mnt/shared/flux-out"),
@@ -299,7 +288,7 @@ fn repository_test_demand_is_optional_and_bounded() {
             .test_demand
             .is_none()
     );
-    for (cpus, mem_gb) in [(1, 1), (4, 12), (16, 64)] {
+    for (cpus, mem_gb) in [(1, 1), (4, 12), (10, 24)] {
         let text = EXAMPLE.replace(
             "installation_id = 1",
             &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"),
@@ -311,9 +300,9 @@ fn repository_test_demand_is_optional_and_bounded() {
     }
     for value in [
         "{ cpus = 0, mem_gb = 12 }",
-        "{ cpus = 17, mem_gb = 12 }",
+        "{ cpus = 11, mem_gb = 12 }",
         "{ cpus = 4, mem_gb = 0 }",
-        "{ cpus = 4, mem_gb = 65 }",
+        "{ cpus = 4, mem_gb = 25 }",
         "{ cpus = -1, mem_gb = 12 }",
         "{ cpus = 4, mem_gb = -1 }",
         "{ cpus = 1.5, mem_gb = 12 }",

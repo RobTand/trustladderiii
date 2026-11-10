@@ -97,6 +97,7 @@ impl Fixture {
                 record: root.path().join("activation.json"),
                 sha256: String::new(),
             }),
+            instance_file: None,
             instance_generation: "fixture/00000000000000000000000000000000".into(),
             executable: cli.clone(),
             backend_cli: cli,
@@ -543,6 +544,7 @@ fn x7_activation_survives_broker_identity_changes() {
     fs::write(&cli, "unchanged tool").unwrap();
     let mut options = backend::Options {
         executable: cli.clone(), arguments: vec![], environment: BTreeMap::new(),
+        instance_file: None,
         instance_generation: "before".into(), uri: "local:///before".into(),
         journal_root: root.path().join("journal"),
         bootstrap: backend::HostBootstrap { cli, config: root.path().join("options.json") },

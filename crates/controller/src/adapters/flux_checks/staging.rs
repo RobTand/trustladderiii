@@ -123,26 +123,8 @@ impl Stager {
             .max()
             .unwrap_or(1)
             .clamp(1, 4) as u32;
-        let cpus = demand.cpus.max(parallel);
-        let memory = u64::from(demand.mem_gb)
-            .checked_mul(u64::from(parallel))
-            .and_then(|gib| gib.checked_mul(1 << 30))
-            .ok_or(Error::Invalid("check memory demand overflow"))?;
-        Ok(backend::Reservation {
-            cpus: cpus
-                .try_into()
-                .map_err(|_| Error::Invalid("positive check CPU demand required"))?,
-            gpus: 0,
-            memory_bytes: memory
-                .try_into()
-                .map_err(|_| Error::Invalid("positive check memory demand required"))?,
-            memory_guarantee: backend::MemoryGuarantee::DeclaredOnly,
-            parallelism: parallel.try_into().expect("clamped positive parallelism"),
-            native_threads: (cpus / parallel)
-                .max(1)
-                .try_into()
-                .expect("positive thread bound"),
-        })
+        super::super::workers::execution::reservation(demand.cpus, demand.mem_gb, parallel)
+
     }
 
     /// Build immutable input and shared runtime identities without launching native work.
@@ -194,6 +176,7 @@ impl Stager {
             .as_ref()
             .ok_or(Error::Invalid("missing served head"))?;
         let request = backend::Request {
+            pass_flux_uri: self.images.pass_flux_uri(&delivery.repository),
             repo: format!("{}/{}", delivery.repository.owner, delivery.repository.name),
             tree: input.tree,
             suite: backend::Suite::DaytimeChecks {

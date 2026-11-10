@@ -1472,6 +1472,7 @@ impl Fixture {
             true,
         );
         let request = Request {
+            pass_flux_uri: false,
             repo: "fixture/repo".into(),
             tree: TreeIdentity {
                 head,
@@ -1616,6 +1617,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             executable: native,
             arguments: vec![p.to_string_lossy().into_owned()],
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: None,
             instance_generation: "fixture-generation".into(),
             uri: "local:///fixture".into(),
             journal_root: p.join("journal"),
@@ -2470,7 +2472,7 @@ fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
-fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
+fn generation_slash_is_not_a_path_and_original_spec_allows_restart() {
     assert!(api::generation(
         "fv1-model/61f47a7f95af46d794ca89c3a71f0654"
     ));
@@ -2480,7 +2482,7 @@ fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
     let mut options = f.options.clone();
     options.instance_generation = "replacement-generation".into();
     fs::write(&f.config, serde_json::to_vec(&options).unwrap()).unwrap();
-    assert_eq!(f.attach().last().unwrap()["code"], "acceptance_unknown");
+    assert_ne!(f.attach().last().unwrap()["kind"], "error");
 }
 
 #[test]

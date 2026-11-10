@@ -7,32 +7,16 @@ pub(super) const FIRST_CUT_HOST: &str = "dl380g10";
 pub(super) fn options(options: &Options) -> Result<()> {
     if !absolute(&options.executable)
         || !absolute(&options.journal_root)
-        || !generation(&options.instance_generation)
         || !absolute(&options.bootstrap.cli)
         || !absolute(&options.bootstrap.config)
-        || !options.uri.starts_with("local:///")
+        || options.instance_file.as_ref().is_some_and(|path| !absolute(path))
+        || (options.instance_file.is_none() && !options.uri.starts_with("local:///"))
         || options.uri.chars().any(char::is_control)
-        || options
-            .environment
-            .get("FLUX_URI")
-            .is_some_and(|uri| uri != &options.uri)
         || options.arguments.len() > 32
         || !options.environment.contains_key("PATH")
     {
         return Err(BackendError::invalid(
             "explicit executable, PATH, generation and journal root required",
-        ));
-    }
-    if options.instance_generation.contains('/')
-        && (options.environment.get("HOME").map(String::as_str) != Some("/home/rob")
-            || options
-                .environment
-                .get("XDG_RUNTIME_DIR")
-                .map(String::as_str)
-                != Some("/run/user/1000"))
-    {
-        return Err(BackendError::invalid(
-            "live generation guard requires exact authorized HOME/XDG user-bus environment",
         ));
     }
     for (name, value) in &options.environment {
@@ -77,20 +61,21 @@ pub(super) fn reservation(reservation: &Reservation) -> Result<()> {
             "parallelism times native threads exceeds aggregate CPU declaration",
         ));
     }
+    if reservation.cpus.get() > 10 || reservation.memory_bytes.get() > (24_u64 << 30) {
+        return Err(BackendError::invalid("request exceeds dl380g10 plain limit of 10 cores / 24 GiB and no GPU"));
+    }
     Ok(())
 }
 
 pub(super) fn request(
     request: &Request,
     intent: &SubmissionIntent,
-    options: &Options,
+    _options: &Options,
 ) -> Result<()> {
     reservation(&request.reservation)?;
     if !generation(&intent.instance)
         || !token(&intent.owner)
         || !token(&intent.correlation)
-        || intent.instance != options.instance_generation
-        || intent.uri != options.uri
         || !hex(&intent.request_digest, 64)
         || intent.request_digest != digest(&serde_json::to_vec(request)?)
         || intent.output_dir != Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation)

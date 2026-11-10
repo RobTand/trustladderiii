@@ -7,6 +7,7 @@ struct Settings {
     image: Option<String>,
     tests: AdditionalTests,
     test_demand: Option<tl3_config::TestDemand>,
+    pass_flux_uri: bool,
 }
 
 #[derive(Clone, Default)]
@@ -34,6 +35,7 @@ impl Images {
                         Settings {
                             image: repo.container_image.clone(),
                             test_demand: repo.test_demand,
+                            pass_flux_uri: repo.pass_flux_uri,
                             tests: AdditionalTests {
                                 selected: repo.selected_tests,
                                 always: repo.always_tests.clone(),
@@ -58,6 +60,10 @@ impl Images {
         self.settings(repo)
             .map(|settings| settings.tests.clone())
             .unwrap_or_default()
+    }
+
+    pub(super) fn pass_flux_uri(&self, repo: &Repository) -> bool {
+        self.settings(repo).is_some_and(|settings| settings.pass_flux_uri)
     }
 
     pub(super) fn test_demand(&self, repo: &Repository) -> Option<tl3_config::TestDemand> {

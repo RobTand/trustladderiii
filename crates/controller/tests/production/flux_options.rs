@@ -5,6 +5,7 @@ use tl3_store::Store;
 pub(super) fn flux(root: &Path) -> tl3_config::Flux {
     tl3_config::Flux {
         activation: None,
+        instance_file: None,
         instance_generation: "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into(),
         executable: "/opt/flux/bin/flux".into(),
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
@@ -34,8 +35,8 @@ fn bootstrap_preserves_uri_generation_and_explicit_environment() {
     let root = tempfile::tempdir().unwrap();
     let config = flux(root.path());
     let options = production::flux_options(&config);
-    assert_eq!(options.uri, config.uri);
-    assert_eq!(options.instance_generation, config.instance_generation);
+    assert_eq!(options.instance_file, config.instance_file);
+    assert_eq!(options.instance_generation, "runtime");
     assert_eq!(options.executable, config.executable);
     assert_eq!(options.bootstrap.cli, config.backend_cli);
     assert_eq!(
@@ -47,8 +48,7 @@ fn bootstrap_preserves_uri_generation_and_explicit_environment() {
         config.output_root.join(".run-backend")
     );
     assert!(options.arguments.is_empty());
-    let mut expected = config.environment.clone();
-    expected.insert("FLUX_URI".into(), config.uri.clone());
+    let expected = config.environment.clone();
     assert_eq!(options.environment, expected);
 }
 

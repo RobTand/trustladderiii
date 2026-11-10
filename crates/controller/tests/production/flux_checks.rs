@@ -58,6 +58,7 @@ impl Preparation for Staging {
             bytes: 1,
         };
         let request = Request {
+            pass_flux_uri: false,
             repo: "owner/sandbox".into(),
             tree: TreeIdentity {
                 head: "c".repeat(40),

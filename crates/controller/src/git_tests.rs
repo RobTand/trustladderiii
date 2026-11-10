@@ -161,6 +161,7 @@ pub fn select_flux(config: &mut tl3_config::Config, root: &Path) {
     config.execution_backend = tl3_config::ExecutionBackend::Flux;
     config.flux = Some(tl3_config::Flux {
         activation: None,
+        instance_file: None,
         instance_generation: "fixture/00000000000000000000000000000000".into(),
         executable: "/fixture/flux".into(),
         backend_cli: "/fixture/tl3-run-backend".into(),

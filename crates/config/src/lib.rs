@@ -419,6 +419,9 @@ pub struct Repository {
     /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
+    /// Pass the runtime coordinator URI to repositories that submit nested Flux work.
+    #[serde(default)]
+    pub pass_flux_uri: bool,
     /// Run up to this many existing tests that import the change, and pass on the base,
     /// as one more regression check (#359). Absent means off.
     #[serde(default)]
@@ -603,12 +606,16 @@ pub struct FluxActivation {
 pub struct Flux {
     #[serde(default)]
     pub activation: Option<FluxActivation>,
+    #[serde(default = "default_flux_instance_file")]
+    pub instance_file: Option<PathBuf>,
+    #[serde(default)]
     pub instance_generation: String,
     pub executable: PathBuf,
     pub backend_cli: PathBuf,
     pub container_mode: ContainerMode,
     #[serde(default)]
     pub runtime_bundles: Vec<PathBuf>,
+    #[serde(default)]
     pub uri: String,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
@@ -634,6 +641,10 @@ impl std::fmt::Debug for Flux {
     }
 }
 
+fn default_flux_instance_file() -> Option<PathBuf> {
+    Some("/mnt/shared/flux-migration/INSTANCE".into())
+}
+
 impl Flux {
     fn validate(&self) -> Result<(), Error> {
         if let Some(activation) = &self.activation {
@@ -651,28 +662,8 @@ impl Flux {
                 return Err(invalid("flux.activation", "record and sha256"));
             }
         }
-        let generation = self.instance_generation.as_str();
-        let (run, invocation) = generation
-            .split_once('/')
-            .map_or((generation, None), |(run, id)| (run, Some(id)));
-        if run.is_empty()
-            || matches!(run, "." | "..")
-            || generation.len() > 128
-            || !run
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-            || invocation.is_some_and(|id| {
-                id.len() != 32
-                    || !id
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            })
-        {
-            return Err(invalid(
-                "flux.instance_generation",
-                "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path",
-            ));
-        }
+        let locator = self.instance_file.as_ref().ok_or_else(|| invalid("flux.instance_file", "runtime INSTANCE locator required"))?;
+        absolute("flux.instance_file", locator)?;
         if self.runtime_bundles.is_empty() {
             return Err(invalid(
                 "flux.runtime_bundles",
@@ -708,26 +699,6 @@ impl Flux {
             return Err(invalid(
                 "flux.backend_cli",
                 "use an absolute provisioned executable without parent traversal",
-            ));
-        }
-        nonempty("flux.uri", &self.uri)?;
-        let uri = Url::parse(&self.uri).map_err(|_| {
-            invalid(
-                "flux.uri",
-                "use an explicit local:/// absolute Flux socket path",
-            )
-        })?;
-        if !self.uri.starts_with("local:///")
-            || uri.scheme() != "local"
-            || uri.host_str().is_some()
-            || !uri.path().starts_with('/')
-            || uri.path() == "/"
-            || uri.query().is_some()
-            || uri.fragment().is_some()
-        {
-            return Err(invalid(
-                "flux.uri",
-                "use an explicit local:/// absolute Flux socket path",
             ));
         }
         shared_directory(
@@ -1181,17 +1152,25 @@ impl Config {
             github_name(&format!("{field}.owner"), &repo.owner, false)?;
             github_name(&format!("{field}.name"), &repo.name, true)?;
             if let Some(demand) = repo.test_demand {
-                if !(1..=16).contains(&demand.cpus) {
+                if !(1..=10).contains(&demand.cpus) {
                     return Err(invalid(
                         format!("{field}.test_demand.cpus"),
-                        "use 1 to 16 CPUs",
+                        format!("repository {}/{}: use 1 to 10 CPUs; dl380g10 plain limit is 10 cores / 24 GiB", repo.owner, repo.name),
                     ));
                 }
-                if !(1..=64).contains(&demand.mem_gb) {
+                if !(1..=24).contains(&demand.mem_gb) {
                     return Err(invalid(
                         format!("{field}.test_demand.mem_gb"),
-                        "use 1 to 64 GiB",
+                        format!("repository {}/{}: use 1 to 24 GiB; dl380g10 plain limit is 10 cores / 24 GiB", repo.owner, repo.name),
                     ));
+                }
+            }
+            if self.execution_backend == ExecutionBackend::Flux {
+                let demand = repo.test_demand.unwrap_or_default();
+                if demand.cpus.checked_mul(4).is_none_or(|cpus| cpus > 10)
+                    || demand.mem_gb.checked_mul(4).is_none_or(|memory| memory > 24) {
+                    return Err(invalid(format!("{field}.test_demand"), format!(
+                        "repository {}/{}: test_demand at parallel 4 exceeds dl380g10 plain limit of 10 cores / 24 GiB; choose a fitting demand without reducing requested parallelism", repo.owner, repo.name)));
                 }
             }
             if let Some(timeout) = repo.generator_timeout_s

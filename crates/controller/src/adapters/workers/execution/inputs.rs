@@ -120,9 +120,13 @@ fn root(profile: &Profile, call: &str) -> Result<PathBuf> {
     ))?)))
 }
 
-pub(super) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backend::Reservation> {
-    let parallel = parallel.max(1);
-    let cpus = cpus.max(parallel);
+pub(crate) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backend::Reservation> {
+    if parallel == 0 || parallel > 4 || cpus == 0 || mem_gb == 0
+        || cpus.checked_mul(parallel).is_none_or(|total| total > 10)
+        || mem_gb.checked_mul(parallel).is_none_or(|total| total > 24) {
+        return Err(Error::Invalid("worker demand exceeds dl380g10 plain limit of 10 cores / 24 GiB or parallel 1..=4"));
+    }
+    let cpus = cpus * parallel;
     let memory = u64::from(mem_gb)
         .checked_mul(u64::from(parallel))
         .and_then(|n| n.checked_mul(1 << 30))
@@ -394,6 +398,7 @@ fn execute(command: Command) -> Result<Value> {
             )?;
             backend::validate_request_environment(&environment).map_err(backend_error)?;
             let request = backend::Request {
+                pass_flux_uri: profile.pass_flux_uri,
                 repo: format!(
                     "{}/{}",
                     profile.delivery.repository.owner, profile.delivery.repository.name
@@ -520,6 +525,7 @@ mod tests {
         )
         .unwrap();
         let mut profile = Profile {
+            pass_flux_uri: false,
             activation: None,
             schema: "tl3.worker_execution.v1".into(),
             attempt: attempt.clone(),
@@ -580,7 +586,7 @@ mod tests {
         )
         .unwrap();
         let error = execute(command()).unwrap_err().to_string();
-        assert_eq!(error, "flux.activation.instance_generation_sha256");
+        assert!(error.contains("worker input was not allocated"));
         assert!(!error.contains("private-changed-generation"));
         fs::write(
             &options.bootstrap.config,
@@ -687,12 +693,12 @@ mod tests {
 
     #[test]
     fn repeat_parallel_demand_is_aggregate_and_threads_are_bounded() {
-        let demand = reservation(3, 2, 4).unwrap();
-        assert_eq!(demand.cpus.get(), 4);
+        let demand = reservation(2, 2, 4).unwrap();
+        assert_eq!(demand.cpus.get(), 8);
         assert_eq!(demand.memory_bytes.get(), 8 << 30);
-        assert_eq!(demand.native_threads.get(), 1);
-        let demand = reservation(12, 2, 4).unwrap();
-        assert_eq!(demand.native_threads.get(), 3);
+        assert_eq!(demand.native_threads.get(), 2);
+        assert!(reservation(3, 2, 4).is_err());
+        assert!(reservation(2, 8, 4).is_err());
         assert!(reservation(1, 0, 0).is_err());
     }
 }

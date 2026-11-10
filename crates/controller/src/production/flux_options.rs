@@ -13,14 +13,14 @@ pub fn flux_job_environment() -> std::collections::BTreeMap<String, String> {
 
 /// Shared controller/worker conversion. The configured URI wins once at this boundary.
 pub fn flux_options(config: &tl3_config::Flux) -> Options {
-    let mut environment = config.environment.clone();
-    environment.insert("FLUX_URI".into(), config.uri.clone());
+    let environment = config.environment.clone();
     Options {
         executable: config.executable.clone(),
         arguments: Vec::new(),
         environment,
-        instance_generation: config.instance_generation.clone(),
-        uri: config.uri.clone(),
+        instance_file: config.instance_file.clone(),
+        instance_generation: "runtime".into(),
+        uri: "local:///runtime".into(),
         journal_root: config.output_root.join(".run-backend"),
         bootstrap: HostBootstrap {
             cli: config.backend_cli.clone(),

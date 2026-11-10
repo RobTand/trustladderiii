@@ -47,10 +47,10 @@ GENERATOR_ENVIRONMENT = (
 
 
 def budget(cpus=1, mem_gb=2, timeout_s=TIMEOUT):
-    if (type(cpus) is not int or not 1 <= cpus <= 16
-            or type(mem_gb) is not int or not 1 <= mem_gb <= 64
+    if (type(cpus) is not int or not 1 <= cpus <= 10
+            or type(mem_gb) is not int or not 1 <= mem_gb <= 24
             or type(timeout_s) is not int or not 1 <= timeout_s <= MAX_TIMEOUT):
-        raise ValueError("generator budget requires 1–16 CPUs, 1–64 GiB and generator_timeout_s in 1–600")
+        raise ValueError("generator budget requires 1–10 CPUs, 1–24 GiB and generator_timeout_s in 1–600")
     return {"cpus": cpus, "mem_gb": mem_gb, "timeout_s": timeout_s,
             "outer_timeout_s": timeout_s + OUTER_OVERHEAD_SECONDS}
 

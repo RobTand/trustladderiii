@@ -5,19 +5,20 @@ use serde::{Deserialize, Serialize};
 mod inputs;
 mod waits;
 pub use inputs::command;
+pub(crate) use inputs::reservation;
 pub use waits::Waits;
 
 /// The worker tests executor. Flux is the only one. Without a selected Flux executor every
 /// run that needs worker tests is refused; nothing is defaulted (PrismaBuild is retired).
 #[derive(Clone)]
-pub(super) struct Selected(Option<Box<tl3_config::Flux>>);
+pub(super) struct Selected(Option<Box<tl3_config::Flux>>, crate::adapters::images::Images);
 
 impl Selected {
     pub(super) fn new(config: &tl3_config::Config) -> Result<Self> {
         Ok(Self(match config.selected_execution()? {
             tl3_config::SelectedExecution::Flux(flux) => Some(Box::new(flux.clone())),
             tl3_config::SelectedExecution::PrismaBuild(_) => None,
-        }))
+        }, crate::adapters::images::Images::new(&config.github.repos)))
     }
 
     fn flux(&self) -> Result<&tl3_config::Flux> {
@@ -56,6 +57,7 @@ impl Selected {
         let flux = self.flux()?;
         let options = crate::production::flux_options(flux);
         let profile = Profile {
+            pass_flux_uri: self.1.pass_flux_uri(&delivery.repository),
             activation: flux.activation.clone(),
             schema: "tl3.worker_execution.v1".into(),
             attempt: fs::canonicalize(attempt)?,
@@ -85,6 +87,8 @@ impl Selected {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default)]
+    pub pass_flux_uri: bool,
     #[serde(default)]
     pub activation: Option<tl3_config::FluxActivation>,
     pub schema: String,
@@ -253,7 +257,7 @@ mod tests {
         let root = repo.root.path();
         let attempt = root.join("attempt-00000000");
         fs::create_dir(&attempt).unwrap();
-        let retired = Selected(None);
+        let retired = Selected(None, Default::default());
         let mut tests = json!({"worktree": repo.path, "inputs": {"tests": {
             "image": format!("sha256:{}", "a".repeat(64)), "cpus": 1, "mem_gb": 2,
             "execution": {"backend": "flux", "profile": attempt.join("execution.json")}}}});
@@ -293,6 +297,7 @@ mod tests {
         fs::create_dir(&attempt).unwrap();
         let flux = tl3_config::Flux {
             activation: None,
+            instance_file: None,
             instance_generation: "fixture/00000000000000000000000000000000".into(),
             executable: "/fixture/flux".into(),
             backend_cli: "/fixture/tl3-run-backend".into(),
@@ -304,7 +309,7 @@ mod tests {
             output_root: root.join("output"),
             container_image: format!("sha256:{}", "a".repeat(64)),
         };
-        let selected = Selected(Some(Box::new(flux.clone())));
+        let selected = Selected(Some(Box::new(flux.clone())), Default::default());
         let mut worker = json!({"worktree": repo.path, "inputs": {"tests": selected.inputs(&flux.container_image,
             tl3_config::TestDemand::default(), &attempt.join("execution.json")).unwrap()}});
         selected
@@ -330,6 +335,7 @@ mod tests {
             bytes: 1,
         };
         let request = backend::Request {
+            pass_flux_uri: false,
             repo: "owner/sandbox".into(),
             tree: tree.clone(),
             suite: backend::Suite::WorkerTests {

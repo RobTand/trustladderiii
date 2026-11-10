@@ -63,7 +63,6 @@ impl Flux {
                 Some("CLEANUP" | "INACTIVE") => NativePhase::Finishing,
                 _ => return Err(BackendError::unknown("unknown native state")),
             };
-            self.ensure_generation()?;
             let evidence = evidence::retain_json(
                 &record.intent.output_dir,
                 &format!("liveness-{}.json", digest(&reply.stdout)),

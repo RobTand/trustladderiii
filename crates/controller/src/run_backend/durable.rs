@@ -25,6 +25,15 @@ pub struct Record {
     pub jobspec: Option<BlobRef>,
     #[serde(default)]
     pub allocation_grant: Option<CpuGrant>,
+    #[serde(default)]
+    pub instance_observation: Option<InstanceObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InstanceObservation {
+    pub broker_starttime: Option<String>,
+    pub loaded_config: Option<BlobRef>,
+    pub config_sha256: Option<String>,
 }
 
 #[derive(Clone)]

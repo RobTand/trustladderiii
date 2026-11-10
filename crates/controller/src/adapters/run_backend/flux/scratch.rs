@@ -20,7 +20,8 @@ struct ScratchInput<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Generation {
-    exit_code: i32,
+    #[serde(rename = "exit_code")]
+    _exit_code: i32,
     stdout: String,
     stderr: String,
 }
@@ -255,12 +256,8 @@ impl Flux {
             Ok(value) => value,
             Err(_) => return Ok(None),
         };
-        let generation = binding.id.instance.rsplit('/').next().unwrap_or("");
-        let matches_generation = |g: &Generation| {
-            g.exit_code == 0
-                && g.stdout.len() <= 16384
-                && g.stderr.len() <= 16384
-                && g.stdout.trim() == generation
+        let bounded_observation = |g: &Generation| {
+            g.stdout.len() <= 16384 && g.stderr.len() <= 16384
         };
         if !reply.success
             || observed.schema != "tl3.scratch_cleanup.v1"
@@ -277,8 +274,8 @@ impl Flux {
             || observed.path != record.request.scratch_root.join(&binding.id.job)
             || observed.uid != 1000
             || !matches!(observed.observation, ScratchState::Absent { errno: 2 })
-            || !matches_generation(&observed.generation_before)
-            || !matches_generation(&observed.generation_after)
+            || !bounded_observation(&observed.generation_before)
+            || !bounded_observation(&observed.generation_after)
             || observed.started_monotonic_ns == 0
             || observed.finished_monotonic_ns < observed.started_monotonic_ns
             || observed.finished_monotonic_ns - observed.started_monotonic_ns > 10_000_000_000
@@ -293,7 +290,7 @@ impl Flux {
                     && observed
                         .generation_pre_removal
                         .as_ref()
-                        .is_some_and(matches_generation)
+                        .is_some_and(bounded_observation)
                     && *path == out.join("scratch-reclamation.manifest.json") =>
             {
                 let bytes = read(path)?;

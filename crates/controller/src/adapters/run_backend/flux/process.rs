@@ -52,49 +52,20 @@ pub(super) fn bounded(reader: impl Read) -> std::io::Result<Vec<u8>> {
 }
 
 impl Flux {
-    pub(super) fn ensure_generation(&self) -> Result<()> {
-        let Some((run, expected)) = self.options.instance_generation.split_once('/') else {
-            return Ok(());
-        };
-        let mut command = Command::new("/usr/bin/systemctl");
-        command.env_clear().envs(&self.options.environment).args([
-            "--user",
-            "show",
-            &format!("flux-vanilla-{run}.service"),
-            "-p",
-            "InvocationID",
-            "--value",
-        ]);
-        self.check_generation(command, expected)
-    }
-
-    fn check_generation(&self, command: Command, expected: &str) -> Result<()> {
-        let output = self.capture_command(command, None)?;
-        if !output.success
-            || output.stdout.len() > 128
-            || std::str::from_utf8(&output.stdout).ok().map(str::trim) != Some(expected)
-        {
-            return Err(BackendError::unknown(
-                "rank-zero systemd InvocationID unavailable or changed; retained IDs remain unknown",
-            ));
-        }
-        Ok(())
-    }
-    pub(super) fn command(&self) -> Command {
+    pub(super) fn command(&self) -> Result<Command> {
         let mut command = Command::new(&self.options.executable);
         command
             .args(&self.options.arguments)
             .env_clear()
             .envs(&self.options.environment)
-            .env("FLUX_URI", &self.options.uri);
-        command
+            .env("FLUX_URI", self.options.resolved_uri()?);
+        Ok(command)
     }
     pub(super) fn capture(&self, args: &[&str]) -> Result<Captured> {
         self.capture_owned(&args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())
     }
     pub(super) fn capture_owned(&self, args: &[String]) -> Result<Captured> {
-        self.ensure_generation()?;
-        let mut command = self.command();
+        let mut command = self.command()?;
         command.args(args);
         self.capture_command(command, None)
     }
@@ -180,6 +151,9 @@ impl Flux {
         record: &Record,
     ) -> Result<std::collections::BTreeMap<String, String>> {
         let mut env = record.request.environment.clone();
+        if record.request.pass_flux_uri {
+            env.insert("FLUX_URI".into(), self.options.resolved_uri()?);
+        }
         let threads = record.request.reservation.native_threads.to_string();
         for name in [
             "OMP_NUM_THREADS",
@@ -432,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_guard_process_stops_and_reaps_while_silent() {
+    fn native_process_stops_and_reaps_while_silent() {
         use std::os::unix::fs::PermissionsExt;
         use std::time::{Duration, Instant};
         let root = tempfile::tempdir().unwrap();
@@ -453,6 +427,7 @@ mod tests {
             executable: "/bin/true".into(),
             arguments: vec![],
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: None,
             instance_generation: "fixture".into(),
             uri: "local:///fixture".into(),
             journal_root: root.path().join("journal"),
@@ -463,7 +438,7 @@ mod tests {
         })
         .unwrap();
         let stop = backend.stop.clone();
-        let watch = std::thread::spawn(move || backend.check_generation(command, &"a".repeat(32)));
+        let watch = std::thread::spawn(move || backend.capture_command(command, None));
         let deadline = Instant::now() + Duration::from_secs(5);
         while !marker.exists() {
             assert!(Instant::now() < deadline);
