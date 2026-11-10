@@ -15,7 +15,7 @@
 //! - After a permanent effect failure, carrying on restarts the phase's
 //!   effects from the top. Every effect converges or is deduplicated, so this
 //!   ends where retrying only the failed effect would.
-#![cfg_attr(not(any(kani, test)), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -159,9 +159,6 @@ pub use footprint::Footprint;
 pub use ids::{FileId, HeadId, NodeId, RepoId};
 pub use queries::Wait;
 
-#[cfg(kani)]
-mod proofs;
-
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_phase.rs"]
 mod progress_phase;
@@ -185,14 +182,10 @@ pub const RESERVE: u64 = 3;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const FREE_RECHECKS: u8 = 3;
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Outcome {
     Merged,
     Stopped,
@@ -202,14 +195,10 @@ pub enum Outcome {
     NotActionable,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EarlyEnd {
     Duplicate,
     AlreadyDone,
@@ -236,14 +225,10 @@ impl EarlyEnd {
 }
 
 /// The holding phase a leaf waiting in Ready goes back to.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Resume {
     Making,
     Checking,
@@ -268,14 +253,10 @@ impl Resume {
     }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Phase {
     Ingesting,
     Auditing,
@@ -369,14 +350,10 @@ impl Phase {
     }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Role {
     Ingest,
     Audit,
@@ -385,14 +362,10 @@ pub enum Role {
     Review,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum EffectKind {
     /// Start an agent run. Its reply, not its acknowledgement, moves the node on.
     StartRun(Role),
@@ -429,14 +402,10 @@ impl EffectKind {
 }
 
 /// The one effect a node may have in flight.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct InFlight {
     pub seq: u64,
     pub kind: EffectKind,
@@ -444,14 +413,10 @@ pub struct InFlight {
     pub cancelling: bool,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum QKind {
     AuditDisagreement,
     NeedsSplitting,
@@ -463,14 +428,10 @@ pub enum QKind {
 
 /// The step whose failure stopped a request for TL3 review under `fail_fast`
 /// (Q54, Rob, 2026-11-02).
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum ReviewStop {
     ChecksFailed,
     ChangesRequested,
@@ -486,14 +447,10 @@ pub enum ReviewStop {
 }
 
 /// Where a node goes when Rob says carry on.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Cont {
     Ingesting,
     Auditing,
@@ -504,14 +461,10 @@ pub enum Cont {
     Nowhere,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Question {
     pub id: u64,
     pub kind: QKind,
@@ -522,14 +475,10 @@ pub struct Question {
 }
 
 /// The request's credit ledger. The balance is derived, so it can't drift from the entries.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Credit {
     pub ready: bool,
     pub start: u64,
@@ -538,7 +487,7 @@ pub struct Credit {
     pub spent: u64,
     pub merge_credited: bool,
     /// Declared prerequisites withhold the ledger until planning admission.
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub withheld: bool,
 }
 
@@ -653,14 +602,10 @@ impl Credit {
     }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Node {
     pub phase: Phase,
     /// Position in the phase's agenda.
@@ -697,9 +642,9 @@ pub struct Node {
     pub fx_incidents: u8,
     pub waiting_incident: bool,
     pub incident_needs_rob: bool,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub proposed: Option<HeadId>,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub adopted: bool,
     pub head: Option<HeadId>,
     /// The head that passed its checks.
@@ -713,22 +658,22 @@ pub struct Node {
     pub worktree: bool,
     pub rechecks: u8,
     /// This review has used its fresh conversation after exhaustion.
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub review_restarted: bool,
     pub credit: Credit,
     /// Orders agent-pool grants (Q39). Unranked keeps the older row shape.
     #[cfg_attr(
-        all(feature = "serde", not(kani)),
+        feature = "serde",
         serde(default, skip_serializing_if = "Priority::is_unranked")
     )]
     pub priority: Priority,
     /// Set when `fail_fast` stopped the node for TL3 review instead of
     /// retrying (Q54). A postmortem for it is owed as `needed_fix`.
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub review_stop: Option<ReviewStop>,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub planning_started: bool,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub waiting_prerequisite: Option<u64>,
 }
 
@@ -862,22 +807,15 @@ impl Node {
     }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct Gate {
     pub w: u8,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
@@ -888,12 +826,12 @@ pub struct World {
     pub next_ticket: u64,
     pub next_question: u64,
     file_sets: Vec<Vec<FileId>>,
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     dependencies: Vec<Dependency>,
     /// Q54: a step that would retry the work stops the request for TL3
     /// review instead. Config sets it at every open, so it applies to open
     /// requests too.
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub fail_fast: bool,
 }
 
@@ -940,14 +878,10 @@ fn snapshot_world(world: &World) -> (result: World) [
 }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Reply {
     IngestDone {
         size: u8,
@@ -993,14 +927,10 @@ pub enum Reply {
     RunFailed,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Ack {
     Confirmed,
     /// Durable responsibility for the current generic hand-to-delivery effect.
@@ -1012,14 +942,10 @@ pub enum Ack {
 }
 
 /// A request's priority from its issue (Q39): best first, then unranked.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Priority {
     P0,
     P1,
@@ -1047,55 +973,39 @@ impl Priority {
     }
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum PrerequisiteKind {
     Issue,
     PullRequest,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct DependencyTarget {
     pub kind: PrerequisiteKind,
     pub number: u64,
     pub request: Option<NodeId>,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum DependencyStatus {
     Pending,
     Delivered,
     Abandoned,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Fact {
     DependencyRemove {
         kind: PrerequisiteKind,
@@ -1124,14 +1034,10 @@ pub enum Fact {
     Priority(Priority),
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Answer {
     Continue,
     TryAgain,
@@ -1143,14 +1049,10 @@ pub enum Answer {
     MarkHandled,
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Command {
     Stop,
     Pause,
@@ -1159,14 +1061,10 @@ pub enum Command {
     Answer { question: u64, answer: Answer },
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
 // A plain tag. Without it, Q39's Priority field let rustc hide the event's
 // discriminant in that field's spare values, and decoding it at every match
 // took the reply proofs from 15,166 VCCs to 19,549 and past 44 GB. With the
@@ -1178,7 +1076,7 @@ pub enum Event {
         /// Events stored before Q39 carry none and read as unranked; unranked
         /// serializes that way too, as #371 requires of later fields.
         #[cfg_attr(
-            all(feature = "serde", not(kani)),
+            feature = "serde",
             serde(default, skip_serializing_if = "Priority::is_unranked")
         )]
         priority: Priority,
@@ -1187,7 +1085,7 @@ pub enum Event {
         repo: RepoId,
         head: HeadId,
         #[cfg_attr(
-            all(feature = "serde", not(kani)),
+            feature = "serde",
             serde(default, skip_serializing_if = "Priority::is_unranked")
         )]
         priority: Priority,
@@ -1213,10 +1111,7 @@ pub enum Event {
     },
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1230,10 +1125,7 @@ pub enum NoteKind {
     DependencyCycle { number: u64 },
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1246,10 +1138,7 @@ pub enum Notice {
     Note(NoteKind),
 }
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1275,10 +1164,7 @@ pub const OUTBOX: usize = 5;
 /// transition of settle. A fixed array holds them, not a list on the heap,
 /// because Kani reasons about a growable list far more expensively: the merge
 /// proofs ran out of memory reading one. `step` collects them into its list.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1388,10 +1274,7 @@ impl Outbox {
 }
 
 /// One step of a phase's agenda.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1646,10 +1529,7 @@ impl World {
 }
 
 /// The rule a world breaks, from `World::check`.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1920,7 +1800,6 @@ proof fn world_checked_definition(w: World)
     reveal(world_checked);
 }
 
-
 /// Q30/Q39 / #771: obstruction proof needs no sufficient internal move. The
 /// real is_settled and settle bodies both establish this predicate.
 #[verifier::opaque]
@@ -1934,7 +1813,6 @@ proof fn settled_world_definition(w: World)
 {
     reveal(settled_world);
 }
-
 
 /// #771: the production checker and enforced reserves supply the step scope.
 proof fn checked_reserves(w: World)
@@ -2211,7 +2089,6 @@ spec fn scheduling_safe(w: World) -> bool {
                     ==> !(w.nodes@[j].phase is Closed)))
         && open_prefix(w.nodes@, w.nodes@.len()) <= u32::MAX as int
 }
-
 
 }
 

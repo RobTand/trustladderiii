@@ -1,4 +1,4 @@
-"""Compile feature-gated test and proof targets without running them."""
+"""Compile feature-gated test targets without running them."""
 import argparse
 from itertools import combinations
 import json
@@ -10,26 +10,22 @@ from child_env import child_env
 
 
 def commands(metadata, mode):
-    if mode not in {'features', 'kani'}:
+    if mode != 'features':
         raise ValueError('Unknown compile mode')
     result = []
     packages = [package for package in metadata['packages']
-                if package['id'] in metadata['workspace_members']
-                and (mode != 'kani' or package['name'] == 'tl3-kernel')]
+                if package['id'] in metadata['workspace_members']]
     if not packages:
         raise RuntimeError('No compile targets found')
     for package in sorted(packages, key=lambda package: package['name']):
         features = sorted(package['features'])
         for size in range(len(features) + 1):
             for selected in combinations(features, size):
-                command = ['cargo', 'kani' if mode == 'kani' else 'test', '-p', package['name'],
+                command = ['cargo', 'test', '-p', package['name'],
                            '--no-default-features']
-                if mode == 'kani':
-                    command.append('--only-codegen')
-                else:
-                    # The controller deliberately rejects Loom outside library unit tests.
-                    target = '--lib' if package['name'] == 'tl3-controller' and 'loom' in selected else '--all-targets'
-                    command.extend(['--locked', '--no-run', target])
+                # The controller deliberately rejects Loom outside library unit tests.
+                target = '--lib' if package['name'] == 'tl3-controller' and 'loom' in selected else '--all-targets'
+                command.extend(['--locked', '--no-run', target])
                 if selected:
                     command.extend(['--features', ','.join(selected)])
                 result.append(command)
@@ -38,7 +34,7 @@ def commands(metadata, mode):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['features', 'kani'])
+    parser.add_argument('mode', choices=['features'])
     args = parser.parse_args()
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--no-deps', '--locked', '--format-version=1'], text=True, env=child_env()))

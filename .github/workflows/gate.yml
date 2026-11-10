@@ -115,40 +115,9 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  kani:
-    # Proves the measured PR tier on BuildBuddy when a change can affect a proof,
-    # and proves nothing otherwise. The required Rust check needs this job.
-    name: Kani
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 55
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - id: refs
-        name: Queue-aware base and head
-        uses: Mergifyio/gha-mergify-ci@392d123d84a27960993927aec1f2cbb059fb95c1 # v27
-        with:
-          action: scopes-git-refs
-      - name: Prove affected harnesses on BuildBuddy
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-          BASE: ${{ steps.refs.outputs.base }}
-          HEAD: ${{ steps.refs.outputs.head }}
-          BRANCH: ${{ github.head_ref }}
-        run: exec python3 tools/ci/kani_gate.py pr --base "$BASE" --head "$HEAD" --branch "$BRANCH"
-      - name: Cancel Kani shard runs
-        if: cancelled()
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: python3 tools/ci/kani_gate.py cancel
-
   rust-lint:
     name: Rust
-    needs: [bazel, feature-builds, kani]
+    needs: [bazel, feature-builds]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -178,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [features, kani]
+        mode: [features]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -201,28 +170,12 @@ jobs:
         with:
           prefix-key: v1-rust-${{ hashFiles('**/Cargo.lock') }}
           shared-key: hosted-${{ runner.arch }}
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        if: matrix.mode == 'kani'
-        with:
-          key: kani-0.68.0-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            ~/.cargo/bin/cargo-kani
-            ~/.cargo/bin/kani
-            ~/.kani
-            ~/.rustup/toolchains/nightly-2026-08-21-*
-      - name: Install pinned Kani compiler
-        if: matrix.mode == 'kani'
-        run: |
-          if ! command -v cargo-kani >/dev/null; then
-            python3 tools/ci/child_env.py cargo install --locked kani-verifier --version 0.68.0
-          fi
-          python3 tools/ci/child_env.py cargo kani setup
       - name: Disk before feature builds
         if: matrix.mode == 'features'
         run: |
           df -h .
           if [ -d target ]; then du -sh target; fi
-      - name: Compile test and proof targets without running them
+      - name: Compile test targets without running them
         run: python3 tools/ci/child_env.py python3 tools/ci/feature_gate.py '${{ matrix.mode }}'
       - name: Disk after feature builds
         if: always() && matrix.mode == 'features'

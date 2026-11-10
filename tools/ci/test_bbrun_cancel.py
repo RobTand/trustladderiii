@@ -253,7 +253,7 @@ class CancelTests(unittest.TestCase):
 
 class HttpDiagnosticTests(unittest.TestCase):
     def clients(self):
-        # Match captain/kani_pr.py's imports and complete inspect extraction.
+        # Match captain/coordinator.py's imports and complete inspect extraction.
         namespace = {}
         exec('import base64,contextlib,inspect,json,os,shlex,sys,urllib.request,urllib.error,uuid\n'
              'from pathlib import Path\nfrom unittest.mock import patch', namespace)

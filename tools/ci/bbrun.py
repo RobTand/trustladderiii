@@ -211,7 +211,7 @@ def run_and_record(command, mode, result_path):
     """Runner-only command/handoff, or shared support when command is None.
 
     Support lives here so inspect.getsource callers need only the existing
-    child_env/run_and_record/scan_artifacts extraction set, including Kani.
+    child_env/run_and_record/scan_artifacts extraction set.
     """
     import json
     import shutil
