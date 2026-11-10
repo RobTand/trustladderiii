@@ -238,7 +238,7 @@ pub(super) open spec fn work(n: Node, fast: bool, reply: Reply) -> ReplyChange {
 
 pub(super) open spec fn ingested(n: Node, size: u8, early_end: Option<EarlyEnd>) -> Node {
     retirement::phased(Node {
-        credit: Credit { ready: true,
+        credit: Credit { ready: false,
             start: if n.credit.ready { n.credit.start } else { (size as u64 + RESERVE) as u64 },
             ..n.credit }, early_end, ..n
     }, Phase::Auditing)
