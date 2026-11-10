@@ -47,16 +47,16 @@ pub(super) proof fn command_rows_project(before: World, after: World, node: Node
                 id > before.nodes@[node.0 as int].last_cmd, question, answer, after.dependencies@, node),
             _ => handler_safety::command_step(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
         }),
-        node.0 < before.nodes@.len() ==> command_frames::command_frame_rows(
-            before.nodes@[node.0 as int], after.nodes@[node.0 as int], id, command),
+        node.0 < before.nodes@.len() ==> (retirement::node_rules(before, before.nodes@[node.0 as int])
+            ==> command_frames::command_frame_rows(before.nodes@[node.0 as int], after.nodes@[node.0 as int], id, command)),
         node.0 < before.nodes@.len() ==> (match command {
             Command::Answer { .. } => retirement::node_rules(before, before.nodes@[node.0 as int])
                 ==> (after.nodes@[node.0 as int].incident_needs_rob ==> after.nodes@[node.0 as int].waiting_incident),
             _ => true,
         }),
-        node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@,
-        node.0 >= before.nodes@.len() ==> after.next_question == before.next_question,
-        node.0 >= before.nodes@.len() ==> after.file_sets@ == before.file_sets@,
+        checking::accepted(before) && node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@,
+        checking::accepted(before) && node.0 >= before.nodes@.len() ==> after.next_question == before.next_question,
+        checking::accepted(before) && node.0 >= before.nodes@.len() ==> after.file_sets@ == before.file_sets@,
 {
     reveal(command_frames::command_rows);
 }

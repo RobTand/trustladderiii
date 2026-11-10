@@ -48,7 +48,9 @@ pub(super) proof fn command_frame_rows_intro(b: Node, n: Node, id: u64, command:
     reveal(command_frame_rows);
 }
 
-/// E1.5 (rule 2): `events::apply`'s Command rows. apply_command's N-cut rows, the command-step/answer-pair row,
+/// E1.5 (rule 2): `events::apply`'s Command rows. v2.40 (lead's premise sweep): the trusted rows that apply_command
+/// does not prove unconditionally carry the kernel's guarantee as premise: `node_rules(before, b)` for
+/// `command_frame_rows`, `checking::accepted(before)` for the out-of-range frame. apply_command's N-cut rows, the command-step/answer-pair row,
 /// the E2 framing rows (`command_frame_rows`), v2.18's Answer incident row, and the out-of-range frame over
 /// every field `checking::accepted` reads that `events::apply` does not already keep (v2.35). N1 covers every
 /// command, Answer included (v2.38: apply 004052aa proves it). E2.N4c (restated, v2.37) is NOT here until apply proves it.
@@ -73,14 +75,14 @@ pub(super) open spec fn command_rows(before: World, after: World, event: Event) 
                         b, n, id > b.last_cmd, question, answer, after.dependencies@, node),
                     _ => handler_safety::command_step(b, n),
                 })
-                && command_frame_rows(b, n, id, command)
+                && (retirement::node_rules(before, b) ==> command_frame_rows(b, n, id, command))
                 && (match command {
                     Command::Answer { .. } => retirement::node_rules(before, b)
                         ==> (n.incident_needs_rob ==> n.waiting_incident),
                     _ => true,
                 })
             })
-            && (node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@
+            && (checking::accepted(before) && node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@
                 && after.next_question == before.next_question
                 && after.file_sets@ == before.file_sets@),
         _ => true,
@@ -108,14 +110,14 @@ pub(super) proof fn command_rows_intro(before: World, after: World, event: Event
                         b, n, id > b.last_cmd, question, answer, after.dependencies@, node),
                     _ => handler_safety::command_step(b, n),
                 })
-                && command_frame_rows(b, n, id, command)
+                && (retirement::node_rules(before, b) ==> command_frame_rows(b, n, id, command))
                 && (match command {
                     Command::Answer { .. } => retirement::node_rules(before, b)
                         ==> (n.incident_needs_rob ==> n.waiting_incident),
                     _ => true,
                 })
             })
-            && (node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@
+            && (checking::accepted(before) && node.0 >= before.nodes@.len() ==> after.nodes@ == before.nodes@
                 && after.next_question == before.next_question
                 && after.file_sets@ == before.file_sets@),
         _ => true,

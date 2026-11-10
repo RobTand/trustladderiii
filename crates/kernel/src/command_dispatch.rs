@@ -206,7 +206,9 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     // E2 framing (v2.35, form rule 2, owner apply): the v2.7 Stop counter/credit/generation rows, E11.1b,
     // E2.N4a and E2.N4b behind one opaque predicate; consumers use command_frames_reveal. E2.N4c stays off
     // (FALSE AS FROZEN, v2.34).
-    command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
+    // v2.40 premise (lead's sweep): stated only for an item consistent before (what the kernel guarantees).
+    retirement::node_rules(*old(w), old(w).nodes@[i as int])
+        ==> command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
 ] {
     on_command_proved(w, i, id, command, out)
 }
