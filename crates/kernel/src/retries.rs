@@ -492,13 +492,28 @@ pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -
     let fail_fast = fast;
     kernel_proof! { reply_family_posts::room_arms(n, fast, step); }
     if fail_fast {
-        return out_of_room_fast(node, step);
+        let result = out_of_room_fast(node, step);
+        kernel_proof! {
+            assert(result == reply_family_values::room(n, fast, step));
+            assert(reply_family_values::callable(result));
+        }
+        return result;
     }
     node.holds = false;
     if node.credit.can_spend(1) {
-        out_of_room_paid(node)
+        let result = out_of_room_paid(node);
+        kernel_proof! {
+            assert(result == reply_family_values::room(n, fast, step));
+            assert(reply_family_values::callable(result));
+        }
+        result
     } else {
-        out_of_room_ask(node)
+        let result = out_of_room_ask(node);
+        kernel_proof! {
+            assert(result == reply_family_values::room(n, fast, step));
+            assert(reply_family_values::callable(result));
+        }
+        result
     }
 }
 }

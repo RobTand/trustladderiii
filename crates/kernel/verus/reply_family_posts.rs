@@ -8,6 +8,13 @@ pub(super) proof fn room_arms(n: Node, fast: bool, step: ReviewStop)
         else if transition_safety::can_spend_one(n) {
             reply_family_values::room_paid(Node { holds: false, ..n })
         } else { reply_family_values::room_ask(Node { holds: false, ..n }) }),
+        (fast ==> reply_family_values::room(n, fast, step)
+            == reply_family_values::room_fast(n, step)),
+        (!fast && transition_safety::can_spend_one(n) ==> reply_family_values::room(n, fast, step)
+            == reply_family_values::room_paid(Node { holds: false, ..n })),
+        (!fast && !transition_safety::can_spend_one(n) ==> reply_family_values::room(n, fast, step)
+            == reply_family_values::room_ask(Node { holds: false, ..n })),
+        (node_headroom(n) ==> reply_family_values::callable(reply_family_values::room(n, fast, step))),
 {
     reveal(reply_family_values::room);
 }
