@@ -338,7 +338,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
+        final(w).nodes@[i as int].credit.withheld != old(w).nodes@[i as int].credit.withheld,
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
