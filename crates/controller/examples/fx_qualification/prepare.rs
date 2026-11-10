@@ -133,6 +133,20 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
         &root,
         "pq-tool-preflight",
     )?;
+    run(
+        Command::new("/usr/bin/podman")
+            .env_clear()
+            .envs(&environment)
+            .args([
+                "run", "--rm", "--pull=never", "--cgroups=disabled",
+                "--network=none", "--read-only", "--cap-drop=ALL",
+                "--security-opt=no-new-privileges", "--entrypoint",
+                "/opt/tl3/bin/python", &inputs.test_image, "-c",
+                "import json, os; p='/opt/tl3/bin/python-canary2-absent'; assert not os.path.lexists(p); print(json.dumps({'interpreter':p,'absent':True}))",
+            ]),
+        &root,
+        "absent-interpreter-preflight",
+    )?;
     for (kind, fixture, bundle_key) in [
         (
             "launch_failure",
@@ -169,7 +183,8 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
     write(
         &root.join("result.json"),
         &json!({"bundles":bundles,"host":"dl380g10","source":inputs.head,
-        "rootless":identity(&root.join("rootless.stdout"))?,"pq_preflight":identity(&root.join("pq-tool-preflight.stdout"))?}),
+        "rootless":identity(&root.join("rootless.stdout"))?,"pq_preflight":identity(&root.join("pq-tool-preflight.stdout"))?,
+        "absent_interpreter_preflight":{"image":inputs.test_image,"proof":identity(&root.join("absent-interpreter-preflight.stdout"))?}}),
     )?;
     Ok(())
 }

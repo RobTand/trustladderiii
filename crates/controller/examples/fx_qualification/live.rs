@@ -184,6 +184,32 @@ fn collect_inner(
     if !root.join("intent.json").exists() {
         write(&root.join("intent.json"), &intent)?;
     }
+    let absent_binding = if kind == "launch_failure" {
+        let (manifest, reference) = api::prepared::read_bundle(&request.runner.manifest)?;
+        if reference.sha256 != request.runner.manifest_digest {
+            return Err("launch failure manifest digest differs".into());
+        }
+        let prepared_root = inputs.out.join("prepared");
+        let prepared: Value =
+            serde_json::from_slice(&durable::read(&prepared_root.join("result.json"))?)?;
+        let preflight = &prepared["absent_interpreter_preflight"];
+        let proof: api::BlobRef = serde_json::from_value(preflight["proof"].clone())?;
+        let observed: Value =
+            serde_json::from_slice(&durable::checked_blob(&proof, &prepared_root)?)?;
+        let binding = matches!(&request.runtime.runtime,
+            api::ExecutionRuntime::RootlessPodman { image, interpreter, .. }
+                if image == &inputs.test_image && interpreter == &manifest.container_interpreter)
+            && preflight["image"] == inputs.test_image
+            && absent_interpreter_binding(&manifest.container_interpreter, &observed);
+        Some((
+            binding,
+            manifest.container_interpreter,
+            observed,
+            vec![reference, proof],
+        ))
+    } else {
+        None
+    };
     let submission = flux.submit(request.clone(), intent.clone())?;
     if let Submission::Refused { terminal } = submission {
         return Err(format!(
@@ -368,13 +394,16 @@ fn collect_inner(
             && report.worker_payload.is_none()
             && report.payload.is_none()
             && !report.launch_failures.is_empty();
-        let mut proofs = vec![];
+        let (binding, interpreter, absent, mut proofs) =
+            absent_binding.ok_or("missing absent interpreter binding")?;
+        cause &= binding;
         for failure in &report.launch_failures {
             let events = flushed_events(&durable::checked_blob(
                 &failure.process_record,
                 &intent.output_dir,
             )?)?;
-            cause &= absent_interpreter_failure(&events);
+            cause &= absent_interpreter_failure(&events)
+                && absent_interpreter_binding(&interpreter, &absent);
             proofs.push(failure.process_record.clone());
         }
         add("post_begin_launch_failure", cause, proofs);
@@ -428,6 +457,12 @@ fn collect_inner(
     Ok(result)
 }
 
+fn absent_interpreter_binding(interpreter: &Path, observed: &Value) -> bool {
+    interpreter == Path::new("/opt/tl3/bin/python-canary2-absent")
+        && observed["interpreter"] == "/opt/tl3/bin/python-canary2-absent"
+        && observed["absent"] == true
+}
+
 fn absent_interpreter_failure(events: &[Value]) -> bool {
     !events.iter().any(|e| e["event"] == "payload_released")
         && events
@@ -437,13 +472,8 @@ fn absent_interpreter_failure(events: &[Value]) -> bool {
             == 1
         && events.iter().any(|e| {
             e["event"] == "launcher_exit"
-                && e["exit_code"].as_i64().is_some_and(|code| code != 0)
-                && e["stderr_tail"].as_str().is_some_and(|cause| {
-                    cause.contains("/opt/tl3/bin/python-canary2-absent")
-                        && ["no such file", "not found"]
-                            .iter()
-                            .any(|text| cause.to_ascii_lowercase().contains(text))
-                })
+                && e["exit_code"] == 1
+                && e["stderr_tail"] == "ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"
         })
 }
 
@@ -552,9 +582,16 @@ mod tests {
         let mut wrong = row;
         wrong["tests"][0]["head"] = "assertion".into();
         assert!(!success_results(&[wrong], 2));
+        let absent = json!({"interpreter":"/opt/tl3/bin/python-canary2-absent","absent":true});
+        assert!(absent_interpreter_binding(Path::new("/opt/tl3/bin/python-canary2-absent"), &absent));
+        for path in ["/opt/tl3/bin/python", "/different/absent"] {
+            assert!(!absent_interpreter_binding(Path::new(path), &absent));
+        }
+        assert!(!absent_interpreter_binding(Path::new("/opt/tl3/bin/python-canary2-absent"), &json!({"interpreter":"/opt/tl3/bin/python-canary2-absent","absent":false})));
         let historical: Value = serde_json::from_str(include_str!(
             "../../qualification/fx-exact42b/canary2-acceptance.json"
-        )).unwrap();
+        ))
+        .unwrap();
         for execution in historical["executions"].as_array().unwrap() {
             let exit = execution["launcher_exit"].clone();
             let mut raw = serde_json::to_vec(&exit).unwrap();
@@ -562,10 +599,13 @@ mod tests {
             let events = flushed_events(&raw).unwrap();
             assert!(absent_interpreter_failure(&events));
             assert!(!absent_interpreter_failure(&[
-                exit.clone(), json!({"event":"payload_released"})
+                exit.clone(),
+                json!({"event":"payload_released"})
             ]));
+            assert!(!absent_interpreter_failure(&[exit.clone(), exit.clone()]));
             for (code, message) in [
                 (0, exit["stderr_tail"].as_str().unwrap()),
+                (127, exit["stderr_tail"].as_str().unwrap()),
                 (1, "ERROR (catatonit:2): failed to exec pid1: Permission denied\n"),
                 (1, "prefix ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"),
                 (127, "crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"),

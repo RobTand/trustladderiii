@@ -404,10 +404,6 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
         serde_json::to_vec(&json!({"files":files,"obsolete":removed}))?,
         false,
     )?);
-    // Leave room for the pinned client's secured wrappers and JSON escaping.
-    if payload.len() + REMOTE_BUILD.len() > 80 * 1024 {
-        return Err("compressed BuildBuddy overlay exceeds 80 KiB action budget".into());
-    }
     let mut argv = vec![
         "/usr/bin/python3".into(),
         "-c".into(),
@@ -418,7 +414,33 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
     for chunk in payload.as_bytes().chunks(16 * 1024) {
         argv.push(std::str::from_utf8(chunk)?.into());
     }
+    check_transport_size(&argv)?;
     Ok(argv)
+}
+
+fn check_transport_size(argv: &[String]) -> Result<()> {
+    // Pinned client: 4 * ceil((JSON bytes + 8192) / 3) <= 122880.
+    // Its empty-command secured request is 60474 bytes. Reserve 64 KiB
+    // for that wrapper, then leave another 4 KiB below the JSON ceiling.
+    // The only variable wrapper fragment is shell-quoted Python repr(argv).
+    let mut child = Command::new("/usr/bin/python3")
+        .args(["-I", "-c", "import json, shlex, sys; argv=json.load(sys.stdin); size=lambda v: len(json.dumps(shlex.quote(repr(v))).encode()); print(65536 + size(argv) - size([]))"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child.stdin.take().ok_or("size check input absent")?
+        .write_all(&serde_json::to_vec(argv)?)?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err("BuildBuddy request size check failed".into());
+    }
+    let json_bytes: usize = std::str::from_utf8(&output.stdout)?.trim().parse()?;
+    const JSON_LIMIT: usize = (122880 / 4) * 3 - 8192;
+    if json_bytes > JSON_LIMIT - 4096 {
+        return Err(format!("BuildBuddy total JSON request bound {json_bytes} exceeds {} byte budget", JSON_LIMIT - 4096).into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -503,15 +525,16 @@ mod tests {
         // Incompressible evidence can fit the old 80 KiB payload guard while
         // exceeding the client's total JSON budget once wrappers are included.
         let mut state = 0x1234_5678_u32;
-        let bytes: Vec<u8> = (0..48 * 1024).map(|_| {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            state as u8
-        }).collect();
+        let bytes: Vec<u8> = (0..48 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
         overlay.insert(name, bytes);
         assert!(build_argv(&inputs, Some(&overlay)).is_err());
-
     }
 }
 
