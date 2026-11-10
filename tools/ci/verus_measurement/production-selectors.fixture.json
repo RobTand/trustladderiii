@@ -1,10 +1,30 @@
 {
-  "source_head": "a3197509f99cf58315054bab40773d036ade9d9d",
+  "source_head": "498e7356a3d92e1dde31f8469c74041ccd63688c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "813e8e4869599efb2528315fd2eca2a2fcfb37127500082f921f299f66f5496e",
-  "groups": 884,
-  "obligations": 1090,
+  "source_sha256": "87d75ab3c1787b47448cb76e46c14070ca2b58a722793f1ac18fe989f6520b72",
+  "groups": 888,
+  "obligations": 1094,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_special_safety_resume_apply_projection",
+      "selector": "kernel::special_safety::resume_apply_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_aggregate_command_rows",
+      "selector": "kernel::special_safety::aggregate_command_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_aggregate_command_assembly",
+      "selector": "kernel::special_safety::aggregate_command_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_invalid_command_assembly",
+      "selector": "kernel::special_safety::invalid_command_assembly",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_command_frames_command_frame_rows_intro",
       "selector": "kernel::command_frames#command_frame_rows_intro",
