@@ -452,43 +452,35 @@ if step == ReviewStop::MakerCantMeet {
         let result = out_of_room_fast(node, step);
         kernel_proof! {
             assert(result == reply_family_values::rung(n, fast, step));
-            assert(reply_family_values::callable(result));
         }
         return result;
     } else if node.attempt < 3 {
-        node.attempt += 1;
-        node.review_restarted = false;
-        node.round = 0;
+        node = rung_bump_v(node);
         if node.credit.can_spend(1) {
             let result = next_rung_paid(node);
             kernel_proof! {
                 assert(result == reply_family_values::rung(n, fast, step));
-                assert(reply_family_values::callable(result));
             }
             return result;
         } else {
             let result = next_rung_ask(node);
             kernel_proof! {
                 assert(result == reply_family_values::rung(n, fast, step));
-                assert(reply_family_values::callable(result));
             }
             return result;
         }
     } else if !node.replanned {
-        node.replanned = true;
-        node.holds = false;
+        node = rung_replan_v(node);
         if node.credit.can_spend(1) {
             let result = next_rung_replan_paid(node);
             kernel_proof! {
                 assert(result == reply_family_values::rung(n, fast, step));
-                assert(reply_family_values::callable(result));
             }
             return result;
         } else {
             let result = next_rung_replan_ask(node);
             kernel_proof! {
                 assert(result == reply_family_values::rung(n, fast, step));
-                assert(reply_family_values::callable(result));
             }
             return result;
         }
@@ -496,7 +488,6 @@ if step == ReviewStop::MakerCantMeet {
         let result = next_rung_cant_meet(node);
         kernel_proof! {
             assert(result == reply_family_values::rung(n, fast, step));
-            assert(reply_family_values::callable(result));
         }
         return result;
     }
@@ -513,7 +504,7 @@ pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -
     let mut node = n;
     let mut note: Option<Notice> = None;
     let fail_fast = fast;
-    kernel_proof! { reply_family_posts::room_arms(n, fast, step); }
+    kernel_proof! { reply_family_posts::room_bridge(n, fast, step); }
     if fail_fast {
         let result = out_of_room_fast(node, step);
         kernel_proof! {
@@ -522,7 +513,7 @@ pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -
         }
         return result;
     }
-    node.holds = false;
+    node = unheld_v(node);
     if node.credit.can_spend(1) {
         let result = out_of_room_paid(node);
         kernel_proof! {
@@ -586,28 +577,25 @@ pub(super) fn plan_retry_node(n: Node, fast: bool, nq: u64, cant_meet: bool) -> 
     let mut node = n;
     let mut note: Option<Notice> = None;
     let fail_fast = fast;
-    node.plan_retries = retry_count(node.plan_retries);
+    node = plan_count_v(node);
     let phase = node.phase;
     kernel_proof! { reply_family_posts::plan_retry_arms(n, fast, cant_meet); }
     if fail_fast && cant_meet {
         let result = out_of_room_fast(node, ReviewStop::PlanCantMeet);
         kernel_proof! {
             assert(result == reply_family_values::plan_retry(n, fast, cant_meet));
-            assert(reply_family_values::callable(result));
         }
         return result;
     } else if node.plan_retries < 2 {
         let result = plan_retry_again(node);
         kernel_proof! {
             assert(result == reply_family_values::plan_retry(n, fast, cant_meet));
-            assert(reply_family_values::callable(result));
         }
         return result;
     } else {
         let result = plan_retry_ask(node);
         kernel_proof! {
             assert(result == reply_family_values::plan_retry(n, fast, cant_meet));
-            assert(reply_family_values::callable(result));
         }
         return result;
     }
@@ -623,7 +611,7 @@ pub(super) fn recheck_node(n: Node, nq: u64, target: Phase) -> (result: ReplyCha
 ] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node.rechecks = retry_count(node.rechecks);
+    node = recheck_count_v(node);
     let free = node.rechecks <= FREE_RECHECKS;
     kernel_proof! { reply_family_posts::recheck_arms(n, target); }
     if free || node.credit.can_spend(1) {
@@ -631,14 +619,12 @@ pub(super) fn recheck_node(n: Node, nq: u64, target: Phase) -> (result: ReplyCha
             let result = recheck_paid(node, target);
             kernel_proof! {
                 assert(result == reply_family_values::recheck(n, target));
-                assert(reply_family_values::callable(result));
             }
             return result;
         } else {
             let result = recheck_free(node, target);
             kernel_proof! {
                 assert(result == reply_family_values::recheck(n, target));
-                assert(reply_family_values::callable(result));
             }
             return result;
         }
@@ -646,7 +632,6 @@ pub(super) fn recheck_node(n: Node, nq: u64, target: Phase) -> (result: ReplyCha
         let result = recheck_ask(node, target);
         kernel_proof! {
             assert(result == reply_family_values::recheck(n, target));
-            assert(reply_family_values::callable(result));
         }
         return result;
     }
@@ -707,8 +692,8 @@ fn incident_count(c: u8) -> (result: u8) [
 kernel_fn! {
 fn next_rung_paid(n: Node) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::rung_paid(n),
-] {
+    ensures result == reply_family_values::rung_paid(n), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rung_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     node.credit = spend_v(node.credit, 1);
@@ -719,8 +704,9 @@ fn next_rung_paid(n: Node) -> (result: ReplyChange) [
 
 kernel_fn! {
 fn next_rung_ask(node: Node) -> (result: ReplyChange) [
-    ensures result == reply_family_values::rung_ask(node),
-] {
+    requires node.generation < u64::MAX,
+    ensures result == reply_family_values::rung_ask(node), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rung_ask);] {
     ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1, }
 }
 }
@@ -728,8 +714,8 @@ fn next_rung_ask(node: Node) -> (result: ReplyChange) [
 kernel_fn! {
 fn next_rung_replan_paid(n: Node) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::rung_replan_paid(n),
-] {
+    ensures result == reply_family_values::rung_replan_paid(n), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rung_replan_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     node.credit = spend_v(node.credit, 1);
@@ -742,16 +728,18 @@ fn next_rung_replan_paid(n: Node) -> (result: ReplyChange) [
 
 kernel_fn! {
 fn next_rung_replan_ask(node: Node) -> (result: ReplyChange) [
-    ensures result == reply_family_values::rung_replan_ask(node),
-] {
+    requires node.generation < u64::MAX,
+    ensures result == reply_family_values::rung_replan_ask(node), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rung_replan_ask);] {
     ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: false }, cost: 1, }
 }
 }
 
 kernel_fn! {
 fn next_rung_cant_meet(node: Node) -> (result: ReplyChange) [
-    ensures result == reply_family_values::rung_cant_meet(node),
-] {
+    requires node.generation < u64::MAX,
+    ensures result == reply_family_values::rung_cant_meet(node), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rung_cant_meet);] {
     ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Ready(Resume::Making), cost: 1 }
 }
 }
@@ -759,8 +747,8 @@ fn next_rung_cant_meet(node: Node) -> (result: ReplyChange) [
 kernel_fn! {
 fn failed_round_free(n: Node) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::round_free(n),
-] {
+    ensures result == reply_family_values::round_free(n), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::round_free);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     node.round = 1;
@@ -772,8 +760,8 @@ fn failed_round_free(n: Node) -> (result: ReplyChange) [
 kernel_fn! {
 fn plan_retry_again(n: Node) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::plan_again(n),
-] {
+    ensures result == reply_family_values::plan_again(n), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::plan_again);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     let phase = node.phase;
@@ -784,8 +772,9 @@ fn plan_retry_again(n: Node) -> (result: ReplyChange) [
 
 kernel_fn! {
 fn plan_retry_ask(n: Node) -> (result: ReplyChange) [
-    ensures result == reply_family_values::plan_ask(n),
-] {
+    requires n.generation < u64::MAX,
+    ensures result == reply_family_values::plan_ask(n), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::plan_ask);] {
     let mut node = n;
     let phase = node.phase;
     node.plan_retries = 0;
@@ -797,11 +786,11 @@ fn plan_retry_ask(n: Node) -> (result: ReplyChange) [
 kernel_fn! {
 fn recheck_free(n: Node, target: Phase) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::recheck_free(n, target),
-] {
+    ensures result == reply_family_values::recheck_free(n, target), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::recheck_free);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    if !target.holding() { node.holds = false; }
+    node = held_v(node, target);
     node = set_phase_v(node, target);
     ReplyChange::Done { node, note }
 }
@@ -810,12 +799,12 @@ fn recheck_free(n: Node, target: Phase) -> (result: ReplyChange) [
 kernel_fn! {
 fn recheck_paid(n: Node, target: Phase) -> (result: ReplyChange) [
     requires node_headroom(n),
-    ensures result == reply_family_values::recheck_paid(n, target),
-] {
+    ensures result == reply_family_values::recheck_paid(n, target), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::recheck_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     node.credit = spend_v(node.credit, 1);
-    if !target.holding() { node.holds = false; }
+    node = held_v(node, target);
     node = set_phase_v(node, target);
     ReplyChange::Done { node, note }
 }
@@ -823,8 +812,9 @@ fn recheck_paid(n: Node, target: Phase) -> (result: ReplyChange) [
 
 kernel_fn! {
 fn recheck_ask(node: Node, target: Phase) -> (result: ReplyChange) [
-    ensures result == reply_family_values::recheck_ask(node, target),
-] {
+    requires node.generation < u64::MAX,
+    ensures result == reply_family_values::recheck_ask(node, target), reply_family_values::callable(result),
+] proof [reveal(reply_family_values::recheck_ask);] {
     ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(if target == Phase::Reviewing {
                 Resume::Reviewing
             } else {
@@ -837,4 +827,77 @@ kernel_fn! {
 fn retry_count(c: u8) -> (result: u8) [
     ensures result == (if c < 255 { (c + 1) as u8 } else { 255u8 }),
 ] { c.saturating_add(1) }
+}
+
+kernel_fn! {
+fn rung_bump_v(n: Node) -> (result: Node) [
+    requires n.attempt < 3,
+    ensures result == reply_family_values::bumped(n),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::bumped);] {
+    let mut m = n;
+    m.attempt += 1; m.review_restarted = false; m.round = 0;
+    m
+}
+}
+
+kernel_fn! {
+fn rung_replan_v(n: Node) -> (result: Node) [
+    ensures result == reply_family_values::replanning(n),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::replanning);] {
+    let mut m = n;
+    m.replanned = true; m.holds = false;
+    m
+}
+}
+
+kernel_fn! {
+fn recheck_count_v(n: Node) -> (result: Node) [
+    ensures result == reply_family_values::rechecked(n),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::rechecked);] {
+    let mut m = n;
+    m.rechecks = retry_count(m.rechecks);
+    m
+}
+}
+
+kernel_fn! {
+fn plan_count_v(n: Node) -> (result: Node) [
+    ensures result == reply_family_values::plan_counted(n),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::plan_counted);] {
+    let mut m = n;
+    m.plan_retries = retry_count(m.plan_retries);
+    m
+}
+}
+
+kernel_fn! {
+fn held_v(n: Node, target: Phase) -> (result: Node) [
+    ensures result == reply_family_values::held(n, target),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::held);] {
+    let mut m = n;
+    if !target.holding() { m.holds = false; }
+    m
+}
+}
+
+kernel_fn! {
+fn unheld_v(n: Node) -> (result: Node) [
+    ensures result == reply_family_values::unheld(n),
+        result.credit == n.credit, result.generation == n.generation,
+        result.next_seq == n.next_seq,
+] proof [reveal(reply_family_values::unheld);] {
+    let mut m = n;
+    m.holds = false;
+    m
+}
 }
