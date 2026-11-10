@@ -480,7 +480,7 @@ mod gate_first_line_assembly {
     {
         let first = first_line_assembly::full_first_in_line(&w, i);
         let (after, out, report, changed) = gate_assembly::gate_grant_step(w, i, out, report);
-        (after, out, report, changed, first)
+        (after, out, report, changed, !first)
     }
     }
 }
