@@ -62,6 +62,7 @@ pub(super) proof fn rules_after_last_cmd(before: World, after: World, a: Node, n
         after.gates@ == before.gates@,
         after.file_sets@ == before.file_sets@,
     ensures retirement::node_rules(before, a) ==> retirement::node_rules(after, n),
+        dependencies::owner_waiting_ok(a) ==> dependencies::owner_waiting_ok(n),
 {
     if retirement::node_rules(before, a) {
         assert(n == (Node { last_cmd: n.last_cmd, ..a }));
@@ -69,6 +70,49 @@ pub(super) proof fn rules_after_last_cmd(before: World, after: World, a: Node, n
         handler_safety::last_cmd_rules_v(a, before.next_question, n.last_cmd);
         handler_safety::rules_world_update(before, after, a, n);
     }
+}
+
+
+/// E2.N4c (CONTRACTS.md v2.41, rule 6): a waiting owner's rows over the exact answered value. With node
+/// rules, a waiting owner's open question fits only an early or stop continuation (question_fits); Continue
+/// into an early phase keeps zero credit or is a withholding answer on ready credit.
+pub(super) proof fn answer_owner_rows(b: Node, nq: u64, id: u64, answer: Answer)
+    ensures ({ let r = apply_answer_values::answered(b, nq, id, answer).0;
+        (handler_safety::node_rules_v(b, nq) && dependencies::owner_waiting_ok(b)) ==> (
+            !r.planning_started && dependencies::waits(r.question) && dependencies::blocked_phase(r.phase)
+            && (r.phase == Phase::Unplanned ==> !r.holds && !r.pool && r.ticket.is_none() && r.run.is_none())
+            && (dependencies::early(r.phase) ==> dependencies::zero_credit(r.credit)
+                || (handler_safety::answer_withholds(b, id, answer) && r.credit.ready))) }),
+{
+    reveal(apply_answer_values::answered);
+    reveal(apply_answer_values::retried_answer);
+    reveal(handler_safety::node_rules_v);
+    reveal(dependencies::zero_credit);
+    reveal(retirement::stopped);
+}
+
+/// E2.N4c (rule 7): the withhold step. The premise is withhold_dependency_credit's post verbatim
+/// (d = prerequisites_delivered of the world it ran on).
+pub(super) proof fn owner_after_withhold(a: Node, f: Node, d: bool)
+    requires f == (Node {
+            credit: Credit {
+                withheld: a.credit.withheld
+                    || (!d && !a.planning_started
+                        && (match a.phase {
+                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
+                            _ => false,
+                        })
+                        && a.credit.ready),
+                ..a.credit
+            },
+            ..a
+        }),
+    ensures (!a.planning_started && dependencies::waits(a.question) && dependencies::blocked_phase(a.phase)
+            && (a.phase == Phase::Unplanned ==> !a.holds && !a.pool && a.ticket.is_none() && a.run.is_none())
+            && (dependencies::early(a.phase) ==> dependencies::zero_credit(a.credit) || a.credit.ready))
+        ==> d || dependencies::owner_waiting_ok(f),
+{
+    reveal(dependencies::zero_credit);
 }
 
 }

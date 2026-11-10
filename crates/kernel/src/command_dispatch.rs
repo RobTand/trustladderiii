@@ -71,6 +71,9 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // E2.N4c (CONTRACTS.md v2.41; lead-approved v2.42).
+        (((command is Answer) && retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+            ==> dependencies::prerequisites_delivered(*old(w), NodeId(i as u64)) || dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])

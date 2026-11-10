@@ -59,6 +59,9 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4c (CONTRACTS.md v2.41; lead-approved v2.42).
+        ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+            ==> dependencies::prerequisites_delivered(*old(w), NodeId(i as u64)) || dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_answer_rules = *w }
     kernel_proof! {
@@ -86,7 +89,14 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
+        kernel_snapshot! { mid_world = *w }
         w.withhold_dependency_credit(i);
+        kernel_proof! {
+            answer_rules::owner_after_withhold(mid_world@.nodes@[i as int], w.nodes@[i as int],
+                dependencies::prerequisites_delivered(mid_world@, NodeId(i as u64)));
+            dependencies::prerequisite_definition(mid_world@, NodeId(i as u64));
+            dependencies::prerequisite_definition(before_answer_rules@, NodeId(i as u64));
+        }
         kernel_proof! {
             let n = w.nodes@[i as int];
             assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
@@ -161,6 +171,12 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         result.0.credit.withheld == n.credit.withheld,
         nq <= result.1,
         (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node.
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n)) ==> (
+            !result.0.planning_started && dependencies::waits(result.0.question) && dependencies::blocked_phase(result.0.phase)
+            && (result.0.phase == Phase::Unplanned ==> !result.0.holds && !result.0.pool && result.0.ticket.is_none() && result.0.run.is_none())
+            && (dependencies::early(result.0.phase) ==> dependencies::zero_credit(result.0.credit)
+                || (handler_safety::answer_withholds(n, id, answer) && result.0.credit.ready)))),
 ] {
     let result = answer_value(n, nq, id, answer);
     kernel_proof! {
@@ -171,6 +187,7 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         apply_answer_safety::answer_step(n, nq, id, answer);
         apply_answer_safety::answer_progress(n, nq, id, answer);
         apply_answer_safety::answer_consumed(n, nq, id, answer);
+        answer_rules::answer_owner_rows(n, nq, id, answer);
     }
     result
 }
