@@ -19,7 +19,7 @@ pub(super) proof fn rebase_await_gate(n: Node)
 /// line exactly when no other waiter has a better priority, or the same
 /// priority and an older ticket.
 pub(super) proof fn pool_line_order(w: World, i: int)
-    requires 0 <= i < w.nodes@.len(), !(w.nodes@[i].phase is Ready),
+    requires 0 <= i < w.nodes@.len(),
         w.nodes@[i].ticket.is_some(),
     ensures oldest_waiter(w, i) == forall|j: int| 0 <= j < w.nodes@.len()
         && !(w.nodes@[j].phase is Ready) && w.nodes@[j].ticket.is_some()
