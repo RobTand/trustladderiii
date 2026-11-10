@@ -17,7 +17,7 @@ pub(super) open spec fn context(w: World, k: int) -> bool {
 }
 
 pub(super) proof fn reserves(w: World, k: int, i: int)
-    requires context(w, k), 0 <= k <= 1000, 0 <= i < 4,
+    requires 0 <= k <= 1000, 0 <= i < 4,
     ensures scheduling_safe(w), node_headroom(w.nodes@[i]),
         arithmetic_consistent(w.nodes@[i]), advance_pre(w.nodes@[i], w.next_ticket, 0),
         world_headroom(w), storage_ordered(w), w.next_question < u64::MAX,
