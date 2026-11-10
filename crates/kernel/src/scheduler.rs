@@ -369,6 +369,8 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
         && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
         && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
+        !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+            ==> old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some(),
     checking::accepted(*old(w)) ==> advance_family_post::step_rows(*old(w), *final(w), i as int),
     transition_safety::transition_safety(*old(w), *final(w),
         transition_safety::Transition::Advance { node: i, moved: result },
@@ -381,10 +383,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         && old(w).nodes@[i as int].ticket.is_some()
         && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity && oldest_waiter(*old(w), i as int)
         ==> result && final(w).nodes@[i as int].pool && final(w).nodes@[i as int].ticket.is_none(),
-    // E5.8 / G20 framing (v2.32, owner advance; TRUSTED-FROZEN): a new slot goes only to a Ready node with a
-    // ticket. Node-level source PROVEN: ranks::advance_node ensures grant_facts (ranks.rs:1345).
-    !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
-        ==> old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some(),
 ] {
     advance_proved(w, i, out, report)
 }
