@@ -17,7 +17,7 @@ pub(super) proof fn work_bounds(n: Node, c: ReplyCtx)
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::work(n, c.fast, c.reply)),
-        reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply)).footprint != n.footprint,
 {
     reveal(reply_family_values::work);
     match c.reply {
