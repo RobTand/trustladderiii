@@ -116,7 +116,7 @@ pub(super) proof fn work_checks_rows(n: Node, c: ReplyCtx)
 pub(super) proof fn work_review_rows(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::Approved { .. } | Reply::ChangesRequested | Reply::ReviewerOutOfRoom),
-    ensures reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
 {
     work_bounds(n, c);
     reveal(reply_family_safety::completed);
