@@ -117,10 +117,8 @@ impl Flux {
             .ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
         let stdout = std::thread::spawn(move || bounded(stdout));
         let stderr = std::thread::spawn(move || bounded(stderr));
-        let command_deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
-        let deadline = self
-            .native_deadline
-            .map_or(command_deadline, |deadline| deadline.min(command_deadline));
+        // The pass budget gates starts; an admitted command keeps its normal deadline.
+        let deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
         let status = loop {
             if self.stop.is_stopped() || Instant::now() >= deadline {
                 break None;
@@ -410,7 +408,13 @@ mod tests {
             },
         })
         .unwrap();
-        assert!(!backend.cleanup_maintenance(1_000_000).unwrap().is_empty());
+        assert!(
+            !backend
+                .cleanup_maintenance(1_000_000)
+                .unwrap()
+                .pending
+                .is_empty()
+        );
         assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some());
         let diagnostic = errors.join(format!("{}.json", digest(b"maintenance-error-log")));
         assert!(
@@ -444,6 +448,7 @@ mod tests {
             backend
                 .cleanup_maintenance(u64::MAX - 300_000)
                 .unwrap()
+                .pending
                 .is_empty()
         );
         assert!(path.exists());

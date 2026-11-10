@@ -613,7 +613,11 @@ impl Controller {
         );
         for (upstream, report) in pending {
             let error = report.as_ref().err().cloned();
-            let owners = report.unwrap_or_else(|_| vec!["adapter-maintenance".into()]);
+            let report = report.unwrap_or_else(|_| crate::run_backend::MaintenanceReport {
+                pending: vec!["adapter-maintenance".into()],
+                skipped_busy: false,
+            });
+            let owners = report.pending;
             let outstanding: std::collections::BTreeSet<_> = owners
                 .iter()
                 .map(|owner| {
@@ -631,6 +635,7 @@ impl Controller {
                     && incident.signature.class == "runtime_cleanup"
                     && incident.open
                     && error.is_none()
+                    && !report.skipped_busy
                     && !outstanding.contains(&incident.id)
                 {
                     incident.open = false;

@@ -34,7 +34,7 @@ pub struct Flux {
 }
 
 impl Flux {
-    /// Bound owner work and native I/O on the controller's maintenance pass.
+    /// Bound new work per pass; started commands retain their normal deadlines.
     pub fn with_cleanup_maintenance_limits(
         mut self,
         owners: usize,
@@ -320,14 +320,14 @@ impl RunBackend for Flux {
     ) -> Result<ContainerLaunchBinding> {
         self.bind_launch(owner, observed)
     }
-    fn cleanup_maintenance(&self, now_ms: u64) -> Result<Vec<Owner>> {
+    fn cleanup_maintenance(&self, now_ms: u64) -> Result<MaintenanceReport<Owner>> {
         self.maintain_cleanup(now_ms, &|_| Ok(()))
     }
     fn cleanup_maintenance_fenced(
         &self,
         now_ms: u64,
         authorize: &dyn Fn(&Owner) -> Result<()>,
-    ) -> Result<Vec<Owner>> {
+    ) -> Result<MaintenanceReport<Owner>> {
         self.maintain_cleanup(now_ms, authorize)
     }
     fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {

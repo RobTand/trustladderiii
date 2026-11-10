@@ -3010,7 +3010,7 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
 }
 
 fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
-    struct Maintenance(Rc<Cell<bool>>, Rc<Cell<u64>>);
+    struct Maintenance(Rc<Cell<bool>>, Rc<Cell<u64>>, Rc<Cell<bool>>);
     impl Executor for Maintenance {
         fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
             unreachable!("no delivery exists")
@@ -3021,20 +3021,31 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
         fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
             Ok(self.0.get().then(|| self.1.get()))
         }
-        fn cleanup_maintenance(&mut self, now: u64) -> tl3_controller::Result<Vec<String>> {
+        fn cleanup_maintenance(
+            &mut self,
+            now: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
             self.1.set(now + 300_000);
-            Ok(if self.0.get() {
-                vec!["owner-correlation".into()]
-            } else {
-                vec![]
+            Ok(tl3_controller::run_backend::MaintenanceReport {
+                pending: if self.0.get() && !self.2.get() {
+                    vec!["owner-correlation".into()]
+                } else {
+                    vec![]
+                },
+                skipped_busy: self.2.get(),
             })
         }
     }
     let failing = Rc::new(Cell::new(true));
+    let busy = Rc::new(Cell::new(true));
     let due = Rc::new(Cell::new(1_000_000));
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(Upstream::PrismaBuild, Maintenance(failing.clone(), due));
+    registry.register(
+        Upstream::PrismaBuild,
+        Maintenance(failing.clone(), due, busy.clone()),
+    );
     let clock = FakeClock::new();
     let mut c = Controller::open_with_clock(
         Store::open(settings).unwrap(),
@@ -3044,6 +3055,16 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
     )
     .unwrap();
     assert_eq!(c.next_look_in().unwrap(), Some(Duration::ZERO));
+    c.look_now().unwrap();
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup"),
+        "a busy owner must not open an incident"
+    );
+    busy.set(false);
     for _ in 0..3 {
         c.look_now().unwrap();
         let snapshot = c.snapshot().unwrap();
@@ -3059,6 +3080,29 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
         assert_eq!(c.next_look_in().unwrap(), Some(Duration::from_secs(300)));
         clock.advance(300);
     }
+    let before_busy = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup")
+        .map(|r| r.value)
+        .collect::<Vec<_>>();
+    busy.set(true);
+    c.look_now().unwrap();
+    let after_busy = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup")
+        .map(|r| r.value)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        after_busy, before_busy,
+        "busy owners must not close or update an incident"
+    );
+    busy.set(false);
     failing.set(false);
     c.look_now().unwrap();
     assert!(
@@ -3081,7 +3125,11 @@ fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::
         fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
             unreachable!()
         }
-        fn cleanup_maintenance(&mut self, _: u64) -> tl3_controller::Result<Vec<String>> {
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
             Err(tl3_controller::Error::Invalid("broken maintenance adapter"))
         }
         fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
@@ -3096,9 +3144,13 @@ fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::
         fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
             unreachable!()
         }
-        fn cleanup_maintenance(&mut self, _: u64) -> tl3_controller::Result<Vec<String>> {
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
             self.0.set(self.0.get() + 1);
-            Ok(vec![])
+            Ok(tl3_controller::run_backend::MaintenanceReport::default())
         }
     }
     let root = tempfile::tempdir().unwrap();

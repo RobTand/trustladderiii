@@ -28,7 +28,10 @@ impl Spy {
     }
 }
 impl Executor for Spy {
-    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<Vec<String>> {
+    fn cleanup_maintenance(
+        &mut self,
+        now_ms: u64,
+    ) -> Result<tl3_controller::run_backend::MaintenanceReport<String>> {
         self.hit("cleanup_maintenance", now_ms.to_string())
     }
     fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {

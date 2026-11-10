@@ -6571,6 +6571,7 @@ fn cleanup_maintenance_timeout_recovers_with_positive_evidence() {
         maintenance_backend(&f)
             .cleanup_maintenance(due)
             .unwrap()
+            .pending
             .is_empty()
     );
     assert!(cleanup_debts(&f).is_empty());
@@ -6596,7 +6597,7 @@ fn cleanup_maintenance_persistent_failure_never_expires_debt() {
         let due = maintenance_due(&f);
         let backend = maintenance_backend(&f);
         assert_eq!(
-            backend.cleanup_maintenance(due).unwrap(),
+            backend.cleanup_maintenance(due).unwrap().pending,
             vec![owned.owner.clone()]
         );
         assert!(maintenance_due(&f) > due);
@@ -6622,6 +6623,7 @@ fn cleanup_maintenance_never_sweeps_healthy_begin_launch_debt() {
         backend
             .cleanup_maintenance(u64::MAX - 300_000)
             .unwrap()
+            .pending
             .is_empty()
     );
     assert_eq!(cleanup_debts(&f), before);
@@ -6667,7 +6669,7 @@ fn cleanup_maintenance_held_request_dispatches_exactly_once() {
     let due = maintenance_due(&f).max(state["held_submission_ms"].as_u64().unwrap());
     f.cleanup_facts(&owned, true);
     fs::write(f.root.path().join("submit-id"), "fDEF\n").unwrap();
-    assert!(backend.cleanup_maintenance(due).unwrap().is_empty());
+    assert!(backend.cleanup_maintenance(due).unwrap().pending.is_empty());
     backend.cleanup_maintenance(due + 300_000).unwrap();
     // Maintenance alone must dispatch; an explicit submit would hide a broken resume loop.
     let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
@@ -6825,14 +6827,20 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
         ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
             unreachable!()
         }
-        fn cleanup_maintenance(&mut self, now: u64) -> tl3_controller::Result<Vec<String>> {
+        fn cleanup_maintenance(
+            &mut self,
+            now: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
             self.0
                 .cleanup_maintenance(now)
-                .map(|owners| {
-                    owners
+                .map(|owners| tl3_controller::run_backend::MaintenanceReport {
+                    pending: owners
+                        .pending
                         .into_iter()
                         .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
-                        .collect()
+                        .collect(),
+                    skipped_busy: owners.skipped_busy,
                 })
                 .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
         }
@@ -6880,7 +6888,7 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
     );
     drop(controller);
     database.stop();
-    let failures = backend.cleanup_maintenance(due).unwrap();
+    let failures = backend.cleanup_maintenance(due).unwrap().pending;
     assert!(
         !failures.is_empty(),
         "corrupt owner must be reported for an incident"
@@ -6973,22 +6981,63 @@ fn cleanup_maintenance_busy_owner_is_skipped_and_remains_due() {
     let due = maintenance_due(&f);
     f.cleanup_facts(&owned, true);
     fs::remove_file(f.intent.output_dir.join("helper-called-busy-owner")).unwrap();
-    let lock = fs::OpenOptions::new().read(true).write(true)
-        .open(f.options.journal_root.join(&f.intent.correlation).join("lock")).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
     lock.lock().unwrap();
     let backend = maintenance_backend(&f);
-    let pending = backend.cleanup_maintenance(due).unwrap();
+    let report = backend.cleanup_maintenance(due).unwrap();
+    assert!(report.skipped_busy);
+    let pending = report.pending;
+    let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
+    assert!(
+        journal
+            .try_transaction(&owned.owner, |_, _| -> api::Result<()> {
+                panic!("a busy claim must not execute its transaction");
+            })
+            .unwrap()
+            .is_none()
+    );
     let deadline = backend.next_cleanup_maintenance_ms().unwrap();
-    assert!(pending.is_empty(), "contention must not report an incident owner");
-    assert!(api::durable::maintenance_failures(&f.options.journal_root).unwrap().is_empty(),
-        "contention must not count as a maintenance failure, including during timer scans");
-    assert!(deadline.is_some_and(|next| next <= due), "busy owners need an early retry");
-    assert_eq!(f.state().cleanup_retry_ms, Some(due), "a skipped owner must not be claimed");
-    assert!(!f.intent.output_dir.join("helper-called-busy-owner").exists());
+    assert!(
+        pending.is_empty(),
+        "contention must not report an incident owner"
+    );
+    assert!(
+        api::durable::maintenance_failures(&f.options.journal_root)
+            .unwrap()
+            .is_empty(),
+        "contention must not count as a maintenance failure, including during timer scans"
+    );
+    assert!(
+        deadline.is_some_and(|next| next <= due),
+        "busy owners need an early retry"
+    );
+    assert_eq!(
+        f.state().cleanup_retry_ms,
+        Some(due),
+        "a skipped owner must not be claimed"
+    );
+    assert!(
+        !f.intent
+            .output_dir
+            .join("helper-called-busy-owner")
+            .exists()
+    );
     drop(lock);
     assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(due));
     backend.cleanup_maintenance(due).unwrap();
-    assert!(cleanup_debts(&f).is_empty(), "the very next pass must retry the owner");
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "the very next pass must retry the owner"
+    );
 }
 
 #[test]
@@ -7072,22 +7121,37 @@ fn cleanup_maintenance_time_budget_stops_between_executions() {
     f.cleanup_facts(&second, false);
     f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
     let mut later = Fixture::new();
+    // Keep the second owner's full retained identity valid and ordered after the first.
+    later.intent.correlation = format!("{}-later", f.intent.correlation);
+    later.intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&later.intent.correlation);
+    fs::write(
+        later.root.path().join("jobs.json"),
+        json!({"jobs":[{"name":later.intent.correlation,"jobid":"fABC","id":42}]}).to_string(),
+    )
+    .unwrap();
     later.podman(ContainerMode::OwnScope, true);
     later.submit();
     let later_owned = later.cleanup_execution("budget-later-owner", 'd');
     later.cleanup_facts(&later_owned, false);
     later.call(json!({"op":"cleanup_runtime","owner":later_owned.owner.owner,"correlation":later_owned.owner.correlation}));
-    // Sort this owner after the two-execution owner in the shared journal.
-    let mut state = later.state();
-    state.intent.correlation = format!("{}-later", f.intent.correlation);
+    let state = later.state();
     let dir = f.options.journal_root.join(&state.intent.correlation);
     fs::create_dir(&dir).unwrap();
     api::durable::save(&dir, &state).unwrap();
-    fs::remove_file(later.intent.output_dir.join("helper-called-budget-later-owner")).unwrap();
+    fs::remove_file(
+        later
+            .intent
+            .output_dir
+            .join("helper-called-budget-later-owner"),
+    )
+    .unwrap();
     for owned in [&first, &second] {
         fs::remove_file(
-            f.intent.output_dir.join(format!("helper-called-{}", owned.execution)),
-        ).unwrap();
+            f.intent
+                .output_dir
+                .join(format!("helper-called-{}", owned.execution)),
+        )
+        .unwrap();
         f.cleanup_facts(owned, true);
     }
     f.cleanup_control(&first.execution, 2);
@@ -7098,22 +7162,48 @@ fn cleanup_maintenance_time_budget_stops_between_executions() {
         maintenance_backend(&f).with_cleanup_maintenance_limits(4, Duration::from_millis(500));
     let started = Instant::now();
     backend.cleanup_maintenance(due).unwrap();
-    assert!(started.elapsed() >= Duration::from_secs(2),
-        "a started helper keeps its own budget even after the pass budget expires");
-    assert!(f.state().cleanup_evidence.contains_key(&first.execution),
-        "the running helper must finish and retain positive stop evidence");
-    assert_eq!(cleanup_debts(&f).len(), 1,
-        "the completed execution must retire its own debt");
+    assert!(
+        started.elapsed() >= Duration::from_secs(2),
+        "a started helper keeps its own budget even after the pass budget expires"
+    );
+    assert!(
+        f.state().cleanup_evidence.contains_key(&first.execution),
+        "the running helper must finish and retain positive stop evidence"
+    );
+    assert_eq!(
+        cleanup_debts(&f).len(),
+        1,
+        "the completed execution must retire its own debt"
+    );
     assert!(!f.state().cleanup_evidence.contains_key(&second.execution));
-    assert!(!f.intent.output_dir.join("helper-called-budget-second").exists(),
-        "budget exhaustion must not start another execution");
-    assert!(!later.intent.output_dir.join("helper-called-budget-later-owner").exists(),
-        "budget exhaustion must not start another owner");
-    let untouched = serde_json::from_slice::<api::durable::Record>(
-        &fs::read(dir.join("state.json")).unwrap()).unwrap();
-    assert_eq!(untouched.cleanup_retry_ms, state.cleanup_retry_ms,
-        "an unstarted owner must remain due without a claim");
-    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next <= due));
+    assert!(
+        !f.intent
+            .output_dir
+            .join("helper-called-budget-second")
+            .exists(),
+        "budget exhaustion must not start another execution"
+    );
+    assert!(
+        !later
+            .intent
+            .output_dir
+            .join("helper-called-budget-later-owner")
+            .exists(),
+        "budget exhaustion must not start another owner"
+    );
+    let untouched =
+        serde_json::from_slice::<api::durable::Record>(&fs::read(dir.join("state.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        untouched.cleanup_retry_ms, state.cleanup_retry_ms,
+        "an unstarted owner must remain due without a claim"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next <= due)
+    );
 }
 
 fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
@@ -7157,7 +7247,7 @@ fn cleanup_maintenance_failed_held_request_is_reported_and_durable() {
     api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
     let backend = maintenance_backend(&f);
     let due = maintenance_due(&f);
-    let pending = backend.cleanup_maintenance(due).unwrap();
+    let pending = backend.cleanup_maintenance(due).unwrap().pending;
     assert!(
         pending
             .iter()
@@ -7197,7 +7287,10 @@ fn cleanup_maintenance_held_dispatch_requires_upstream_authorization() {
         Err(BackendError::invalid("fixture epoch superseded"))
     };
     let backend = maintenance_backend(&f);
-    let pending = backend.cleanup_maintenance_fenced(due, &authorize).unwrap();
+    let pending = backend
+        .cleanup_maintenance_fenced(due, &authorize)
+        .unwrap()
+        .pending;
     assert_eq!(
         calls.get(),
         1,
@@ -7258,7 +7351,7 @@ fn cleanup_maintenance_terminal_debt_is_loud_without_a_noop_timer() {
     api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
     let backend = maintenance_backend(&f);
     assert_eq!(
-        backend.cleanup_maintenance(due).unwrap(),
+        backend.cleanup_maintenance(due).unwrap().pending,
         vec![owned.owner.clone()]
     );
     assert!(

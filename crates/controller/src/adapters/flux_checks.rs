@@ -489,7 +489,7 @@ impl Executor for Adapter {
             .min())
     }
 
-    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<Vec<String>> {
+    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<backend::MaintenanceReport<String>> {
         let was_due = self
             .shared
             .backend
@@ -512,7 +512,7 @@ impl Executor for Adapter {
                 })
                 .map_err(|error| backend::BackendError::unknown(&error.to_string()))
         };
-        let mut pending = match self
+        let mut report = match self
             .shared
             .backend
             .cleanup_maintenance_fenced(now_ms, &authorize)
@@ -520,10 +520,14 @@ impl Executor for Adapter {
             Ok(owners) => {
                 durable::clear_maintenance_failure(&self.shared.root, "backend")
                     .map_err(adapter_error)?;
-                owners
-                    .into_iter()
-                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
-                    .collect::<Vec<_>>()
+                backend::MaintenanceReport {
+                    pending: owners
+                        .pending
+                        .into_iter()
+                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                        .collect(),
+                    skipped_busy: owners.skipped_busy,
+                }
             }
             Err(error) => {
                 durable::maintenance_failure(
@@ -533,14 +537,17 @@ impl Executor for Adapter {
                     now_ms.saturating_add(300_000),
                 )
                 .map_err(adapter_error)?;
-                vec!["backend-maintenance".into()]
+                backend::MaintenanceReport {
+                    pending: vec!["backend-maintenance".into()],
+                    skipped_busy: false,
+                }
             }
         };
         // A malformed check record cannot block maintenance of other owners.
         let (jobs, errors) = self
             .shared
             .transaction(|| self.shared.maintenance_jobs(now_ms))?;
-        pending.extend(errors);
+        report.pending.extend(errors);
         let watch_failures =
             durable::maintenance_failures(&self.shared.root).map_err(adapter_error)?;
         let watch_due: std::collections::BTreeSet<_> = watch_failures
@@ -570,14 +577,14 @@ impl Executor for Adapter {
                 }
             }
         }
-        pending.extend(
+        report.pending.extend(
             durable::maintenance_failures(&self.shared.root)
                 .map_err(adapter_error)?
                 .into_iter()
                 .filter(|failure| failure.key.starts_with("watch:"))
                 .map(|failure| failure.key),
         );
-        Ok(pending)
+        Ok(report)
     }
 
     fn watch_wait(

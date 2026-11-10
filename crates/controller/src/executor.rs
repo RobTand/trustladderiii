@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tl3_kernel::{Ack, EffectKind, Event, HeadId, NodeId, Notice};
 
-use crate::Result;
+use crate::{Result, run_backend::MaintenanceReport};
 
 /// Boundary conversion for the dependency-free delivery machine.
 pub(crate) fn delivery_state(state: tl3_store::EffectState) -> tl3_delivery::State {
@@ -410,8 +410,8 @@ pub enum Reconciliation {
 pub trait Executor {
     /// Controller-owned maintenance runs even without a delivery allowance.
     /// Return the stable keys of every outstanding cleanup failure.
-    fn cleanup_maintenance(&mut self, _now_ms: u64) -> Result<Vec<String>> {
-        Ok(vec![])
+    fn cleanup_maintenance(&mut self, _now_ms: u64) -> Result<MaintenanceReport<String>> {
+        Ok(MaintenanceReport::default())
     }
     fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
         Ok(None)
@@ -628,7 +628,10 @@ pub struct Registry(
     std::collections::BTreeMap<Upstream, (u64, String)>,
 );
 
-pub(crate) type CleanupMaintenance = Vec<(Upstream, std::result::Result<Vec<String>, String>)>;
+pub(crate) type CleanupMaintenance = Vec<(
+    Upstream,
+    std::result::Result<MaintenanceReport<String>, String>,
+)>;
 
 impl Registry {
     pub(crate) fn next_cleanup_maintenance_ms(&mut self, now: u64) -> Option<u64> {

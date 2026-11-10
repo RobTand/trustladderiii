@@ -572,19 +572,35 @@ pub struct Probe {
     pub memory_guarantee: MemoryGuarantee,
 }
 
+/// Busy owners were not observed. Preserve existing incidents until a complete pass.
+#[derive(Clone, Debug)]
+pub struct MaintenanceReport<T> {
+    pub pending: Vec<T>,
+    pub skipped_busy: bool,
+}
+
+impl<T> Default for MaintenanceReport<T> {
+    fn default() -> Self {
+        Self {
+            pending: Vec::new(),
+            skipped_busy: false,
+        }
+    }
+}
+
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
     /// Retry failed cleanup and explicitly held, undispatched submissions once per due owner.
     /// Returns every owner whose attempted cleanup still lacks positive stop evidence.
-    fn cleanup_maintenance(&self, _now_ms: u64) -> Result<Vec<Owner>> {
-        Ok(vec![])
+    fn cleanup_maintenance(&self, _now_ms: u64) -> Result<MaintenanceReport<Owner>> {
+        Ok(MaintenanceReport::default())
     }
     /// Upstream authorization is checked immediately before resuming a held request.
     fn cleanup_maintenance_fenced(
         &self,
         now_ms: u64,
         _authorize: &dyn Fn(&Owner) -> Result<()>,
-    ) -> Result<Vec<Owner>> {
+    ) -> Result<MaintenanceReport<Owner>> {
         self.cleanup_maintenance(now_ms)
     }
     fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {

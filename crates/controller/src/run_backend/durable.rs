@@ -5,6 +5,8 @@ use std::path::Path;
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
+pub type RecordScan = Vec<(String, Result<Option<Record>>)>;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -63,6 +65,26 @@ impl Journal {
         owner: &Owner,
         f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
     ) -> Result<T> {
+        let (dir, lock) = self.owner_lock(owner)?;
+        lock.lock()?;
+        self.transact_locked(owner, &dir, f)
+    }
+
+    /// A busy owner is unobserved, not a failed transaction.
+    pub fn try_transaction<T>(
+        &self,
+        owner: &Owner,
+        f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let (dir, lock) = self.owner_lock(owner)?;
+        match lock.try_lock() {
+            Ok(()) => self.transact_locked(owner, &dir, f).map(Some),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+        }
+    }
+
+    fn owner_lock(&self, owner: &Owner) -> Result<(PathBuf, File)> {
         if !token(&owner.owner) || !token(&owner.correlation) {
             return Err(BackendError::invalid(
                 "invalid durable owner or correlation",
@@ -85,7 +107,15 @@ impl Journal {
             .read(true)
             .write(true)
             .open(lock_path)?;
-        lock.lock()?;
+        Ok((dir, lock))
+    }
+
+    fn transact_locked<T>(
+        &self,
+        owner: &Owner,
+        dir: &Path,
+        f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
+    ) -> Result<T> {
         let path = dir.join("state.json");
         let record: Option<Record> = if path.exists() {
             Some(serde_json::from_slice(&read(&path)?)?)
@@ -100,7 +130,7 @@ impl Journal {
                 message: "correlation belongs to a different durable owner".into(),
             });
         }
-        f(&dir, record)
+        f(dir, record)
     }
 
     pub fn runtime_gate<T>(&self, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
@@ -116,8 +146,8 @@ impl Journal {
         f(&debts)
     }
 
-    /// Retain each entry's identity even when that owner's state cannot be read.
-    pub fn records(&self) -> Result<Vec<(String, Result<Record>)>> {
+    /// Retain each entry's identity. Ok(None) means its lock is busy.
+    pub fn records(&self) -> Result<RecordScan> {
         let mut records = Vec::new();
         for (index, entry) in fs::read_dir(&self.root)?.enumerate() {
             let entry = match entry {
@@ -153,9 +183,11 @@ impl Journal {
                     .read(true)
                     .write(true)
                     .open(lock_path)?;
-                lock.try_lock().map_err(|_| {
-                    BackendError::unknown("journal owner is busy or its lock is unavailable")
-                })?;
+                match lock.try_lock() {
+                    Ok(()) => {}
+                    Err(std::fs::TryLockError::WouldBlock) => return Ok(Some(None)),
+                    Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+                }
                 let record: Record = serde_json::from_slice(&read(&path)?)?;
                 if record.intent.correlation != key
                     || !token(&record.intent.owner)
@@ -165,7 +197,7 @@ impl Journal {
                         "journal owner does not match directory",
                     ));
                 }
-                Ok(Some(record))
+                Ok(Some(Some(record)))
             })();
             match record {
                 Ok(Some(record)) => records.push((key, Ok(record))),

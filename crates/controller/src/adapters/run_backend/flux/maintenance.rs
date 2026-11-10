@@ -61,7 +61,7 @@ impl Flux {
         }
         for (key, entry) in self.journal.records()? {
             match entry {
-                Ok(record) => {
+                Ok(Some(record)) => {
                     // Committed terminals are immutable. Report unresolved debt but
                     // do not wake the Look thread for a cleanup that cannot run.
                     if record.terminal.is_some() {
@@ -75,6 +75,8 @@ impl Flux {
                         deadlines.push(retry.map_or(deadline, |retry| retry.max(deadline)));
                     }
                 }
+                // A short retry wakes a busy owner without writing a failure or cadence.
+                Ok(None) => deadlines.push(now.saturating_add(1_000)),
                 Err(error) => {
                     let deadline = failures
                         .get(&key)
@@ -94,7 +96,7 @@ impl Flux {
         &self,
         now: u64,
         authorize: &dyn Fn(&Owner) -> Result<()>,
-    ) -> Result<Vec<Owner>> {
+    ) -> Result<MaintenanceReport<Owner>> {
         let mut pass = self.clone();
         let deadline = Instant::now() + self.maintenance_budget;
         pass.native_deadline = Some(deadline);
@@ -102,6 +104,7 @@ impl Flux {
         let (failures, error_log_failed) = self.maintenance_failures_snapshot(now);
         let mut records = BTreeMap::new();
         let mut pending = BTreeMap::new();
+        let mut skipped_busy = false;
         if error_log_failed {
             pending.insert(
                 "maintenance-error-log".into(),
@@ -114,9 +117,10 @@ impl Flux {
         // One snapshot, reused by both phases. Reload only owners we actually touch.
         for (key, entry) in self.journal.records()? {
             match entry {
-                Ok(record) => {
+                Ok(Some(record)) => {
                     records.insert(key, record);
                 }
+                Ok(None) => skipped_busy = true,
                 Err(error) => {
                     if failures
                         .get(&key)
@@ -136,6 +140,7 @@ impl Flux {
         }
         let mut attempted = BTreeSet::new();
         let mut failed = BTreeSet::new();
+        let mut busy_claims = BTreeSet::new();
         // Cleanup first, so a released gate can resume held requests in this pass.
         for (key, record) in &mut records {
             if record.terminal.is_some() {
@@ -155,7 +160,7 @@ impl Flux {
             }
             let owner = record_owner(record);
             let result = (|| {
-                let claimed = self.journal.transaction(&owner, |dir, current| {
+                let claimed = self.journal.try_transaction(&owner, |dir, current| {
                     let mut current =
                         current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
                     if current.terminal.is_some()
@@ -167,6 +172,9 @@ impl Flux {
                     save(dir, &current)?;
                     Ok(true)
                 })?;
+                let Some(claimed) = claimed else {
+                    return Ok(None);
+                };
                 if claimed {
                     attempted.insert(key.clone());
                     let result = pass.run_cleanup(&owner)?;
@@ -174,10 +182,14 @@ impl Flux {
                         return Err(BackendError::unknown(&result.reason));
                     }
                 }
-                self.journal.load(&owner)
+                self.journal.load(&owner).map(Some)
             })();
             match result {
-                Ok(current) => {
+                Ok(None) => {
+                    skipped_busy = true;
+                    busy_claims.insert(key.clone());
+                }
+                Ok(Some(current)) => {
                     *record = current;
                     if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
                         self.maintenance_error(key, &error.to_string(), now);
@@ -202,6 +214,7 @@ impl Flux {
                     .get(key)
                     .is_some_and(|failure| failure.next_attempt_ms > now)
                 || failed.contains(key)
+                || busy_claims.contains(key)
                 || Instant::now() >= deadline
                 || (!attempted.contains(key) && attempted.len() >= self.maintenance_owners)
             {
@@ -209,7 +222,7 @@ impl Flux {
             }
             let owner = record_owner(record);
             let result = (|| {
-                let held = self.journal.transaction(&owner, |dir, current| {
+                let held = self.journal.try_transaction(&owner, |dir, current| {
                     let mut current =
                         current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
                     if current.held_submission_ms.is_none() {
@@ -228,6 +241,9 @@ impl Flux {
                     save(dir, &current)?;
                     Ok(Some(current))
                 })?;
+                let Some(held) = held else {
+                    return Ok(None);
+                };
                 if let Some(held) = held {
                     attempted.insert(key.clone());
                     authorize(&owner)?;
@@ -241,10 +257,14 @@ impl Flux {
                         }
                     }
                 }
-                self.journal.load(&owner)
+                self.journal.load(&owner).map(Some)
             })();
             match result {
-                Ok(current) => {
+                Ok(None) => {
+                    skipped_busy = true;
+                    busy_claims.insert(key.clone());
+                }
+                Ok(Some(current)) => {
                     *record = current;
                     if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
                         self.maintenance_error(key, &error.to_string(), now);
@@ -260,10 +280,15 @@ impl Flux {
             }
         }
         for (key, record) in records {
-            if record.cleanup_retry_ms.is_some() || record.held_submission_ms.is_some() {
+            if !busy_claims.contains(&key)
+                && (record.cleanup_retry_ms.is_some() || record.held_submission_ms.is_some())
+            {
                 pending.insert(key, record_owner(&record));
             }
         }
-        Ok(pending.into_values().collect())
+        Ok(MaintenanceReport {
+            pending: pending.into_values().collect(),
+            skipped_busy,
+        })
     }
 }
