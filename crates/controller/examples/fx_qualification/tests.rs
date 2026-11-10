@@ -352,3 +352,64 @@ fn dry_run_exits_zero_only_for_the_completed_preview() {
     );
     assert_eq!(exit_code(&json!({"status":"FAIL","errors":[]}), true), 1);
 }
+
+#[test]
+fn pq_production_canary_does_not_require_live_flux() {
+    assert!(!generator::PASS_FLUX_URI, "production PQ profile disables Flux transport");
+}
+
+#[test]
+fn pq_tool_preflight_requires_flux_only_when_forwarded() {
+    use std::process::Command;
+    let directory = tempfile::tempdir().unwrap();
+    for (git, flux, forwarded, pass) in [
+        (true, false, false, true),
+        (true, false, true, false),
+        (false, true, false, false),
+        (false, true, true, false),
+        (true, true, false, true),
+        (true, true, true, true),
+    ] {
+        for (name, present) in [("git", git), ("flux", flux)] {
+            let path = directory.path().join(name);
+            if present {
+                fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            } else if path.exists() {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+        let output = Command::new("/usr/bin/python3")
+            .env_clear()
+            .env("PATH", directory.path())
+            .args(["-c", prepare::pq_tool_preflight(forwarded)])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), pass, "git={git} flux={flux} forwarded={forwarded}: {}", String::from_utf8_lossy(&output.stderr));
+        if !pass {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("AssertionError"));
+        }
+    }
+}
+
+#[test]
+fn qualification_plan_uses_production_pq_and_ascii_job_ids() {
+    let directory = tempfile::tempdir().unwrap();
+    let inputs = inputs(directory.path());
+    let planned = plan(&inputs);
+    assert_eq!(planned["serial"], true);
+    assert_eq!(planned["flux_job_count"], 7);
+    let jobs = planned["jobs"].as_array().unwrap();
+    for job in jobs {
+        assert_eq!(job["resources"], json!([{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":1},{"type":"memory","count":2}]}]));
+        assert_eq!(job["attributes"]["system"]["environment"], json!({"FLUX_F58_FORCE_ASCII":"1"}));
+        assert_eq!(job["environment_policy"]["start_empty"], true);
+        assert_eq!(job["environment_policy"]["pass_flux_uri"], false);
+        assert_eq!(job["rlimit_flags"], json!(["--rlimit=-*"]));
+        assert_eq!(job["submission"], "NOT_SUBMITTED");
+        assert_eq!(job["gpus"], 0);
+        assert_eq!(job["parallelism"], 1);
+        assert_eq!(job["native_threads"], 1);
+        assert!(job["attributes"]["system"]["duration"].as_u64().unwrap() <= 600);
+    }
+}

@@ -4,7 +4,9 @@ use tl3_controller::{
     production,
 };
 
-const TARGET: &str = r#"import errno, json, os, pathlib, subprocess, tempfile
+pub(super) const PASS_FLUX_URI: bool = true;
+
+pub(super) const TARGET: &str = r#"import errno, json, os, pathlib, subprocess, tempfile
 names = sorted(name for name in os.environ if name.startswith('FLUX_'))
 assert names == ['FLUX_URI']
 assert os.environ['FLUX_URI'] == 'local:///run/tl3-flux.sock'
@@ -126,7 +128,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
         &json!({"worktree":checkout,"inputs":{"tests":{"execution":{"profile":profile_path}}}}),
     )?;
     let profile = worker::Profile {
-        pass_flux_uri: true,
+        pass_flux_uri: PASS_FLUX_URI,
         activation: Some(pin),
         schema: "tl3.worker_execution.v1".into(),
         attempt: attempt.clone(),

@@ -20,6 +20,10 @@ fn run(command: &mut Command, root: &Path, name: &str) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+pub(super) fn pq_tool_preflight(_pass_flux_uri: bool) -> &'static str {
+    "import shutil; assert shutil.which('git'); assert shutil.which('flux')"
+}
+
 pub fn admitted(inputs: &Inputs) -> Result<()> {
     require_admitted()?;
     let root = inputs.out.join("prepared");
@@ -128,7 +132,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
                 "/opt/tl3/bin/python",
                 &inputs.generator_image,
                 "-c",
-                "import shutil; assert shutil.which('git'); assert shutil.which('flux')",
+                pq_tool_preflight(generator::PASS_FLUX_URI),
             ]),
         &root,
         "pq-tool-preflight",
