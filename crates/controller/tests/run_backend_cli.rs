@@ -6963,6 +6963,36 @@ fn cleanup_maintenance_contended_request_is_durable_without_a_helper() {
 
 #[test]
 #[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_busy_owner_is_skipped_and_remains_due() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("busy-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    f.cleanup_facts(&owned, true);
+    fs::remove_file(f.intent.output_dir.join("helper-called-busy-owner")).unwrap();
+    let lock = fs::OpenOptions::new().read(true).write(true)
+        .open(f.options.journal_root.join(&f.intent.correlation).join("lock")).unwrap();
+    lock.lock().unwrap();
+    let backend = maintenance_backend(&f);
+    let pending = backend.cleanup_maintenance(due).unwrap();
+    let deadline = backend.next_cleanup_maintenance_ms().unwrap();
+    assert!(pending.is_empty(), "contention must not report an incident owner");
+    assert!(api::durable::maintenance_failures(&f.options.journal_root).unwrap().is_empty(),
+        "contention must not count as a maintenance failure, including during timer scans");
+    assert!(deadline.is_some_and(|next| next <= due), "busy owners need an early retry");
+    assert_eq!(f.state().cleanup_retry_ms, Some(due), "a skipped owner must not be claimed");
+    assert!(!f.intent.output_dir.join("helper-called-busy-owner").exists());
+    drop(lock);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(due));
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(cleanup_debts(&f).is_empty(), "the very next pass must retry the owner");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
 fn cleanup_maintenance_owner_limit_leaves_remaining_owners_due() {
     let mut fixtures = Vec::new();
     for name in ["bounded-first", "bounded-second"] {
