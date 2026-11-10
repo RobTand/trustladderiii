@@ -423,7 +423,7 @@ pub(super) proof fn plan_check_bounds(n: Node, c: ReplyCtx)
 pub(super) proof fn plan_check_progress(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures successful_reply_input(n, c.reply) ==>
+    ensures !successful_reply_input(n, c.reply) ==>
         distance(reply_family_values::finish(c.next_question, reply_family_values::plan_check(n))) < distance(n),
 {
     reveal(reply_family_values::plan_check);
