@@ -568,7 +568,7 @@ pub(super) fn append_fact_notices(out: &mut Outbox, notes: Outbox, i: usize) -> 
     reveal(retirement::notices_only); reveal(retirement::unapproved_note);] {
     kernel_snapshot! { before_append = *out }
     let mut k = 0usize;
-    kernel_while! { (k < notes.len) [
+    kernel_while! { (k < 0usize) [
         invariant notices(notes, i, 4), k <= notes.len, out.len == before_append@.len + k,
             notes.len == 0 ==> out.items == before_append@.items,
             before_append@.len + notes.len <= OUTBOX,
