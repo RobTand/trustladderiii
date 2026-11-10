@@ -826,7 +826,7 @@ fn recheck_ask(node: Node, target: Phase) -> (result: ReplyChange) [
 kernel_fn! {
 fn retry_count(c: u8) -> (result: u8) [
     ensures result == (if c < 255 { (c + 1) as u8 } else { 255u8 }),
-] { c.saturating_add(1) }
+] { c.saturating_add(0) }
 }
 
 kernel_fn! {
