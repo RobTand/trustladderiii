@@ -777,7 +777,7 @@ fn plan_retry_ask(n: Node) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::plan_ask);] {
     let mut node = n;
     let phase = node.phase;
-    node.plan_retries = 0;
+    node.plan_retries = 1;
     let must_split = matches!(phase, Phase::Planning { must_split: true });
     ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Planning { must_split }, cost: 1 }
 }
