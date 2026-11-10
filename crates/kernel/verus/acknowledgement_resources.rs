@@ -35,7 +35,7 @@ pub(super) open spec fn confirmed_clear_frame(b: Node, n: Node) -> bool {
         && (n.worktree == b.worktree)
         && (n.next_seq == b.next_seq)
         && (n.question == b.question)
-        && (n.run_failures == b.run_failures)
+        && (n.run_failures as int == b.run_failures as int + 1)
         && (n.run_incidents == b.run_incidents)
         && (n.fx_failures == b.fx_failures)
         && (n.fx_incidents == b.fx_incidents)
