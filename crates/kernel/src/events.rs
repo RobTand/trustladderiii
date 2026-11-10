@@ -144,7 +144,17 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             repo,
             head,
             priority,
-        } => apply_new_adoption(w, repo, head, priority, out),
+        } => {
+            if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
+                let mut node = Node::new(repo);
+                node.proposed = Some(head);
+                node.priority = priority;
+                w.nodes.push(node);
+            }
+            kernel_proof! {
+                transition_safety::lift_apply_none(before_apply@, *w, event, before_apply_out@, *out);
+            }
+        }
         Event::NewRequest { repo, priority } => apply_new_request(w, repo, priority, out),
         Event::Reply {
             node,
@@ -208,145 +218,10 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         if !progress_gate_apply::resume_selected(before_apply@, event) {
             reveal(progress_gate_apply::resume_apply_post);
         }
+        if event is NewAdoption {
+            events_lemmas::footprints_after(before_apply@, *w);
+        }
     }
-}
-}
-
-kernel_fn! {
-/// G9 dispatcher entry / #806: apply's NewAdoption arm as one world entry.
-fn apply_new_adoption(w: &mut World, repo: RepoId, head: HeadId, priority: Priority,
-    _out: &mut Outbox) -> (result: ()) [
-    requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
-        dependencies::edges_indexable(*old(w)), old(_out).len + 4 <= OUTBOX,
-        forall|j: int| 0 <= j < old(w).nodes@.len()
-            ==> arithmetic_consistent(old(w).nodes@[j])
-                && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
-                && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
-                && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), (Event::NewAdoption { repo, head, priority }))
-            ==> progress_measure(*final(w)) < progress_measure(*old(w))
-                && dependencies::edges_indexable(*final(w))),
-        forall|j: int| 0 <= j < final(w).nodes@.len() ==>
-            settle_shape(final(w).nodes@[j])
-                && footprint::valid_footprint(*final(w), final(w).nodes@[j].footprint),
-        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
-            (old(w).nodes@[j].phase is Closed ==> final(w).nodes@[j].phase is Closed)
-                && final(w).nodes@[j].repo == old(w).nodes@[j].repo
-                && final(w).nodes@[j].last_cmd >= old(w).nodes@[j].last_cmd,
-        old(w).nodes@.len() <= final(w).nodes@.len() <= old(w).nodes@.len() + 1,
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).next_question as int <= old(w).next_question as int + 1,
-        final(w).gates@ == old(w).gates@, final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        footprint::ordered_table(*final(w)),
-        final(w).file_sets@.len() >= old(w).file_sets@.len(),
-        forall|j: int| 0 <= j < old(w).file_sets@.len()
-            ==> final(w).file_sets@[j] == old(w).file_sets@[j],
-        forall|j: int| 0 <= j < old(w).nodes@.len() ==>
-            final(w).nodes@[j].generation as int <= old(w).nodes@[j].generation as int + 2
-            && final(w).nodes@[j].next_seq as int <= old(w).nodes@[j].next_seq as int + 1
-            && final(w).nodes@[j].credit.start as int <= old(w).nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
-            && final(w).nodes@[j].credit.earned as int + merge_capacity(final(w).nodes@[j])
-                <= old(w).nodes@[j].credit.earned as int + 1
-            && final(w).nodes@[j].credit.added as int <= old(w).nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
-            && final(w).nodes@[j].credit.spent as int <= old(w).nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET,
-        forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len() ==>
-            final(w).nodes@[j].last_cmd == 0
-            && final(w).nodes@[j].generation == 0 && final(w).nodes@[j].next_seq == 0
-            && final(w).nodes@[j].credit.start == 0 && final(w).nodes@[j].credit.earned == 0
-            && final(w).nodes@[j].credit.added == 0 && final(w).nodes@[j].credit.spent == 0,
-        (old(w).nodes@.len() > 0 && old(w).nodes@[0].phase == Phase::Unplanned
-            && progress_unplanned::obstructed(old(w).nodes@[0])
-            && (Event::NewAdoption { repo, head, priority }) == progress_unplanned::outside_event(old(w).nodes@[0]))
-            ==> final(w).nodes@.len() == old(w).nodes@.len()
-                && (forall|j: int| 1 <= j < old(w).nodes@.len()
-                    ==> final(w).nodes@[j] == old(w).nodes@[j]),
-        match (Event::NewAdoption { repo, head, priority }) {
-            Event::Fact { node, fact } => retirement::selected(fact)
-                && node.0 < old(w).nodes@.len() ==> {
-                    final(w).nodes@ == old(w).nodes@.update(node.0 as int,
-                        retirement::fact_node(old(w).nodes@[node.0 as int], fact))
-                    && final(w).next_question == old(w).next_question
-                    && final(w).file_sets@ == old(w).file_sets@
-                    && final(w).dependencies@ == old(w).dependencies@
-                    && (retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)))
-                    && match fact {
-                        Fact::Priority(_) => *final(_out) == *old(_out),
-                        Fact::PrMerged { head, checks_passed } => old(w).nodes@[node.0 as int].had_pr
-                            && old(w).nodes@[node.0 as int].merged.is_none()
-                            && !(old(w).nodes@[node.0 as int].phase is Closed)
-                            && !(old(w).nodes@[node.0 as int].approved == Some(head) && checks_passed)
-                            ==> retirement::unapproved_note(*final(_out), node.0 as usize),
-                        _ => true,
-                    }
-                },
-            _ => true,
-        },
-        progress_gate_apply::resume_apply_post(*old(w), *final(w), (Event::NewAdoption { repo, head, priority })),
-        (match (Event::NewAdoption { repo, head, priority }) {
-            Event::NewAdoption { repo, head, .. } => repo.0 < old(w).gates@.len() ==>
-                final(w).nodes@.len() == old(w).nodes@.len() + 1
-                && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
-                && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
-                && transition_safety::notice_only(*old(_out), *final(_out), node)
-                && (match command {
-                    Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
-                        && final(w).nodes@[node.0 as int]
-                            != (Node { last_cmd: final(w).nodes@[node.0 as int].last_cmd, ..old(w).nodes@[node.0 as int] })
-                        ==> (match old(w).nodes@[node.0 as int].question {
-                            Some(q) => q.id == question,
-                            None => false,
-                        }) && (match final(w).nodes@[node.0 as int].question {
-                            Some(q) => q.id != question,
-                            None => true,
-                        }),
-                    _ => true,
-                }),
-            Event::Reply { node, generation, reply } => node.0 < old(w).nodes@.len()
-                && transition_safety::fail_fast_event((Event::NewAdoption { repo, head, priority })) ==> handler_safety::reply_rows(old(w).fail_fast,
-                    transition_safety::retry_due(*old(w), (Event::NewAdoption { repo, head, priority })), transition_safety::funding_due(*old(w), (Event::NewAdoption { repo, head, priority })),
-                    old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int], *old(_out), *final(_out)),
-            _ => true,
-        }),
-        (match (Event::NewAdoption { repo, head, priority }) {
-            Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees } =>
-                old(w).nodes@.len() > 0 ==> port_t860_contracts::reply_post(*old(w), *final(w), 0,
-                    generation, Reply::AuditDisagrees, *old(_out), *final(_out)),
-            _ => true,
-        }),
-        (match (Event::NewAdoption { repo, head, priority }) {
-            Event::NewRequest { .. } | Event::NewAdoption { .. } =>
-                transition_safety::transition_safety(*old(w), *final(w),
-                    transition_safety::Transition::Apply((Event::NewAdoption { repo, head, priority })), transition_safety::emitted(*old(_out), *final(_out))),
-            Event::Command { node, .. } => node.0 < old(w).nodes@.len()
-                && node_checked(*old(w), old(w).nodes@[node.0 as int])
-                ==> transition_safety::transition_safety(*old(w), *final(w),
-                    transition_safety::Transition::Apply((Event::NewAdoption { repo, head, priority })), transition_safety::emitted(*old(_out), *final(_out))),
-            Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
-        }),
-        forall|j: int| 0 <= j < old(w).nodes@.len() ==> final(w).nodes@[j] == old(w).nodes@[j],
-        forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len()
-            ==> !(final(w).nodes@[j].phase is Stopping || final(w).nodes@[j].phase is Closed),
-        *final(_out) == *old(_out),
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
-    kernel_snapshot! { before_apply = *w }
-    kernel_snapshot! { before_apply_out = *_out }
-    kernel_proof! { report_projection(*w, (Event::NewAdoption { repo, head, priority })); events_lemmas::selected_input(before_apply@, (Event::NewAdoption { repo, head, priority })); }
-        kernel_proof! { assert(w.gates@ == before_apply@.gates@); assert(w.nodes@ == before_apply@.nodes@); assert(w.gates@.len() <= usize::MAX); }
-        if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
-            let mut node = Node::new(repo);
-            node.proposed = Some(head);
-            node.priority = priority;
-            w.nodes.push(node);
-            kernel_proof! { assert(repo.0 < before_apply@.gates@.len()); assert(node.proposed == Some(head)); assert(!node.adopted); assert(w.nodes@ == before_apply@.nodes@.push(node)); assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int] == node); }
-        }
-        kernel_proof! {
-            if repo.0 < before_apply@.gates@.len() { assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); } else { assert(w.nodes@ == before_apply@.nodes@); }
-            transition_safety::lift_apply_none(before_apply@, *w, (Event::NewAdoption { repo, head, priority }), before_apply_out@, *_out);
-        }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewAdoption { repo, head, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewAdoption { repo, head, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
