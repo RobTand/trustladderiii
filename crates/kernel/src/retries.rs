@@ -123,7 +123,15 @@ pub(super) fn resolve_reply_change(w: &mut World, i: usize, change: ReplyChange,
         },
         ReplyChange::Incident { node, needs_rob } => {
             w.nodes[i] = node;
+            kernel_snapshot! { incident_nodes = w.nodes@ }
             raise_failed_run_incident(w, i, needs_rob, out);
+            kernel_proof! {
+                reveal(retries_facts::incident_write);
+                node_writes::write_length(incident_nodes@, i as int,
+                    retirement::incident(incident_nodes@[i as int], needs_rob));
+                node_writes::write_other(incident_nodes@, i as int,
+                    retirement::incident(incident_nodes@[i as int], needs_rob));
+            }
         },
     }
 }
