@@ -166,6 +166,8 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
         && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
         && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
         && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
+        !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+            ==> old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some(),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
