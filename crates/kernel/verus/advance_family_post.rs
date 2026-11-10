@@ -386,7 +386,7 @@ pub(super) proof fn retains_holds_intro(b: Node, a: Node)
 pub(super) proof fn holds_phase_items(n: Node)
     requires n.phase == Phase::Making || n.phase == Phase::Rebasing,
     ensures match current_item(n) {
-        Some(item) => matches!(item, Item::Do(_) | Item::Start(_) | Item::StartRebase | Item::Await),
+        Some(item) => matches!(item, Item::Do(_) | Item::StartRebase | Item::Await),
         None => true,
     },
 {
