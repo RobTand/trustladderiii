@@ -2049,7 +2049,7 @@ fn m4_review_webhook_uses_saved_intent() {
     fixture.check(Some("success"));
     let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = fired.clone();
-    let adapter = fixture.adapter(&settings).with_boundary(move |b| {
+    let adapter = fixture.adapter(&settings).with_write_boundary(move |b| {
         if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Merge, after:true}) && !flag.swap(true, std::sync::atomic::Ordering::SeqCst) { panic!("stop after GitHub merged, before TL3 receipt"); }
     });
     let controller = fixture.open_adapter(&settings, adapter);
