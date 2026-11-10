@@ -4,7 +4,25 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(not(test))]
 const CLIENT: &str = "/home/rob/tmp/bazel-wave2/tools/bbrun.py";
+#[cfg(test)]
+std::thread_local! {
+    static CLIENT: std::cell::RefCell<PathBuf> = std::cell::RefCell::new(
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/ci/bbrun.py"))
+    );
+}
+
+fn client_path() -> PathBuf {
+    #[cfg(not(test))]
+    {
+        PathBuf::from(CLIENT)
+    }
+    #[cfg(test)]
+    {
+        CLIENT.with(|path| path.borrow().clone())
+    }
+}
 const CLIENT_SHA256: &str = "8016e41d97aac7e83f7b5b39c57aea3c030a35d555e35f2929f09ab6076d7aa0";
 const HOLD: &str = "/home/rob/tmp/tl3-build/rust-fv/BB-HOLD";
 
@@ -33,7 +51,7 @@ fn blob(path: &Path) -> Result<api::BlobRef> {
 }
 
 pub fn verify_client() -> Result<()> {
-    if durable::digest(&durable::read(Path::new(CLIENT))?) != CLIENT_SHA256 {
+    if durable::digest(&durable::read(&client_path())?) != CLIENT_SHA256 {
         return Err("BuildBuddy client sha256 differs from pinned version".into());
     }
     Ok(())
@@ -43,7 +61,7 @@ fn client(args: &[String], out: &Path) -> Result<String> {
     verify_client()?;
     let output = Command::new("/usr/bin/python3")
         .arg("-I")
-        .arg(CLIENT)
+        .arg(client_path())
         .args(args)
         .stdin(Stdio::null())
         .output()?;
@@ -708,7 +726,7 @@ source = {field: record.get(field) for field in ['commitSha', 'repoUrl']}
 source['invocationId'] = record.get('id', {}).get('invocationId')
 print(bb.clean(client.key, json.dumps(source).encode()).decode())
 "#,
-            CLIENT,
+            client_path().to_str().ok_or("UTF-8 client path required")?,
             CLIENT_SHA256,
             id,
         ])
@@ -799,6 +817,127 @@ mod staged_transport_tests {
         ]);
         fs::create_dir_all(root.join("qualified-production")).unwrap();
         (inputs, overlay)
+    }
+
+    #[test]
+    fn staging_push_preflight_creates_no_remote_ref() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, _) = fixture(root.path());
+        let before = git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap();
+        preflight_transport(&inputs).unwrap();
+        assert_eq!(git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(), before);
+        assert_eq!(git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(), inputs.head);
+        assert_eq!(git(&inputs.repo, &["status", "--porcelain"]).unwrap(), "");
+    }
+
+    #[test]
+    fn staging_push_preflight_refuses_unavailable_receive_pack() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, _) = fixture(root.path());
+        let refuse = root.path().join("refuse-push");
+        fs::write(&refuse, b"#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&refuse, fs::Permissions::from_mode(0o700)).unwrap();
+        git(&inputs.repo, &["config", "remote.origin.receivepack", refuse.to_str().unwrap()]).unwrap();
+        assert_eq!(
+            preflight_transport(&inputs).unwrap_err().to_string(),
+            "staging push preflight failed: origin must authenticate and permit dry-run pushes to fx-x3-overlay/*; no canaries admitted"
+        );
+        git(&inputs.repo, &["config", "--unset", "remote.origin.receivepack"]).unwrap();
+        assert_eq!(git(&inputs.repo, &["ls-remote", "--refs", "origin"]).unwrap(), "");
+    }
+
+    #[test]
+    fn staged_overlay_refuses_occupied_child_with_different_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, overlay) = fixture(root.path());
+        let tree = git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]).unwrap();
+        let wrong = git(&inputs.repo, &["commit-tree", &tree, "-p", &inputs.head, "-m", "wrong overlay"]).unwrap();
+        assert_ne!(wrong, inputs.head);
+        let digest = overlay_digest(&overlay).unwrap();
+        let branch = format!("refs/heads/fx-x3-overlay/{}", &digest[..16]);
+        git(&inputs.repo, &["push", "origin", &format!("{wrong}:{branch}")]).unwrap();
+        assert_eq!(
+            build_argv(&inputs, Some(&overlay)).unwrap_err().to_string(),
+            "overlay commit blobs or modes differ from private derivation"
+        );
+        assert_eq!(git(&inputs.repo, &["ls-remote", "origin", &branch]).unwrap().split_whitespace().next().unwrap(), wrong);
+        assert!(!inputs.out.join("qualified-production/overlay-commit.json").exists());
+    }
+
+    fn retained_fixture(root: &Path) -> (Inputs, Build) {
+        let (inputs, _) = fixture(root);
+        let work = inputs.out.join("production");
+        fs::create_dir(&work).unwrap();
+        let reference = durable::blob(&work.join("reference.json"), b"{}").unwrap();
+        let build = Build {
+            invocation_id: "1".repeat(36),
+            client_sha256: CLIENT_SHA256.into(),
+            base_head: inputs.head.clone(),
+            build_commit: inputs.head.clone(),
+            overlay_tree: git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]).unwrap(),
+            command_exit: 0,
+            own_verdict: json!({"source":{"commitSha":inputs.head,"repoUrl":"https://github.com/RobTand/trustladderiii","invocationId":"1".repeat(36)}}),
+            log: reference.clone(),
+            wrapper_result: reference,
+            artifacts: vec![],
+        };
+        (inputs, build)
+    }
+
+    fn retain(inputs: &Inputs, value: &Build) {
+        durable::atomic(&inputs.out.join("production/build.json"), &serde_json::to_vec(value).unwrap()).unwrap();
+    }
+
+    struct TestClient(PathBuf);
+
+    impl TestClient {
+        fn install(root: &Path) -> Self {
+            let path = root.join("bbrun.py");
+            fs::copy(client_path(), &path).unwrap();
+            assert_eq!(durable::digest(&fs::read(&path).unwrap()), CLIENT_SHA256);
+            Self(CLIENT.with(|client| client.replace(path)))
+        }
+    }
+
+    impl Drop for TestClient {
+        fn drop(&mut self) {
+            CLIENT.with(|client| client.replace(self.0.clone()));
+        }
+    }
+
+    #[test]
+    fn retained_build_refuses_another_base_head() {
+        let root = tempfile::tempdir().unwrap();
+        let _client = TestClient::install(root.path());
+        let (inputs, mut retained) = retained_fixture(root.path());
+        retain(&inputs, &retained);
+        super::build(&inputs, "production", None).unwrap();
+        retained.base_head = "f".repeat(40);
+        retain(&inputs, &retained);
+        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "BuildBuddy base head differs from H");
+    }
+
+    #[test]
+    fn retained_build_refuses_wrong_client_sha256() {
+        let root = tempfile::tempdir().unwrap();
+        let _client = TestClient::install(root.path());
+        let (inputs, mut retained) = retained_fixture(root.path());
+        retain(&inputs, &retained);
+        super::build(&inputs, "production", None).unwrap();
+        retained.client_sha256 = "f".repeat(64);
+        retain(&inputs, &retained);
+        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "retained BuildBuddy client hash differs");
+    }
+
+    #[test]
+    fn retained_build_refuses_changed_client_file() {
+        let root = tempfile::tempdir().unwrap();
+        let _client = TestClient::install(root.path());
+        let (inputs, retained) = retained_fixture(root.path());
+        retain(&inputs, &retained);
+        super::build(&inputs, "production", None).unwrap();
+        fs::write(client_path(), b"changed client").unwrap();
+        assert_eq!(super::build(&inputs, "production", None).unwrap_err().to_string(), "BuildBuddy client sha256 differs from pinned version");
     }
 
     #[test]
