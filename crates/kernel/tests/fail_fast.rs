@@ -448,12 +448,14 @@ fn fail_fast_pair(run: &Run, event: Event) -> bool {
         let n = on.world.nodes[0];
         let r = off.world.nodes[0];
         assert_eq!(n.credit, b.credit, "a diverted step spends nothing");
-        let funding = n.question.is_some_and(|q| {
-            q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making)
-        });
+        let funding = n
+            .question
+            .is_some_and(|q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making));
         if funding {
-            assert!(r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
-                && q.cont == Cont::Planning { must_split: true }));
+            assert!(
+                r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
+                    && q.cont == Cont::Planning { must_split: true })
+            );
             assert!(n.review_stop.is_none());
         } else {
             assert!(matches!(
@@ -584,7 +586,10 @@ fn fail_fast_pairs_divert_only_retries() {
     let mut run = Run::new(false);
     run.start_making();
     run.reviewed();
-    assert!(!fail_fast_pair(&run, run.reply_now(Reply::ChangesRequested)));
+    assert!(!fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ChangesRequested)
+    ));
     let mut run = Run::new(false);
     run.start_making();
     run.fix_round();
@@ -595,9 +600,15 @@ fn fail_fast_pairs_divert_only_retries() {
     let mut run = Run::new(false);
     run.start_making();
     run.reviewed();
-    assert!(!fail_fast_pair(&run, run.reply_now(Reply::ReviewerOutOfRoom)));
+    assert!(!fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ReviewerOutOfRoom)
+    ));
     run.reply(Reply::ReviewerOutOfRoom);
-    assert!(fail_fast_pair(&run, run.reply_now(Reply::ReviewerOutOfRoom)));
+    assert!(fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ReviewerOutOfRoom)
+    ));
 
     // fail_fast_ci_failed_awaiting_delivery
     let mut run = Run::new(false);
