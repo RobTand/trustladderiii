@@ -17,6 +17,9 @@ mod adapters {
         pub const HARNESS: &str = "harness";
     }
 }
+mod checks {
+    pub const HARNESS: &str = "harness";
+}
 mod approval_delivery {
     pub const AMBIGUOUS: &str = "approval_delivery_ambiguous";
 }

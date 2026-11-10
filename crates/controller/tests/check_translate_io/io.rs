@@ -3,7 +3,7 @@ use std::{
     cell::RefCell,
     panic::{AssertUnwindSafe, catch_unwind},
 };
-use tl3_controller::adapters::prismabuild::CheckRun;
+use tl3_controller::checks::CheckRun;
 use tl3_kernel::{FileId, Node, Phase, RepoId};
 use tl3_store::{Epoch, InternKind, Interned, Revision, WorldRow};
 pub(super) const SHA: &str = "1111111111111111111111111111111111111111";

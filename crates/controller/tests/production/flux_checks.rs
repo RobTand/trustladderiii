@@ -4,7 +4,7 @@ use std::time::Duration;
 use tl3_controller::{
     Ownership,
     adapters::flux_checks::{Adapter, Preparation, PreparedCheck},
-    adapters::prismabuild::CheckRun,
+    checks::CheckRun,
     cli::Input,
     executor::{Delivery, Executor, Output, Reconciliation},
     run_backend::{self as api, *},

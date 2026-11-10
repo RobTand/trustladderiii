@@ -1,6 +1,6 @@
 use crate::{
     Result,
-    adapters::prismabuild::{CheckRun, Kind},
+    checks::{CheckRun, Kind},
 };
 use std::path::Path;
 use tl3_worktrees::{BranchName, CommitId, Worktrees};

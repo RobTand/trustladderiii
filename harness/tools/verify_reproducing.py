@@ -25,7 +25,7 @@ def verify_action_reviewed(repo, base, reviewed, head, container):
         root = Path(directory)
         source = Path(__file__).resolve().parents[2]
         shutil.copytree(source / "harness/src/tl3_harness", root / "trusted/tl3_harness")
-        shutil.copyfile(source / "crates/controller/src/adapters/prismabuild/action.py", root / "action.py")
+        shutil.copyfile(source / "crates/controller/src/checks/action.py", root / "action.py")
         git(repo, "bundle", "create", str(root / "served.bundle"), "HEAD")
         request = {"effect_key": "fixture-reviewed", "base": base, "reviewed": reviewed,
                    "head": head, "image": container.image,

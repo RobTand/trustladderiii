@@ -38,13 +38,18 @@ mod reviewer {
 pub mod contracts {
     pub use tl3_controller::contracts::*;
 }
+// Current shells name the moved check model `checks`; the plan-size leaf is in current.rs.
+pub mod checks {
+    pub use tl3_controller::checks::*;
+}
 pub mod budget {
     pub use tl3_controller::budget::*;
 }
 mod adapters {
+    // Frozen references name the check model's pre-move path.
     pub mod prismabuild {
         use super::super::*;
-        pub use tl3_controller::adapters::prismabuild::*;
+        pub use tl3_controller::checks::*;
         const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
 
         include!("plan-size.rs");

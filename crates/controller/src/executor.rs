@@ -122,7 +122,7 @@ pub struct Delivery {
     #[serde(default)]
     pub replanned: bool,
     #[serde(default)]
-    pub checks: Option<crate::adapters::prismabuild::CheckRun>,
+    pub checks: Option<crate::checks::CheckRun>,
     #[serde(default)]
     pub job_generation: Option<u64>,
     #[serde(default)]
@@ -268,7 +268,7 @@ pub enum Observation {
     CheckPlan {
         node: NodeId,
         sha: String,
-        run: crate::adapters::prismabuild::CheckRun,
+        run: crate::checks::CheckRun,
     },
     CheckExecutionFailure {
         node: NodeId,

@@ -1,4 +1,5 @@
-use super::{Job, checks::Kind};
+use super::Kind;
+use crate::adapters::prismabuild::Job;
 #[cfg(test)]
 use crate::findings::MAX_MESSAGE_CHARS;
 use crate::{
@@ -133,7 +134,7 @@ fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
         })
 }
 
-pub(super) async fn ending(
+pub(crate) async fn ending(
     tool: &Tool,
     job: &Job,
     withdrawal: bool,

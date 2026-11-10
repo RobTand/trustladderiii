@@ -32,10 +32,15 @@ mod findings {
     pub const MAX_PATH_CHARS: usize = 4096;
     include!("clipped_helpers.rs");
 }
+// Frozen references name the check model's pre-move path; current shells use `checks`.
 mod adapters {
     pub mod prismabuild {
-        pub use tl3_controller::adapters::prismabuild::*;
+        pub use tl3_controller::checks::*;
         include!("selected_helpers.rs");
     }
+}
+mod checks {
+    pub use tl3_controller::checks::*;
+    include!("selected_helpers.rs");
 }
 include!("request_type.rs");

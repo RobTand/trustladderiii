@@ -1685,7 +1685,7 @@ fn every_released_report_version_still_parses() {
 /// instead of guessing at a newer harness's shape (a rollback's case).
 #[test]
 fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
-    let action = include_str!("../src/adapters/prismabuild/action.py");
+    let action = include_str!("../src/checks/action.py");
     assert!(
         action.contains(r#""schema": "tl3.checks.v3""#),
         "action.py writes the report version"

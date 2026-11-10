@@ -1,3 +1,5 @@
+//! Backend-neutral check plans, staging and report judgement. Flux is the only executor;
+//! these types and rules are shared by the Flux checks adapter and the controller.
 use crate::{
     Error, Result,
     contracts::{CheckRequest, bounded::CommitSha},
@@ -26,6 +28,11 @@ pub struct CheckRun {
 }
 
 pub use crate::contracts::{Check, CheckKind as Kind};
+
+pub(crate) mod results;
+#[cfg(test)]
+pub(crate) use results::contract_vectors;
+pub(crate) use results::{HARNESS, selected_failures};
 
 /// The trusted harness this controller stages.
 ///
@@ -269,9 +276,7 @@ const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
     const {
         assert!(MAX_REPORT_LINE_BYTES as u64 == tl3_harness_core::limits::MAX_REPORT_LINE_BYTES);
-        assert!(
-            super::results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES
-        );
+        assert!(results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES);
         assert!(
             (65536
                 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12
@@ -382,13 +387,13 @@ pub(crate) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
     Ok(run)
 }
 
-pub(in crate::adapters) fn stage(
+pub(crate) fn stage(
     root: &Path,
     harness: &Path,
     delivery: &Delivery,
     image: &str,
     protected_paths: &[String],
-    tests: &super::super::images::AdditionalTests,
+    tests: &crate::adapters::images::AdditionalTests,
 ) -> Result<Vec<String>> {
     let run = delivery
         .checks
@@ -451,7 +456,7 @@ pub(in crate::adapters) fn stage(
             fs::copy(entry.path(), trusted.join(entry.file_name()))?;
         }
     }
-    fs::write(root.join("action.py"), include_str!("action.py"))?;
+    fs::write(root.join("action.py"), include_str!("checks/action.py"))?;
     let commit = |id: &CommitId| {
         CommitSha::new(id.as_str()).map_err(|_| Error::Invalid("checks require an exact commit"))
     };

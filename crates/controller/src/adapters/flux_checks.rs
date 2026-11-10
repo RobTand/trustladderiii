@@ -1,8 +1,6 @@
 //! Controller delivery journal and check executor over the shared execution transport.
-use super::{
-    backend_watch,
-    prismabuild::{CheckRun, results},
-};
+use super::backend_watch;
+use crate::checks::{CheckRun, results};
 use crate::run_backend::{self as backend, durable};
 use crate::{
     Error, Result,

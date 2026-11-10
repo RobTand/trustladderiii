@@ -1,6 +1,6 @@
 pub mod direct_merge;
 pub mod github;
-mod images;
+pub(crate) mod images;
 pub mod prismabuild;
 mod record;
 pub mod run_backend;

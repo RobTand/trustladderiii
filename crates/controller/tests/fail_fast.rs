@@ -1152,15 +1152,15 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                         } else {
                             "why"
                         });
-                    let plan = adapters::prismabuild::CheckRun {
+                    let plan = tl3_controller::checks::CheckRun {
                         repository: "/fixture".into(),
                         base_sha: tl3_worktrees::CommitId::new("a".repeat(40))?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
-                        plan: vec![adapters::prismabuild::Check {
+                        plan: vec![tl3_controller::checks::Check {
                             name: "forced-deep-path".into(),
-                            kind: adapters::prismabuild::Kind::Demonstrating,
+                            kind: tl3_controller::checks::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],
                             forcing: Some(serde_json::from_value(forcing())?),
                             proof: None,

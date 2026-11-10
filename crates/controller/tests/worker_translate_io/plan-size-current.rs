@@ -1,9 +1,7 @@
 pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
     const {
         assert!(MAX_REPORT_LINE_BYTES as u64 == tl3_harness_core::limits::MAX_REPORT_LINE_BYTES);
-        assert!(
-            super::results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES
-        );
+        assert!(results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES);
         assert!(
             (65536
                 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12
@@ -89,3 +87,4 @@ fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
         .map(|ch| if ch.is_ascii() { 1 } else { 6 * ch.len_utf16() })
         .sum())
 }
+

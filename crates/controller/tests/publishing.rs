@@ -25,12 +25,12 @@ use tl3_controller::{
     adapters::{
         self,
         github::APPROVAL_CHECK,
-        prismabuild::{Check, CheckRun, Kind},
         workers::{
             Supervisor, WorkerOutputSource,
             writer::{FakeWriter, TextDraft, WriteRequest, Writer, WriterReply},
         },
     },
+    checks::{Check, CheckRun, Kind},
     cli::Input,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };

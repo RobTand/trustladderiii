@@ -1,11 +1,11 @@
 [
   {
-    "path": "crates/controller/src/adapters/prismabuild/results/tests/evidence-current.rs",
+    "path": "crates/controller/src/checks/results/tests/evidence-current.rs",
     "detector": "frozen-copy",
     "owner": "#878/controller-core/reference-copy-cleanup"
   },
   {
-    "path": "crates/controller/src/adapters/prismabuild/results/tests/mod.rs",
+    "path": "crates/controller/src/checks/results/tests/mod.rs",
     "detector": "source-include",
     "owner": "#878/controller-core/reference-copy-cleanup"
   },

@@ -53,15 +53,9 @@ impl Executor for Fake {
     }
 }
 
-pub(crate) mod checks;
 mod decide;
-pub(crate) mod results;
 mod source;
-pub(crate) use checks::validate_plan_size;
-pub use checks::{Check, CheckRun, Kind};
-#[cfg(test)]
-pub(crate) use results::contract_vectors;
-pub(crate) use results::{HARNESS, selected_failures};
+use crate::checks::{self, CheckRun, results, validate_plan_size};
 pub use source::{RunningSource, Source};
 
 use serde::{Deserialize, Serialize};
@@ -91,16 +85,16 @@ pub struct Settings {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Job {
-    action: ActionKey,
-    delivery: Delivery,
-    run: CheckRun,
-    changed_paths: Vec<String>,
+pub(crate) struct Job {
+    pub(crate) action: ActionKey,
+    pub(crate) delivery: Delivery,
+    pub(crate) run: CheckRun,
+    pub(crate) changed_paths: Vec<String>,
     /// The harness may report one trailing selected regression check (#359).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    selected_tests: Option<u32>,
+    pub(crate) selected_tests: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    always_tests: Vec<String>,
+    pub(crate) always_tests: Vec<String>,
 }
 
 pub struct Adapter {

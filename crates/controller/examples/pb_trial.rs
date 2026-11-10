@@ -8,7 +8,8 @@ use std::{
 };
 use tl3_controller::{
     Repository,
-    adapters::prismabuild::{Adapter, Check, CheckRun, Kind, Settings},
+    adapters::prismabuild::{Adapter, Settings},
+    checks::{Check, CheckRun, Kind},
     cli::Input,
     executor::Output as Out,
     executor::{Delivery, Executor, Observation},

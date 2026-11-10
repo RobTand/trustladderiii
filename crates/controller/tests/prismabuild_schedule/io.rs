@@ -6,7 +6,7 @@ pub use executor::{Completion, Delivery, Observation, Output as Out};
 pub use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeSet};
 pub use std::{collections::BTreeMap, ffi::OsString, io::Write};
-pub use tl3_controller::adapters::prismabuild::CheckRun;
+pub use tl3_controller::checks::CheckRun;
 pub use tl3_controller::{Error, Result, executor};
 pub use tl3_kernel::{EffectKind, NodeId};
 pub use tl3_prismabuild::{ActionKey, ActionState, Demand, ProgressPhase, RecordRead, Tool};
@@ -490,7 +490,7 @@ pub mod checks {
         Ok(vec!["src/a.rs".into()])
     }
 }
-pub fn validate_plan_size(plan: &[tl3_controller::adapters::prismabuild::Check]) -> Result<()> {
+pub fn validate_plan_size(plan: &[tl3_controller::checks::Check]) -> Result<()> {
     let n = sample(format!("validate-plan:{}", plan.len()));
     match n {
         254 => Err(fault().into()),
