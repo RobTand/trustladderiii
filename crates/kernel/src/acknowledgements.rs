@@ -739,7 +739,7 @@ kernel_fn! {
 fn ack_abandon_value(n: Node) -> (result: Node) [
     ensures result == ack_abandon_spec(n),
 ] {
-    Node { run: None, job: None, pool: false,
+    Node { run: n.run, job: None, pool: false,
         effect: match n.effect {
             Some(e) => Some(InFlight { cancelling: e.cancelling || e.kind.starts_operation(), ..e }),
             None => None,
