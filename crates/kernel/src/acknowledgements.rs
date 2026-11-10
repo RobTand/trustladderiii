@@ -149,6 +149,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        on_ack_post(*old(w), *final(w), i as int, seq, ack, *old(out), *final(out)),
     // E11.2 REQ R27: confirming an action a stop cancelled only clears it.
     (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false }))
         ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos
