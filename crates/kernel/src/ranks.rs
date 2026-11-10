@@ -857,7 +857,7 @@ kernel_fn! {
         if n.ticket.is_some() {
             let mut m = n;
             m.ticket = None;
-            return (m, next_ticket, true);
+            return (n, next_ticket, true);
         }
         (n, next_ticket, false)
     }
