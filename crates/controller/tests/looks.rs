@@ -2006,6 +2006,7 @@ fn main() {
     }
     let mut db = support::Database::start();
     subscription_error_is_isolated(&db.create("subscription_errors"));
+    cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
     assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {
@@ -2081,7 +2082,7 @@ fn main() {
     settled_looks_are_quiet(&db.create("quiet_timer"));
     println!("test settled_looks_are_quiet ... ok");
     db.stop();
-    println!("48 allowance and incident scenarios passed; no skips");
+    println!("49 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
@@ -3004,7 +3005,6 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
 }
 
-
 fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
     struct Maintenance(Rc<Cell<bool>>, Rc<Cell<u64>>);
     impl Executor for Maintenance {
@@ -3019,7 +3019,11 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
         }
         fn cleanup_maintenance(&mut self, now: u64) -> tl3_controller::Result<Vec<String>> {
             self.1.set(now + 300_000);
-            Ok(if self.0.get() { vec!["owner-correlation".into()] } else { vec![] })
+            Ok(if self.0.get() {
+                vec!["owner-correlation".into()]
+            } else {
+                vec![]
+            })
         }
     }
     let failing = Rc::new(Cell::new(true));
@@ -3028,12 +3032,24 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::PrismaBuild, Maintenance(failing.clone(), due));
     let clock = FakeClock::new();
-    let mut c = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), clock.clone()).unwrap();
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
     assert_eq!(c.next_look_in().unwrap(), Some(Duration::ZERO));
     for _ in 0..3 {
         c.look_now().unwrap();
         let snapshot = c.snapshot().unwrap();
-        let incidents: Vec<_> = snapshot.rows.iter().filter(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup").collect();
+        let incidents: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|r| {
+                r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup"
+            })
+            .collect();
         assert_eq!(incidents.len(), 1);
         assert_eq!(incidents[0].value["open"], true);
         assert_eq!(c.next_look_in().unwrap(), Some(Duration::from_secs(300)));
@@ -3041,5 +3057,13 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
     }
     failing.set(false);
     c.look_now().unwrap();
-    assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup" && r.value["open"] == false));
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents"
+                && r.value["signature"]["class"] == "runtime_cleanup"
+                && r.value["open"] == false)
+    );
 }

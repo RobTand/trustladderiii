@@ -383,6 +383,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cleanup_maintenance_does_not_infer_retry_eligibility_from_debt_files() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        let debt = journal.join("cleanup-debt").join("a".repeat(64));
+        std::fs::create_dir_all(&debt).unwrap();
+        let path = debt.join("running.execution");
+        std::fs::write(&path, b"healthy launch debt is not retry eligibility").unwrap();
+        let backend = Flux::new(Options {
+            executable: "/must-not-run-native".into(),
+            arguments: vec![],
+            environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: crate::run_backend::fixture_instance(root.path()),
+            journal_root: journal,
+            bootstrap: HostBootstrap {
+                cli: "/must-not-run-cli".into(),
+                config: "/unused-config".into(),
+            },
+        })
+        .unwrap();
+        assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+        assert!(
+            backend
+                .cleanup_maintenance(u64::MAX - 300_000)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(path.exists());
+    }
+
+    #[test]
     fn x7_instance_file_is_resolved_for_each_native_operation() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();

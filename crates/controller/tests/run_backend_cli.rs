@@ -4425,7 +4425,7 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
         Duration::from_secs(5),
     );
     assert_eq!(progress["progress"]["execution"], "first");
-    // Separate cancel process fsyncs intent and invokes its own bounded cleanup while the first waits.
+    // Separate cancel fsyncs intent while the existing cleanup attempt owns the helper.
     let cancel =
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(cancel.last().unwrap()["result"]["op"], "cancel");
@@ -6523,13 +6523,14 @@ fn x7_terminal_original_mismatch_retains_scratch_debt() {
     assert!(debt.exists());
 }
 
-
 fn maintenance_backend(f: &Fixture) -> tl3_controller::adapters::run_backend::flux::Flux {
     tl3_controller::adapters::run_backend::flux::Flux::new(f.options.clone()).unwrap()
 }
 
 fn maintenance_due(f: &Fixture) -> u64 {
-    maintenance_backend(f).next_cleanup_maintenance_ms().unwrap()
+    maintenance_backend(f)
+        .next_cleanup_maintenance_ms()
+        .unwrap()
         .expect("an attempted, unproven cleanup must schedule durable maintenance")
 }
 
@@ -6540,16 +6541,32 @@ fn cleanup_maintenance_timeout_recovers_with_positive_evidence() {
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
     let owned = f.cleanup_execution("maintenance-timeout", 'd');
-    f.cleanup_control(&owned.execution, cleanup_limits().native_timeout_seconds + 5);
+    f.cleanup_control(
+        &owned.execution,
+        cleanup_limits().native_timeout_seconds + 5,
+    );
     let frames = f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
-    assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], false);
+    assert_eq!(
+        frames.last().unwrap()["result"]["cleanup"]["stopped"],
+        false
+    );
     assert!(!cleanup_debts(&f).is_empty());
     let due = maintenance_due(&f);
     f.cleanup_control(&owned.execution, 0);
-    assert!(maintenance_backend(&f).cleanup_maintenance(due).unwrap().is_empty());
+    assert!(
+        maintenance_backend(&f)
+            .cleanup_maintenance(due)
+            .unwrap()
+            .is_empty()
+    );
     assert!(cleanup_debts(&f).is_empty());
     assert!(!f.state().cleanup_evidence.is_empty());
-    assert!(maintenance_backend(&f).next_cleanup_maintenance_ms().unwrap().is_none());
+    assert!(
+        maintenance_backend(&f)
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -6564,7 +6581,10 @@ fn cleanup_maintenance_persistent_failure_never_expires_debt() {
     for _ in 0..4 {
         let due = maintenance_due(&f);
         let backend = maintenance_backend(&f);
-        assert_eq!(backend.cleanup_maintenance(due).unwrap(), vec![owned.owner.clone()]);
+        assert_eq!(
+            backend.cleanup_maintenance(due).unwrap(),
+            vec![owned.owner.clone()]
+        );
         assert!(maintenance_due(&f) > due);
         assert!(!cleanup_debts(&f).is_empty());
         assert!(f.state().cleanup_evidence.is_empty());
@@ -6584,9 +6604,19 @@ fn cleanup_maintenance_never_sweeps_healthy_begin_launch_debt() {
     assert!(!before.is_empty());
     let backend = maintenance_backend(&f);
     assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
-    assert!(backend.cleanup_maintenance(u64::MAX - 300_000).unwrap().is_empty());
+    assert!(
+        backend
+            .cleanup_maintenance(u64::MAX - 300_000)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(cleanup_debts(&f), before);
-    assert!(!f.intent.output_dir.join(format!("helper-called-{}", owned.execution)).exists());
+    assert!(
+        !f.intent
+            .output_dir
+            .join(format!("helper-called-{}", owned.execution))
+            .exists()
+    );
 }
 
 #[test]
@@ -6598,28 +6628,49 @@ fn cleanup_maintenance_held_request_dispatches_exactly_once() {
     let owned = f.cleanup_execution("held-debtor", 'd');
     f.cleanup_facts(&owned, false);
     f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
-    fs::copy(f.intent.output_dir.join("original-jobspec.json"), f.root.path().join("jobspec-fABC.json")).unwrap();
+    fs::copy(
+        f.intent.output_dir.join("original-jobspec.json"),
+        f.root.path().join("jobspec-fABC.json"),
+    )
+    .unwrap();
     let mut intent = f.intent.clone();
     intent.owner = "maintenance-held-owner".into();
     intent.correlation = format!("{}-maintenance-held", f.intent.correlation);
     intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
     let backend = maintenance_backend(&f);
     assert!(backend.submit(f.request.clone(), intent.clone()).is_err());
-    let state_path = f.options.journal_root.join(&intent.correlation).join("state.json");
+    let state_path = f
+        .options
+        .journal_root
+        .join(&intent.correlation)
+        .join("state.json");
     let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
     assert_eq!(state["dispatched"], false);
-    assert!(state["held_submission_ms"].is_u64(), "gate-held intent must be explicitly resumable: {state}");
+    assert!(
+        state["held_submission_ms"].is_u64(),
+        "gate-held intent must be explicitly resumable: {state}"
+    );
     let due = maintenance_due(&f).max(state["held_submission_ms"].as_u64().unwrap());
     f.cleanup_facts(&owned, true);
     fs::write(f.root.path().join("submit-id"), "fDEF\n").unwrap();
     assert!(backend.cleanup_maintenance(due).unwrap().is_empty());
     backend.cleanup_maintenance(due + 300_000).unwrap();
-    assert!(matches!(backend.submit(f.request.clone(), intent.clone()).unwrap(), Submission::Accepted { .. }));
+    assert!(matches!(
+        backend.submit(f.request.clone(), intent.clone()).unwrap(),
+        Submission::Accepted { .. }
+    ));
     let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
     assert_eq!(state["dispatched"], true);
     assert!(state["held_submission_ms"].is_null());
     let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
-    assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 2, "one original, one resumed: {calls}");
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        2,
+        "one original, one resumed: {calls}"
+    );
     fs::remove_dir_all(&intent.output_dir).unwrap();
 }
 
@@ -6633,9 +6684,19 @@ fn cleanup_maintenance_never_resubmits_possible_native_acceptance() {
     let backend = maintenance_backend(&f);
     assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
     backend.cleanup_maintenance(u64::MAX - 300_000).unwrap();
-    assert!(matches!(backend.submit(f.request.clone(), f.intent.clone()).unwrap(), Submission::Unknown { .. }));
+    assert!(matches!(
+        backend.submit(f.request.clone(), f.intent.clone()).unwrap(),
+        Submission::Unknown { .. }
+    ));
     let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
-    assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 1, "{calls}");
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        1,
+        "{calls}"
+    );
 }
 
 #[test]
@@ -6652,29 +6713,65 @@ fn cleanup_maintenance_restart_recovers_durable_attempt_and_serializes_owner() {
     let due = maintenance_due(&f);
     // The first pass crashes after advancing its durable claim. A fresh backend
     // must retain that deadline and retry every remaining execution when due.
-    let path = f.options.journal_root.join(&f.intent.correlation).join("state.json");
+    let path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
     let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     state["cleanup_retry_ms"] = json!(due + 300_000);
     api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
     f.cleanup_facts(&first, true);
     f.cleanup_facts(&second, true);
     f.cleanup_control(&first.execution, 1);
-    fs::remove_file(f.intent.output_dir.join(format!("helper-called-{}", first.execution))).unwrap();
+    fs::remove_file(
+        f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution)),
+    )
+    .unwrap();
     let backend = maintenance_backend(&f);
-    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(due + 300_000));
+    assert_eq!(
+        backend.next_cleanup_maintenance_ms().unwrap(),
+        Some(due + 300_000)
+    );
     backend.cleanup_maintenance(due).unwrap();
-    assert!(!f.intent.output_dir.join(format!("helper-called-{}", first.execution)).exists());
+    assert!(
+        !f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution))
+            .exists()
+    );
     let one = backend.clone();
     let two = backend.clone();
     let worker = std::thread::spawn(move || one.cleanup_maintenance(due + 300_000).unwrap());
-    wait_until("maintenance helper started", Duration::from_secs(5), || f.intent.output_dir.join(format!("helper-called-{}", first.execution)).exists());
+    wait_until("maintenance helper started", Duration::from_secs(5), || {
+        f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution))
+            .exists()
+    });
     two.cleanup_maintenance(due + 300_000).unwrap();
     worker.join().unwrap();
     assert!(cleanup_debts(&f).is_empty());
     assert_eq!(f.state().cleanup_evidence.len(), 2);
     for owned in [&first, &second] {
-        let attempts = fs::read_to_string(f.intent.output_dir.join(format!("helper-attempts-{}", owned.execution))).unwrap();
-        assert_eq!(attempts.lines().count(), 2, "one failed attempt and one retry per execution");
+        let attempts = fs::read_to_string(
+            f.intent
+                .output_dir
+                .join(format!("helper-attempts-{}", owned.execution)),
+        )
+        .unwrap();
+        assert_eq!(
+            attempts.lines().count(),
+            2,
+            "one failed attempt and one retry per execution"
+        );
     }
-    assert!(maintenance_backend(&f).next_cleanup_maintenance_ms().unwrap().is_none());
+    assert!(
+        maintenance_backend(&f)
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_none()
+    );
 }
