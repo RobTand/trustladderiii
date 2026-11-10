@@ -71,21 +71,10 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
-        // E11.1 REQ R24: a fresh Stop of a live item (CONTRACTS.md v2.7), direct; framing opaque.
-        ((command is Stop && id > old(w).nodes@[i as int].last_cmd && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping))
-            ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
-            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
-            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
-            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
-            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
-            && (match old(w).nodes@[i as int].effect {
-                None => final(w).nodes@[i as int].effect.is_none(),
-                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
-                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
-            })
-            && apply_command_safety::stop_live_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
-        // E11.1b framing: a fresh Stop of an item already stopping keeps its teardown state.
-        ((command is Stop && id > old(w).nodes@[i as int].last_cmd && old(w).nodes@[i as int].phase is Stopping) ==> apply_command_safety::stop_stopping_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+        // E11.1 (CONTRACTS.md v2.7): REQ R24 and its framing, as one opaque atom (form rule 2). R24's rows are
+        // quoted exactly in the named lemma stop_frame_reveal::stop_post_rows; the v2.7 / E11.1b framing rows
+        // come back through stop_frame_reveal::stop_frames_reveal.
+        ((command is Stop && id > old(w).nodes@[i as int].last_cmd) ==> apply_command_safety::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id)),
         (match command {
             Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
             _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
@@ -118,10 +107,6 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     kernel_proof! {
         match command {
             Command::Answer { .. } => apply_command_safety::answer_frame(before_rules_world@, *w, i),
-            Command::Stop => {
-                stop_frame_reveal::stop_post_rows(before_rules_world@.nodes@[i as int], w.nodes@[i as int], id);
-                assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int]));
-            }
             _ => assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])),
         }
     }
