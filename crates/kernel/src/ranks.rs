@@ -660,6 +660,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -697,6 +698,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -726,6 +728,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -752,6 +755,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *old(next_ticket) <= *final(next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -792,6 +796,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -821,6 +826,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -851,6 +857,7 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -945,6 +952,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             advance_family_post::slot(*old(node), *final(node),
     *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out), result),
+        *old(next_ticket) <= *final(next_ticket),
     ] {
         kernel_proof! { advance_family_post::slot_bounds(*node, *next_ticket, _out.len); }
         let v = advance_slot_value(*node, *next_ticket, context);
@@ -969,6 +977,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let m = &mut *node;
@@ -1000,6 +1009,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
+        *final(_next_ticket) == *old(_next_ticket),
 ] proof [
         let n = *node;
         let after = Node { pool: n.pool && kind != EffectKind::StopRun,
@@ -1039,6 +1049,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
 ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         emit_node(node, context.node, kind, out);
@@ -1061,6 +1072,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
@@ -1095,6 +1107,7 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
+        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = _node.phase }
         kernel_proof! { report::lemmas::quiet(before_phase@, _node.phase, _report.entries@); }
@@ -1115,6 +1128,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
+        *old(next_ticket) <= *final(next_ticket),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
