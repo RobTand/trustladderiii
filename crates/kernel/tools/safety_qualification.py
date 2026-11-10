@@ -10,11 +10,6 @@ from pathlib import Path
 import re
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tools/ci'))
-import bazel_gate  # noqa: E402
-import remote_gate  # noqa: E402
-
-
 CASES = {
     'report_fact_order': ('crates/kernel/src/report.rs',
         '    if matches!(fact, Fact::CiFailed { .. }) {\n        if let Some(cause) = ci {\n            report.record_failed_round(node, cause);\n            kernel_proof! { lemmas::failed_round_value(entries_before@, report.entries@, node, cause); }\n        }\n    }\n    kernel_snapshot! { entries_middle = report.entries@ }\n    let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };\n    let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);\n    report.record_stop(node, before, after, cause);\n',
@@ -72,21 +67,18 @@ CASES = {
         'let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };',
         'let review = None;',
         '//crates/kernel:test_test_step_report'),
-    'audit_disagreement_asks': (
-        'crates/kernel/src/ingest.rs',
-        'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, _out); }',
-        '//crates/kernel:verus_ingest_reply_audit_disagrees'),
-    'plan_check_rejected_asks': (
-        'crates/kernel/src/plan_check.rs',
-        'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
-        'Reply::PlanCheckRejected => {\n            ask_rob(w, i, QKind::CantMeet, Cont::Nowhere, 0, _out);',
-        '//crates/kernel:verus_plan_check'),
-    'plan_check_needs_split_asks': (
-        'crates/kernel/src/plan_check.rs',
-        'Reply::PlanCheckNeedsSplit => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
-        'Reply::PlanCheckNeedsSplit => {\n            ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, _out);',
-        '//crates/kernel:verus_plan_check'),
+    'audit_disagreement_asks': ('crates/kernel/src/ingest.rs',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }\n    if reply == Reply::AuditDisagrees && w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
+        '//crates/kernel:verus_ingest_reply_ingest'),
+    'plan_check_rejected_asks': ('crates/kernel/src/plan_check.rs',
+        'Reply::PlanCheckRejected => {\n            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);',
+        'Reply::PlanCheckRejected => {\n            return ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Nowhere, cost: 0 };',
+        '//crates/kernel:verus_reply_family_reply_plan_check_node'),
+    'plan_check_needs_split_asks': ('crates/kernel/src/plan_check.rs',
+        'Reply::PlanCheckNeedsSplit => {\n            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);',
+        'Reply::PlanCheckNeedsSplit => {\n            return ReplyChange::Ask { node, kind: QKind::NeedsSplitting, cont: Cont::Nowhere, cost: 0 };',
+        '//crates/kernel:verus_reply_family_reply_plan_check_node'),
     'selector_inventory': ('crates/kernel/src/allocation.rs',
                            'use super::*;',
                            'use super::*;\nkernel_fn! { fn selector_inventory_unlisted() '
@@ -96,20 +88,22 @@ CASES = {
                              'm.merged = Some(head);\n    m.pr_open = false;',
                              'if !matches!(m.phase, Phase::Stopping(_)) { m.merged = Some(head); }\n    m.pr_open = false;',
                              '//crates/kernel:verus_facts_merge_open'),
-    'retire_merge_closed': ('crates/kernel/src/facts.rs',
-                           'm.merged = Some(head);\n            m.phase = Phase::Closed(Outcome::Merged);',
-                           'm.merged = None;\n            m.phase = Phase::Closed(Outcome::Merged);',
-                           '//crates/kernel:verus_facts_merge'),
-    'retire_priority': ('crates/kernel/src/facts.rs',
-                        'w.nodes[i].priority = priority;', 'let _ = priority;',
-                        '//crates/kernel:verus_facts_transition'),
-    'retire_pr_closed': ('crates/kernel/src/facts.rs',
-                         'm.pr_open = false;\n            if !m.phase.is_stopping()',
-                         'let _ = m.pr_open;\n            if !m.phase.is_stopping()',
-                         '//crates/kernel:verus_facts_transition'),
-    'retire_conflict': ('crates/kernel/src/facts.rs',
-                        'set_phase(m, Phase::Rebasing);', 'let _ = m;',
-                        '//crates/kernel:verus_facts_transition'),
+    'retire_merge_closed': ('crates/kernel/src/facts_family_values.rs',
+        'm.merged = Some(head);\n            m.phase = Phase::Closed(Outcome::Merged);',
+        'm.merged = None;\n            m.phase = Phase::Closed(Outcome::Merged);',
+        '//crates/kernel:verus_facts_family_merged_fact_arm'),
+    'retire_priority': ('crates/kernel/src/facts_family_values.rs',
+        '        value.priority = priority;',
+        '        let _ = priority;',
+        '//crates/kernel:verus_facts_family_priority_fact_arm'),
+    'retire_pr_closed': ('crates/kernel/src/facts_family_values.rs',
+        'm.pr_open = false;\n    if !m.phase.is_stopping()',
+        'let _ = m.pr_open;\n    if !m.phase.is_stopping()',
+        '//crates/kernel:verus_facts_family_closed_pr_fact_arm'),
+    'retire_conflict': ('crates/kernel/src/facts_family_values.rs',
+        'set_phase(m, Phase::Rebasing);',
+        'let _ = m;',
+        '//crates/kernel:verus_facts_family_conflict_fact_arm'),
     'retire_merge_reviewing': ('crates/kernel/src/facts.rs',
                              'm.merged = Some(head);\n    m.pr_open = false;',
                              'if m.phase != Phase::Reviewing { m.merged = Some(head); }\n    m.pr_open = false;',
@@ -150,13 +144,14 @@ CASES = {
                              'm.merged = Some(head);\n    m.pr_open = false;',
                              'if !matches!(m.phase, Phase::Checking) { m.merged = Some(head); }\n    m.pr_open = false;',
                              '//crates/kernel:verus_facts_merge_open'),
-    'retire_incident': ('crates/kernel/src/facts.rs',
-                        'm.incident_needs_rob = false;',
-                        'let _ = m.incident_needs_rob;',
-                        '//crates/kernel:verus_facts_incident_cleared'),
-    'retire_infrastructure': ('crates/kernel/src/facts.rs',
-                              'm.run_failures += 1;', 'm.run_failures += 0;',
-                              '//crates/kernel:verus_facts_infrastructure_retry'),
+    'retire_incident': ('crates/kernel/src/facts_family_values.rs',
+        'm.incident_needs_rob = false;',
+        'let _ = m.incident_needs_rob;',
+        '//crates/kernel:verus_facts_family_cleared_fact_arm'),
+    'retire_infrastructure': ('crates/kernel/src/facts_family_values.rs',
+        'value.run_failures += 1;\n    set_phase(&mut value, Phase::Publishing);',
+        'value.run_failures += 0;\n    set_phase(&mut value, Phase::Publishing);',
+        '//crates/kernel:verus_facts_family_infrastructure_retry_arm'),
     'retire_merge_ingesting': ('crates/kernel/src/facts.rs',
                                'm.merged = Some(head);\n    m.pr_open = false;',
                                'if m.phase != Phase::Ingesting { m.merged = Some(head); }\n    m.pr_open = false;',
@@ -170,30 +165,29 @@ CASES = {
                         'kernel_while! { (false) [',
                         '//crates/kernel:verus_witness'),
     'resume_stalled': ('crates/kernel/src/commands.rs',
-                       '            w.nodes[i].paused = false;',
-                       '            w.nodes[i].paused = true;',
-                       '//crates/kernel:verus_commands'),
+        '    w.nodes[i].paused = false;',
+        '    w.nodes[i].paused = true;',
+        '//crates/kernel:verus_commands_resume_command'),
     'reply_stalled': ('crates/kernel/src/work_replies.rs',
-                      'set_phase(m, Phase::Checking);',
-                      'set_phase(m, Phase::Making);',
-                      '//crates/kernel:verus_work_replies'),
+        '    m = set_phase_v(m, Phase::Checking);',
+        '    m = set_phase_v(m, Phase::Making);',
+        '//crates/kernel:verus_reply_dispatch_work_made_v'),
     'ack_retained': ('crates/kernel/src/acknowledgements.rs',
                      '    w.nodes[i].effect = None;',
                      '    let _ = e;',
                      '//crates/kernel:verus_acknowledgements_on_ack'),
     'delivery_retained': ('crates/kernel/src/dependencies.rs',
-                          'Some(index) => self.dependencies[index] = dependency,',
-                          'Some(index) => self.dependencies[index] = Dependency { '
-                          'status: DependencyStatus::Pending, ..dependency },',
-                          '//crates/kernel:verus_dependencies'),
-    'delivery_dispatch': ('crates/kernel/src/facts.rs',
-                          'Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),',
-                          'Fact::Dependency { target, status } => { let _ = (target, status); },',
-                          '//crates/kernel:verus_facts'),
+        'write_dependency(&mut self.dependencies, existing, dependency);',
+        'write_dependency(&mut self.dependencies, existing, Dependency { status: DependencyStatus::Pending, ..dependency });',
+        '//crates/kernel:verus_dependencies'),
+    'delivery_dispatch': ('crates/kernel/src/facts_family_values.rs',
+        'Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),',
+        'Fact::Dependency { target, status } => { let _ = (target, status); },',
+        '//crates/kernel:verus_facts_family_dependency_entry'),
     'apply_enforcement': ('crates/controller/src/input_errors.rs',
-                          'world.counter_exhaustion()',
-                          'world.counter_exhaustion().filter(|_| false)',
-                          '//crates/controller:test_test_input_error_followups'),
+        '                self.kernel_counter_refused(snapshot, refusal.exhaustion, commit)?;',
+        '                let _ = refusal.exhaustion;',
+        '//crates/controller:test_test_input_error_followups'),
     'translate_enforcement': ('crates/controller/src/lib.rs',
                               'kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?',
                               'event',
@@ -203,9 +197,9 @@ CASES = {
                  'node.generation > u64::MAX - (GENERATION_STEP_BUDGET - 1)',
                  '//crates/kernel:verus_kernel_node_counter_exhaustion'),
     'step_bound': ('crates/kernel/src/allocation.rs',
-                   '    w.next_question += 1;\n    let m = &mut w.nodes[i];',
-                   '    w.next_question += 2;\n    let m = &mut w.nodes[i];',
-                   '//crates/kernel:verus_allocation'),
+        '    next_question += 1;',
+        '    next_question += 2;',
+        '//crates/kernel:verus_allocation_ask_value'),
     'command_id': ('crates/kernel/src/lib.rs',
                    'self.last_cmd.checked_add(1)', 'self.last_cmd.checked_add(0)',
                    '//crates/kernel:verus_kernel_node_next_command_id'),
@@ -224,34 +218,34 @@ CASES = {
                             'Phase::Making => Reply::MakerDone {\n                            head: HeadId(7),',
                             '//crates/kernel:verus_witness'),
     'gate_waiting': ('crates/kernel/src/checking.rs',
-                     'if advance(&mut w, i, &mut out) { return false; }',
-                     'if advance(&mut w, i, &mut out) { return true; }',
-                     '//crates/kernel:verus_checking_is_settled'),
+        'if advance(&mut w, i, &mut out, &mut Report::new()) { return false; }',
+        'if advance(&mut w, i, &mut out, &mut Report::new()) { return true; }',
+        '//crates/kernel:verus_checking_is_settled'),
     'gate_permutation': ('crates/kernel/verus/progress_gate_permutation.rs',
                          'w.nodes[actor] = first;', 'w.nodes[actor] = selected;',
                          '//crates/kernel:verus_progress_gate_permutation'),
     'gate_maker': ('crates/kernel/src/work_replies.rs',
-                   'm.head = Some(head);\n            m.checked = None;\n            set_phase(m, Phase::Checking);',
-                   'm.head = Some(head);\n            m.checked = Some(head);\n            set_phase(m, Phase::Checking);',
-                   '//crates/kernel:verus_work_replies'),
+        'm.head = Some(head);\n    m.checked = None;\n    m = set_phase_v(m, Phase::Checking);',
+        'm.head = Some(head);\n    m.checked = Some(head);\n    m = set_phase_v(m, Phase::Checking);',
+        '//crates/kernel:verus_reply_dispatch_work_made_v'),
     'gate_permutation_production': ('crates/kernel/src/checking.rs',
                                     'self.check_node(&self.nodes[i])?;',
                                     'self.check_node(&self.nodes[i])?;\n'
                                     '            if i == 0 && self.nodes[i].phase == Phase::Making { return Err(Broken::Gate); }',
                                     '//crates/kernel:verus_checking'),
     'gate_reply_admission': ('crates/kernel/src/reply_admission.rs',
-                             'end_operation(&mut w.nodes[i]);',
-                             'end_operation(&mut w.nodes[i]);\n    w.nodes[i].pool = true;',
-                             '//crates/kernel:verus_port_t860_on_admitted_reply'),
+        '    end_operation(&mut m);',
+        '    end_operation(&mut m);\n    m.pool = true;',
+        '//crates/kernel:verus_reply_family_reply_end_node'),
 
     'gate_apply_merge': ('crates/kernel/src/facts.rs',
                          'm.merged = Some(head);\n    m.pr_open = false;',
                          'if m.phase != Phase::AwaitingDelivery { m.merged = Some(head); }\n    m.pr_open = false;',
                          '//crates/kernel:verus_facts_merge_open'),
     'gate_apply_resume': ('crates/kernel/src/commands.rs',
-                          '            w.nodes[i].paused = false;',
-                          '            w.nodes[i].paused = true;',
-                          '//crates/kernel:verus_commands'),
+        '    w.nodes[i].paused = false;',
+        '    w.nodes[i].paused = true;',
+        '//crates/kernel:verus_commands_resume_command'),
     'phase_measure_node_sum': ('crates/kernel/src/lib.rs',
                                'total += self.nodes[i].distance();',
                                'total += 0 * self.nodes[i].distance();',
@@ -267,9 +261,9 @@ CASES = {
                             'if self.gates.is_empty() {',
                             '//crates/kernel:verus_checking'),
     'phase_settled_probe': ('crates/kernel/src/checking.rs',
-                             'if advance(&mut w, i, &mut out) { return false; }',
-                             'if !advance(&mut w, i, &mut out) { return false; }',
-                             '//crates/kernel:verus_checking_is_settled'),
+        'if advance(&mut w, i, &mut out, &mut Report::new()) { return false; }',
+        'if !advance(&mut w, i, &mut out, &mut Report::new()) { return false; }',
+        '//crates/kernel:verus_checking_is_settled'),
     'phase_witness_resume': ('crates/kernel/src/witness.rs',
                              'command: Command::Resume,',
                              'command: Command::Pause,',
@@ -311,14 +305,14 @@ CASES = {
                                'm.incident_needs_rob = needs_rob;',
                                'm.incident_needs_rob = !needs_rob;',
                                '//crates/kernel:verus_allocation_raise_incident'),
-    'facts_transition_closed_priority': ('crates/kernel/src/facts.rs',
-                                         'if !w.nodes[i].phase.is_closed() {',
-                                         'if true {',
-                                         '//crates/kernel:verus_facts_transition'),
-    'facts_ci_failed_dispatch': ('crates/kernel/src/facts.rs',
-                                 'ci_infrastructure(w, i, out);',
-                                 'failed_round(w, i, ReviewStop::CiFailed, out, report);',
-                                 '//crates/kernel:verus_facts_ci_failed'),
+    'facts_transition_closed_priority': ('crates/kernel/src/facts_family_values.rs',
+        '    if !value.phase.is_closed() {\n        value.priority = priority;',
+        '    if true {\n        value.priority = priority;',
+        '//crates/kernel:verus_facts_family_priority_fact_arm'),
+    'facts_ci_failed_dispatch': ('crates/kernel/src/facts_family_values.rs',
+        '    if !infra {\n        let result = failed_round_unreported_value',
+        '    if true {\n        let result = failed_round_unreported_value',
+        '//crates/kernel:verus_facts_b_ci_fact_arm'),
     'kernel_cont_rank_stop': ('crates/kernel/src/lib.rs',
                               'Cont::Stop(_) | Cont::Nowhere => 2,',
                               'Cont::Stop(_) | Cont::Nowhere => 3,',
@@ -346,14 +340,14 @@ CASES = {
                                'm.credit.start = size as u64;',
                                '//crates/kernel:verus_ingest_finish_ingest_node'),
     'timing3_pause_release': ('crates/kernel/src/lib.rs',
-                             'm.holds = false;\n                set_phase(m, Phase::Ready(r));',
-                             'm.holds = true;\n                set_phase(m, Phase::Ready(r));',
-                             '//crates/kernel:verus_kernel_pause_node'),
+        'm.holds = false;\n                set_phase(&mut m, Phase::Ready(r));',
+        'm.holds = true;\n                set_phase(&mut m, Phase::Ready(r));',
+        '//crates/kernel:verus_kernel_pause_node_value'),
 
-    'facts_merge_unapproved': ('crates/kernel/src/facts.rs',
-                               '    if !approved {',
-                               '    if approved {',
-                               '//crates/kernel:verus_facts_merge'),
+    'facts_merge_unapproved': ('crates/kernel/src/facts_family_values.rs',
+        '    if !approved {',
+        '    if approved {',
+        '//crates/kernel:verus_facts_family_merged_fact_arm'),
     'mark_handled_pool_release': ('crates/kernel/src/command_helpers.rs',
         '            m.pool = false;',
         '            let _ = m.pool;',
@@ -375,9 +369,9 @@ CASES = {
         '    m.run_failures += 0;',
         '//crates/kernel:verus_retries'),
     'run_failed_incident_count': ('crates/kernel/src/retries.rs',
-        '        m.run_incidents = (m.run_incidents + 1).min(2);',
-        '        m.run_incidents = 0;',
-        '//crates/kernel:verus_retries'),
+        '    node.run_incidents = incident_count(node.run_incidents);',
+        '    node.run_incidents = 0;',
+        '//crates/kernel:verus_reply_family_run_failed_incident'),
     't860_release_run': (
         'crates/kernel/src/reply_admission.rs',
         '            m.pool = false;',
@@ -390,24 +384,20 @@ CASES = {
         '            m.job = Some(generation);',
         '//crates/kernel:verus_port_t860_release_job',
     ),
-    't860_admitted_no_end': (
-        'crates/kernel/src/reply_admission.rs',
-        '    end_operation(&mut w.nodes[i]);',
-        '    let _ = i;',
-        '//crates/kernel:verus_port_t860_on_admitted_reply',
-    ),
+    't860_admitted_no_end': ('crates/kernel/src/reply_admission.rs',
+        '    end_operation(&mut m);',
+        '    let _ = &mut m;',
+        '//crates/kernel:verus_reply_family_reply_end_node'),
     't860_admitted_duplicate': (
         'crates/kernel/src/reply_admission.rs',
         '            reply_transition(w, i, reply, out, report);',
         '            reply_transition(w, i, reply, out, report);\n            reply_transition(w, i, reply, out, report);',
         '//crates/kernel:lib_test_tl3_kernel',
     ),
-    't860_second_asks': (
-        'crates/kernel/src/ingest.rs',
-        'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, _out); }',
-        '//crates/kernel:verus_ingest_reply_audit_disagrees',
-    ),
+    't860_second_asks': ('crates/kernel/src/ingest.rs',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }\n    if reply == Reply::AuditDisagrees && w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     't860_second_drops_stop': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
@@ -420,12 +410,10 @@ CASES = {
         'if false {',
         '//crates/kernel:verus_ingest_audit_disagreement_node',
     ),
-    't860_outputs': (
-        'crates/kernel/src/ingest.rs',
-        'audit_disagreement_node(&mut w.nodes[i]);',
-        'audit_disagreement_node(&mut w.nodes[i]);\n    emit_node(&mut w.nodes[i], i, EffectKind::PrepareWorktree, _out);',
-        '//crates/kernel:verus_ingest_reply_audit_disagrees',
-    ),
+    't860_outputs': ('crates/kernel/src/ingest.rs',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }',
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }\n    if reply == Reply::AuditDisagrees { emit_node(&mut w.nodes[i], i, EffectKind::PrepareWorktree, out); }',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     't860_complete_checker': (
         'crates/kernel/src/ingest.rs',
         'm.audit_rounds = m.audit_rounds.saturating_add(1);',
@@ -491,22 +479,45 @@ CASES = {
                                         '    increment_audit(m);\n    increment_audit(m);',
                                         '//crates/kernel:lib_test_tl3_kernel'),
     'reply_audit_agrees': ('crates/kernel/src/ingest.rs',
-                           'notice(out, i, Notice::MeasuresPosted);',
-                           'notice(out, i, Notice::MeasuresPosted);\n            w.nodes[i].repo = RepoId(0);',
-                           '//crates/kernel:verus_ingest_reply_audit_agrees'),
+        '    w.nodes[i] = node;\n    match note { Some(value) => notice(out, i, value), None => {} }',
+        '    w.nodes[i] = node;\n    match note { Some(value) => { notice(out, i, value); w.nodes[i].repo = RepoId(0); }, None => {} }',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     'reply_audit_duplicate_notice': ('crates/kernel/src/ingest.rs',
-                                     'notice(out, i, Notice::MeasuresPosted);',
-                                     'notice(out, i, Notice::MeasuresPosted);\n            notice(out, i, Notice::MeasuresPosted);',
-                                     '//crates/kernel:lib_test_tl3_kernel'),
+        '    match note { Some(value) => notice(out, i, value), None => {} }',
+        '    match note { Some(value) => { notice(out, i, value); notice(out, i, value); }, None => {} }',
+        '//crates/kernel:lib_test_tl3_kernel'),
     'advance_teardown_missing_position': ('crates/kernel/src/ranks.rs',
-                                         '        m.pos += 1;\n        return true;',
-                                         '        m.pos += 0;\n        return true;',
-                                         '//crates/kernel:verus_ranks_advance_teardown_missing'),
+        '        m.pos += 1;\n        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }\n        return true;',
+        '        m.pos += 0;\n        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }\n        return true;',
+        '//crates/kernel:verus_ranks_advance_teardown_missing'),
     'advance_teardown_duplicate_emission': ('crates/kernel/src/ranks.rs',
-                                           '] proof [reveal(advance_post); reveal(distance);] {\n        emit_node(node, context.node, kind, out);',
-                                           '] proof [reveal(advance_post); reveal(distance);] {\n        emit_node(node, context.node, kind, out);\n        emit_node(node, context.node, kind, out);',
-                                           '//crates/kernel:lib_test_tl3_kernel'),
+        '] proof [reveal(advance_post); reveal(distance);] {\n        kernel_snapshot! { before_phase = node.phase }\n        emit_node(node, context.node, kind, out);',
+        '] proof [reveal(advance_post); reveal(distance);] {\n        kernel_snapshot! { before_phase = node.phase }\n        emit_node(node, context.node, kind, out);\n        emit_node(node, context.node, kind, out);',
+        '//crates/kernel:lib_test_tl3_kernel'),
 }
+
+
+# Retain a case in CASES when its algorithm is removed, and record why here.
+# Extracted algorithms are re-anchored to their live producers instead.
+RETIRED_CASES = {}
+
+
+def check_anchors(root):
+    assert RETIRED_CASES.keys() <= CASES.keys()
+    rows = []
+    for name, (filename, before, after, target) in CASES.items():
+        if name in RETIRED_CASES:
+            reason = RETIRED_CASES[name]
+            assert isinstance(reason, str) and reason.strip()
+            rows.append({'case': name, 'status': 'RETIRED', 'reason': reason})
+            continue
+        path = root / filename
+        count = path.read_text().count(before) if path.is_file() else 0
+        rows.append({'case': name, 'path': filename, 'target': target,
+                     'matches': count, 'status': 'FOUND' if count == 1 and before != after else 'MISSING'})
+    return {'total': len(CASES), 'found': sum(r['status'] == 'FOUND' for r in rows),
+            'retired': sum(r['status'] == 'RETIRED' for r in rows),
+            'ok': all(r['status'] in ('FOUND', 'RETIRED') for r in rows), 'rows': rows}
 
 
 def run(workspace, target, name):
@@ -535,9 +546,27 @@ def libtest_summaries(log):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('case', choices=CASES)
+    parser.add_argument('case', nargs='?', choices=CASES)
+    parser.add_argument('--check-anchors', action='store_true',
+                        help='check all retained case anchors without executing tests or changing source')
     parser.add_argument('--expected-head', help='require this exact baseline before seeding')
     args = parser.parse_args()
+    if args.check_anchors:
+        if args.case:
+            parser.error('--check-anchors does not accept a case')
+        report = check_anchors(Path(__file__).resolve().parents[3])
+        print(json.dumps(report, indent=2), flush=True)
+        return 0 if report['ok'] else 1
+    if not args.case:
+        parser.error('provide a case or --check-anchors')
+    if args.case in RETIRED_CASES:
+        print(json.dumps({'case': args.case, 'status': 'RETIRED',
+                          'reason': RETIRED_CASES[args.case]}), flush=True)
+        return 0
+    global bazel_gate, remote_gate
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tools/ci'))
+    import bazel_gate
+    import remote_gate
     workspace = bazel_gate.Workspace()
     base = workspace.run('git', 'rev-parse', 'HEAD').strip()
     filename, before, after, target = CASES[args.case]
@@ -602,4 +631,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
