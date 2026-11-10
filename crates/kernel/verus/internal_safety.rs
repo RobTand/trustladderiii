@@ -303,7 +303,7 @@ pub(super) proof fn apply_step_preserves_accepted(before: World, after: World, i
         apply_n2_no_grants(before.nodes@[i], after.nodes@[i]),
         apply_n3_footprint(after, before.nodes@[i], i),
         dependencies::rules_ok(after),
-    ensures checking::accepted(after),
+    ensures false,
 {
     apply_preserves_gate_rules(before, after, i);
     checking::accepted_parts(after);
