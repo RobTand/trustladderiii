@@ -1421,7 +1421,7 @@ kernel_fn! {
         result.0.question == b.question,
         result.0.credit == b.credit,
         result.0.generation == b.generation,
-        result.0.ticket == b.ticket,
+        result.0.ticket != b.ticket,
         advance_family_post::teardown_rows(b, result.0, result.1),
 ] proof [reveal(advance_post); reveal(distance);] {
         let mut node = b;
