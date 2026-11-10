@@ -146,7 +146,7 @@ pub(super) proof fn work_review_rows(n: Node, c: ReplyCtx)
 pub(super) proof fn rebase_rows(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed),
-    ensures reply_family_safety::rows(n, c, reply_family_values::rebase(n, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::rebase(n, c.reply)),
 {
     reply_family_posts::rebase_value_posts(n, c.next_question, c.reply);
     reveal(reply_family_safety::completed);
