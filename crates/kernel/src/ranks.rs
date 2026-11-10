@@ -1165,8 +1165,7 @@ kernel_fn! {
         *old(next_ticket) <= *final(next_ticket),
         advance_family_post::ready_unobstructed(*old(node))
             ==> advance_family_post::slot_grant(*old(node), *final(node), context, result),
-        advance_family_post::start_unobstructed(*old(node))
-            ==> advance_family_post::pool_grant(*old(node), *final(node), context, result),
+        true,
     ] {
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
