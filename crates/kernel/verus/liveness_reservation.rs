@@ -46,7 +46,11 @@ pub(super) fn first_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(t
             ==> footprint::disjoint(*final(w), final(w).nodes@[0].footprint, final(w).nodes@[i as int].footprint),
 {
     let ghost before = *w;
-    proof { reveal(context); reveal(holder); liveness_bounds::reserves(*w, k, i as int); }
+    proof {
+        reveal(context); reveal(holder); liveness_bounds::reserves(*w, k, i as int);
+        checking::accepted_node(*w, i as int);
+        checking::accepted_node(*w, 0);
+    }
     let mut out = Outbox::new();
     let mut report = Report::new();
     let moved = scheduler::advance(w, i, &mut out, &mut report);

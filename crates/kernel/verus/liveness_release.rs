@@ -58,6 +58,7 @@ pub(super) fn release(w: &mut World, Ghost(k): Ghost<int>)
         final(w).nodes@ == old(w).nodes@.update(1, final(w).nodes@[1]),
         final(w).gates@ == old(w).gates@, final(w).file_sets@ == old(w).file_sets@,
 {
+    proof { reveal(clean); }
     stop(w, Ghost(k));
     liveness_teardown::round(w, Ghost(k + 2));
     liveness_teardown::round(w, Ghost(k + 6));

@@ -16,7 +16,8 @@ pub(super) proof fn free_after_release(b: World, n: World, k: int, t: u64)
 {
     reveal(context); reveal(reserved); reveal(holder);
     checking::accepted_definition(b);
-    checking::accepted_node(b, 0); checking::accepted_node(b, 2); checking::accepted_node(b, 3);
+    checking::accepted_node(b, 0); checking::accepted_node(b, 1);
+    checking::accepted_node(b, 2); checking::accepted_node(b, 3);
     checking::accepted_node(n, 1);
     assert(progress_gate_apply::holders(b, b.nodes@[0].repo, 4)
         <= b.gates@[b.nodes@[0].repo.0 as int].w);
