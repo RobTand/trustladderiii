@@ -492,7 +492,7 @@ pub(super) fn ordinary_fact_value(n: Node, fast: bool, i: usize, fact: Fact)
         retirement::notices_only(result.1),
 ] {
     let result = match fact {
-        Fact::Priority(priority) => priority_fact_arm(n, i, priority),
+        Fact::Priority(priority) => priority_fact_arm(n, i, n.priority),
         Fact::PrClosedByPerson => closed_pr_fact_arm(n, i),
         Fact::Conflict => conflict_fact_arm(n, i),
         Fact::IncidentCleared { by_rob } => cleared_fact_arm(n, i, by_rob),
