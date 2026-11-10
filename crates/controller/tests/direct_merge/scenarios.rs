@@ -20,6 +20,17 @@ struct DirectState {
     different_tree: bool,
     different_parent: bool,
     landed_parent: Option<String>,
+    landed_status: Option<u16>,
+    head_status: Option<u16>,
+    branch_status_after_merge: Option<u16>,
+    branch_status_before_merge: Option<u16>,
+    git_reads: usize,
+    protection_refused_after_merge: bool,
+    reply_without_sha: bool,
+    missing_merge_commit: bool,
+    rebase_method: bool,
+    checks_fail_after_merge: bool,
+    merge_error_after_success: Option<u16>,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -35,17 +46,28 @@ impl Respond for DirectApi {
         let path = request.url.path();
         let method = request.method.as_str();
         if method == "GET" && path == "/repos/owner/sandbox" {
-            let allowed = !self.direct.lock().unwrap().no_merge_method;
-            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":allowed,"allow_squash_merge":allowed,"allow_rebase_merge":allowed}));
+            let direct = self.direct.lock().unwrap();
+            let allowed = !direct.no_merge_method;
+            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":allowed && !direct.rebase_method,"allow_squash_merge":allowed && !direct.rebase_method,"allow_rebase_merge":allowed}));
         }
         if method == "GET" && path.starts_with("/repos/owner/sandbox/git/commits/") {
             let sha = path.rsplit('/').next().unwrap();
-            let direct = self.direct.lock().unwrap();
+            let mut direct = self.direct.lock().unwrap();
+            direct.git_reads += 1;
             let state = self.base.0.lock().unwrap();
             let landed = sha == "dddddddddddddddddddddddddddddddddddddddd";
+            if let Some(status) = if landed {direct.landed_status} else {direct.head_status} { return ResponseTemplate::new(status); }
             return ResponseTemplate::new(200).set_body_json(json!({"sha":sha,
                 "tree":{"sha":if landed && direct.different_tree {"2".repeat(40)} else {"1".repeat(40)}},
                 "parents":[{"sha":if landed && direct.different_parent {json!("3".repeat(40))} else {direct.landed_parent.as_ref().map_or_else(||state.pull["base"]["sha"].clone(), |base|json!(base))}}]}));
+        }
+        if method == "GET" && (path.contains("/branches/") || path.contains("/rules/branches/")) {
+            let direct = self.direct.lock().unwrap();
+            if !self.base.0.lock().unwrap().pull["merged_at"].is_string() && !path.contains("/rules/") && let Some(status) = direct.branch_status_before_merge { return ResponseTemplate::new(status); }
+            if self.base.0.lock().unwrap().pull["merged_at"].is_string() {
+                if direct.protection_refused_after_merge && path.contains("/rules/branches/") { return ResponseTemplate::new(403); }
+                if !path.contains("/rules/") && let Some(status) = direct.branch_status_after_merge { return ResponseTemplate::new(status); }
+            }
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
@@ -78,7 +100,7 @@ impl Respond for DirectApi {
                 assert_eq!(intent["head"], body["sha"]);
                 assert_eq!(intent["action"], "Merge");
             }
-            assert_eq!(body["merge_method"], "squash");
+            assert_eq!(body["merge_method"], if direct.rebase_method {"rebase"} else {"squash"});
             direct.puts.push(body.clone());
             let mut state = self.base.0.lock().unwrap();
             if state.pull["merged_at"].is_string() { return ResponseTemplate::new(405); }
@@ -88,6 +110,10 @@ impl Respond for DirectApi {
             direct.landed_parent = Some(state.live_base.clone().unwrap_or_else(||state.pull["base"]["sha"].as_str().unwrap().to_owned()));
             state.merged(false);
             direct.successes += 1;
+            if direct.missing_merge_commit { state.pull["merge_commit_sha"] = Value::Null; }
+            if direct.checks_fail_after_merge { for check in &mut state.head_checks { if check["name"] == "Sandbox tests" { check["conclusion"] = json!("failure"); } } }
+            if let Some(status) = direct.merge_error_after_success { return ResponseTemplate::new(status); }
+            if direct.reply_without_sha { return ResponseTemplate::new(200).set_body_json(json!({"merged":true,"sha":null,"message":"merged"})); }
             return if direct.lost_reply { ResponseTemplate::new(503) }
                 else { ResponseTemplate::new(200).set_body_json(json!({"merged":true,"sha":"dddddddddddddddddddddddddddddddddddddddd","message":"merged"})) };
         }
@@ -1919,3 +1945,460 @@ fn m4_live_external_parent_case(parent_matches: bool) {
 fn m4_live_external_parent_matches_checked_base() { m4_live_external_parent_case(true); }
 #[test]
 fn m4_live_external_parent_differs_from_checked_base() { m4_live_external_parent_case(false); }
+
+fn m4_review_closed_event(fixture: &DirectFixture) -> Value {
+    let mut body = webhook_fixture();
+    body["action"] = json!("closed");
+    body["repository"]["owner"]["login"] = json!("owner");
+    body["repository"]["name"] = json!("sandbox");
+    body["installation"] = json!({"id":3});
+    body["pull_request"] = fixture.api.state.lock().unwrap().pull.clone();
+    body
+}
+fn m4_review_one_merge(controller: &mut Controller, settings: &tl3_config::Store) {
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)), "GitHub already merged; evidence reads must not keep TL3 open");
+    assert_eq!(r1_kernel_facts(settings).iter().filter(|f| f.get("PrMerged").is_some()).count(), 1, "record the unchanged merged fact exactly once");
+}
+fn m4_review_evidence_failure(webhook: bool, status: u16) {
+    let mut database = support::Database::start();
+    let settings = database.create(&format!("m4_review_{webhook}_{status}"));
+    let mut fixture = DirectFixture::new();
+    fixture.check(if webhook {None} else {Some("success")});
+    fixture.direct.lock().unwrap().landed_status = Some(status);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    if webhook {
+        fixture.check(Some("success"));
+        fixture.api.state.lock().unwrap().merged(false);
+        deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
+        drain(&mut controller);
+    }
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert!(record["landed"]["tree"].is_null());
+    assert!(record["landed"]["parents"].is_null());
+    assert!(record["landed"]["tree_matches"].is_null());
+    assert!(record["landed"]["parent_matches"].is_null());
+    assert_eq!(record["evidence_errors"], json!([{"read":"landed_commit","class":format!("http_{status}")} ]));
+    let notices = m4_notices(&mut controller);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["summary"], "merge evidence incomplete: landed_commit");
+    assert_eq!(notices[0]["open"], false);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), usize::from(!webhook));
+    let counts = adapters::delivery_counts(fixture.root.path()).unwrap();
+    let notice_keys: Vec<_> = counts.keys().filter(|k| k.starts_with("incident:merge-audit:")).cloned().collect();
+    assert_eq!(notice_keys.len(), 1, "one notice was delivered, not just scheduled");
+    assert_eq!(counts[&notice_keys[0]], 1);
+    drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut controller = fixture.open(&settings);
+    let body = m4_review_closed_event(&fixture);
+    assert!(Store::open(&settings).unwrap().receive_ingress("github-webhook", "m4-review-distinct-replay", "pull_request", &serde_json::to_vec(&body).unwrap()).unwrap());
+    drain(&mut controller);
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    assert_eq!(m4_notices(&mut controller).len(), 1);
+    assert_eq!(adapters::delivery_counts(fixture.root.path()).unwrap()[&notice_keys[0]], 1, "restart/replay must not post the same audit notice twice");
+}
+#[test]
+fn m4_review_tl3_landed_404_still_records_merge() { m4_review_evidence_failure(false, 404); }
+#[test]
+fn m4_review_tl3_landed_500_still_records_merge() { m4_review_evidence_failure(false, 500); }
+#[test]
+fn m4_review_webhook_landed_404_still_records_merge() { m4_review_evidence_failure(true, 404); }
+#[test]
+fn m4_review_webhook_landed_500_still_records_merge() { m4_review_evidence_failure(true, 500); }
+#[test]
+fn m4_review_missing_report_has_unknown_base_comparisons() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_review_no_report");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert!(record["landed"]["checked_base"].is_null());
+    assert!(record["landed"]["base_moved"].is_null());
+    assert!(record["landed"]["checked_parent_matches"].is_null());
+    m4_review_one_merge(&mut controller, &settings);
+}
+fn m4_review_own_reconciliation(status: u16) {
+    let mut database = support::Database::start();
+    let settings = database.create(&format!("m4_review_own_{status}"));
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    {
+        let mut direct = fixture.direct.lock().unwrap();
+        direct.merge_error_after_success = Some(status);
+        direct.checks_fail_after_merge = true;
+    }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["observed"], false, "a saved merge intent identifies TL3's own merge");
+    assert_eq!(record["required_checks"]["passed"], false);
+    assert!(!m4_notices(&mut controller).iter().any(|n| n["summary"].as_str().unwrap().contains("someone else's merge")));
+}
+#[test]
+fn m4_review_lost_reply_is_not_an_outside_merge() { m4_review_own_reconciliation(503); }
+#[test]
+fn m4_review_409_is_not_an_outside_merge() { m4_review_own_reconciliation(409); }
+#[test]
+fn m4_review_webhook_uses_saved_intent() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_review_webhook_intent");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    { let mut direct = fixture.direct.lock().unwrap(); direct.lost_reply = true; direct.fail_read_after_put = true; }
+    let (mut controller, _) = fixture.start(&settings);
+    fixture.check(Some("failure"));
+    deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["observed"], false);
+    assert_eq!(record["landed"]["parent_matches"], true);
+    assert!(record["landed"]["base_before_merge"].is_string());
+    assert!(!m4_notices(&mut controller).iter().any(|n| n["summary"].as_str().unwrap().contains("someone else's merge")));
+}
+#[test]
+fn m4_review_rebase_skips_parent_comparisons() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_review_rebase");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    { let mut direct = fixture.direct.lock().unwrap(); direct.rebase_method = true; direct.different_parent = true; }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["method"], "rebase");
+    assert!(record["landed"]["parent_matches"].is_null());
+    assert!(record["landed"]["checked_parent_matches"].is_null());
+    assert_eq!(record["landed"]["parent_comparison_reason"], "rebase merge method");
+    assert_eq!(record["landed"]["tree_matches"], true);
+    assert!(m4_notices(&mut controller).is_empty());
+}
+fn m4_review_missing_commit(missing_pr: bool) {
+    let mut database = support::Database::start();
+    let settings = database.create(if missing_pr {"m4_review_missing_both"} else {"m4_review_missing_reply"});
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    { let mut direct = fixture.direct.lock().unwrap(); direct.reply_without_sha = true; direct.missing_merge_commit = missing_pr; }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    if missing_pr {
+        assert!(record["landed"]["commit"].is_null());
+        assert!(record["evidence_errors"].as_array().unwrap().iter().any(|e| e["read"] == "merge_commit_sha" && e["class"] == "missing"));
+        assert_eq!(m4_notices(&mut controller).len(), 1);
+    } else { assert_eq!(record["landed"]["commit"], "d".repeat(40)); assert!(record["evidence_errors"].as_array().unwrap().is_empty()); }
+}
+#[test]
+fn m4_review_missing_reply_sha_uses_fresh_pull() { m4_review_missing_commit(false); }
+#[test]
+fn m4_review_missing_both_commit_ids_still_records_merge() { m4_review_missing_commit(true); }
+#[test]
+fn m4_review_outside_protection_refusal_is_evidence_error() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_review_protection");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.api.state.lock().unwrap().merged(false);
+    fixture.direct.lock().unwrap().protection_refused_after_merge = true;
+    deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert!(record["required_checks"].is_null());
+    assert!(record["evidence_errors"].as_array().unwrap().iter().any(|e| e["read"] == "required_checks" && e["class"] == "direct_protection_read"));
+    assert_eq!(m4_notices(&mut controller).len(), 1);
+}
+#[test]
+fn m4_review_observed_branch_failure_is_evidence_error() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_review_branch");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("success"));
+    fixture.api.state.lock().unwrap().merged(false);
+    fixture.direct.lock().unwrap().branch_status_after_merge = Some(500);
+    deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert!(record["landed"]["merge_base"].is_null());
+    assert!(record["evidence_errors"].as_array().unwrap().iter().any(|e| e["read"] == "live_merge_base"));
+    assert_eq!(m4_notices(&mut controller).len(), 1);
+}
+
+
+fn m4_r2_receipt_path(fixture: &DirectFixture) -> std::path::PathBuf {
+    let identity = "3:owner/sandbox#100";
+    let key = format!("direct:{:x}", Sha256::digest(identity.as_bytes()));
+    fixture.root.path().join("direct").join(format!("{}.merged", hex::encode(key.as_bytes())))
+}
+fn m4_r2_receipt(fixture: &DirectFixture) -> Value {
+    serde_json::from_slice(&std::fs::read(m4_r2_receipt_path(fixture)).unwrap()).unwrap()
+}
+fn m4_r2_visible(fixture: &DirectFixture) {
+    let mut state = fixture.api.state.lock().unwrap();
+    let body = state.pull["body"].as_str().unwrap().to_owned();
+    state.pull["body"] = json!(format!("{body}\n{}\n", direct_merge::VISIBILITY));
+}
+fn m4_r2_premerge_branch_failure(status: u16) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut database = support::Database::start();
+    let settings = database.create(&format!("m4_r2_live_{status}"));
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    m4_r2_visible(&fixture);
+    let direct = fixture.direct.clone();
+    let root = fixture.root.path().join("direct");
+    let fired = Arc::new(AtomicBool::new(false));
+    let once = fired.clone();
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(move |b| {
+        if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Fence, after:true})
+            && !accepted_records(&root).is_empty() && !once.swap(true, Ordering::SeqCst) {
+            direct.lock().unwrap().branch_status_before_merge = Some(status);
+        }
+    });
+    let result = adapter.execute(&delivery);
+    assert!(fired.load(Ordering::SeqCst), "inject the failure after checks and before the live-tip read");
+    if status == 500 {
+        let Err(tl3_controller::Error::Adapter(error)) = result else { panic!("live-tip 500 must retain the retryable read error: {result:?}"); };
+        assert_eq!(error.downcast_ref::<tl3_github::Error>().unwrap().failure_class(), tl3_github::FailureClass::Transient("upstream_server"));
+    } else {
+        let completion = result.expect("a missing live branch must use the existing permanent-read diagnostic path");
+        assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
+        assert_eq!(completion.failure_class.as_deref(), Some("not_found"));
+        assert!(completion.diagnostic.is_some());
+    }
+    let accepted = accepted_records(&fixture.root.path().join("direct"));
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0]["waiting_through"].is_null(), status == 500, "only the permanent refusal consumes authorization");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(!std::fs::read_dir(fixture.root.path().join("direct")).unwrap().any(|e| e.unwrap().path().extension().is_some_and(|x| x == "intent")), "a failed pre-merge read must precede the intent write");
+    if status == 500 {
+        fixture.direct.lock().unwrap().branch_status_before_merge = None;
+        adapter.execute(&delivery).unwrap();
+        assert_eq!(fixture.direct.lock().unwrap().successes, 1, "retry preserves initial authorization without a webhook");
+    }
+}
+#[test]
+fn m4_r2_premerge_live_branch_500_is_retryable() { m4_r2_premerge_branch_failure(500); }
+#[test]
+fn m4_r2_premerge_missing_branch_is_permanent_read_refusal() { m4_r2_premerge_branch_failure(404); }
+
+fn m4_r2_saved_receipt(fixture: &DirectFixture, settings: &tl3_config::Store) -> Delivery {
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(fixture, settings);
+    fresh_adapter(fixture, settings).execute(&delivery).unwrap();
+    assert_eq!(m4_r2_receipt(fixture)["evidence"]["landed"]["tree_matches"], true);
+    delivery
+}
+fn m4_r2_stale_receipt(cancel: bool) {
+    let mut database = support::Database::start();
+    let settings = database.create(&format!("m4_r2_stale_{cancel}"));
+    let fixture = DirectFixture::new();
+    let delivery = m4_r2_saved_receipt(&fixture, &settings);
+    std::fs::write(fixture.root.path().join("direct/epoch.fence"), serde_json::to_vec(&(delivery.epoch + 1)).unwrap()).unwrap();
+    let mut adapter = fresh_adapter(&fixture, &settings);
+    let result = if cancel { adapter.reconcile_cancellation(&delivery).map(|_| ()) } else { adapter.observations(&delivery).map(|_| ()) };
+    let Err(tl3_controller::Error::Adapter(error)) = result else { panic!("a saved merged receipt must not bypass the epoch fence: {result:?}"); };
+    assert_eq!(error.to_string(), "upstream refused an older controller epoch");
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+#[test]
+fn m4_r2_observations_refuses_stale_epoch_receipt() { m4_r2_stale_receipt(false); }
+#[test]
+fn m4_r2_cancellation_refuses_stale_epoch_receipt() { m4_r2_stale_receipt(true); }
+
+#[test]
+fn m4_r2_first_receipt_write_error_propagates() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_first_receipt_io");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let temporary = m4_r2_receipt_path(&fixture).with_extension("tmp");
+    std::fs::create_dir(&temporary).unwrap();
+    let result = fresh_adapter(&fixture, &settings).execute(&delivery);
+    let Err(tl3_controller::Error::Io(error)) = result else { panic!("the first receipt failure must propagate: {result:?}"); };
+    assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(!m4_r2_receipt_path(&fixture).exists());
+}
+#[test]
+fn m4_r2_evidence_receipt_write_error_is_best_effort() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_second_receipt_io");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let temporary = m4_r2_receipt_path(&fixture).with_extension("tmp");
+    let before = Arc::new(AtomicUsize::new(0));
+    let count = before.clone();
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(move |b| {
+        if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Receipt, after:false}) && count.fetch_add(1, Ordering::SeqCst) == 1 {
+            std::fs::create_dir(&temporary).unwrap();
+        }
+    });
+    let completion = adapter.execute(&delivery).unwrap();
+    assert_eq!(before.load(Ordering::SeqCst), 2);
+    let value = serde_json::to_value(&completion.observations[0]).unwrap();
+    assert!(value["Outcome"]["outcome"]["Merged"]["evidence"]["evidence_errors"].as_array().unwrap().iter().any(|e| e["read"] == "evidence_receipt" && e["class"] == "io"));
+    assert_eq!(m4_r2_receipt(&fixture)["evidence"]["evidence_errors"], json!([{"read":"collection","class":"interrupted"}]));
+}
+#[test]
+fn m4_r2_crash_after_first_receipt_retains_merged_fact() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_pending_crash");
+    let mut fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(|b| {
+        if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Receipt, after:true}) { panic!("crash after first receipt"); }
+    });
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| adapter.execute(&delivery))).is_err());
+    assert_eq!(fixture.direct.lock().unwrap().git_reads, 0, "the first receipt must precede evidence reads");
+    assert_eq!(m4_r2_receipt(&fixture)["evidence"]["evidence_errors"], json!([{"read":"collection","class":"interrupted"}]));
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut controller = fixture.open(&settings);
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    assert_eq!(m4_record(&mut controller)["evidence_errors"], json!([{"read":"collection","class":"interrupted"}]));
+    assert_eq!(m4_notices(&mut controller).len(), 1);
+    assert_eq!(fixture.direct.lock().unwrap().git_reads, 0, "an interrupted collection is not retried");
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+fn m4_r2_translate(fixture: &DirectFixture, snapshot: &tl3_store::Snapshot, bound: bool) -> Vec<tl3_controller::cli::Input> {
+    use tl3_controller::ingress::GitHubTranslator;
+    let mut translator = direct_merge::Translator::new(fixture.api.clients()).unwrap();
+    if bound { translator = translator.with_wakes(fixture.wakes.clone()); }
+    let body = m4_review_closed_event(fixture);
+    let event = tl3_github::webhook::parse("m4-r2-translate", "pull_request", &serde_json::to_vec(&body).unwrap()).unwrap();
+    translator.translate(&ingress::GitHubDelivery::Webhook(Box::new(event)), snapshot).unwrap()
+}
+#[test]
+fn m4_r2_webhook_preserves_existing_rich_receipt() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_preserve_rich");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("success"));
+    fixture.api.state.lock().unwrap().merged(false);
+    let mut adapter = fixture.adapter(&settings);
+    adapter.observations(&delivery).unwrap();
+    let before = std::fs::read(m4_r2_receipt_path(&fixture)).unwrap();
+    assert!(m4_r2_receipt(&fixture)["evidence"]["evidence_errors"].as_array().unwrap().is_empty());
+    fixture.direct.lock().unwrap().head_status = Some(500);
+    let reads = fixture.direct.lock().unwrap().git_reads;
+    let inputs = m4_r2_translate(&fixture, &controller.snapshot().unwrap(), true);
+    assert_eq!(std::fs::read(m4_r2_receipt_path(&fixture)).unwrap(), before, "webhook must not downgrade existing evidence even temporarily");
+    assert_eq!(fixture.direct.lock().unwrap().git_reads, reads);
+    assert_eq!(inputs.len(), 1);
+}
+#[test]
+fn m4_r2_unbound_webhook_does_not_claim_outside_merge() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_unbound_journal");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("failure"));
+    fixture.api.state.lock().unwrap().merged(false);
+    let inputs = m4_r2_translate(&fixture, &controller.snapshot().unwrap(), false);
+    let value = serde_json::to_value(&inputs[0]).unwrap();
+    assert_eq!(value["Observation"]["observation"]["Outcome"]["outcome"]["Merged"]["evidence"]["observed"], false, "unbound journal cannot establish absence of TL3 intent");
+}
+#[test]
+fn m4_r2_unreadable_history_intent_is_recorded() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_history_intent");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let root = fixture.root.path().join("direct");
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(move |b| {
+        if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Merge, after:true}) {
+            for entry in std::fs::read_dir(&root).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|x|x == "intent") { std::fs::write(path, b"invalid intent json").unwrap(); }
+            }
+        }
+    });
+    let completion = adapter.execute(&delivery).unwrap();
+    let value = serde_json::to_value(&completion.observations[0]).unwrap();
+    assert!(value["Outcome"]["outcome"]["Merged"]["evidence"]["evidence_errors"].as_array().unwrap().iter().any(|e| e["read"] == "delivery_history_intent" && e["class"] == "json"), "history read failure must be recorded at its boundary");
+}
+#[test]
+fn m4_r2_head_commit_failure_retains_landed_tree() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_r2_head_failure");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().head_status = Some(500);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["tree"], "1".repeat(40));
+    assert!(record["landed"]["head_tree"].is_null());
+    assert!(record["landed"]["tree_matches"].is_null());
+    assert_eq!(record["evidence_errors"], json!([{"read":"head_commit","class":"http_500"}]));
+    assert_eq!(m4_notices(&mut controller).len(), 1);
+}
+fn m4_r2_replay_notices(outside: bool) {
+    let mut database = support::Database::start();
+    let settings = database.create(&format!("m4_r2_replay_{outside}"));
+    let mut fixture = DirectFixture::new();
+    { let mut direct = fixture.direct.lock().unwrap(); direct.different_tree = true; direct.different_parent = true; }
+    if outside { fixture.check(None); }
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    if outside {
+        fixture.check(Some("failure"));
+        fixture.api.state.lock().unwrap().merged(false);
+        deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
+        drain(&mut controller);
+    }
+    m4_review_one_merge(&mut controller, &settings);
+    let notices = m4_notices(&mut controller);
+    assert_eq!(notices.len(), if outside {2} else {3});
+    for kind in if outside {vec!["someone else's merge", "landed tree differs"]} else {vec!["no required GitHub checks", "landed tree differs", "landed first parent differs"]} {
+        assert!(notices.iter().any(|n| n["summary"].as_str().unwrap().contains(kind)), "notice kind {kind} must be present");
+    }
+    let counts = adapters::delivery_counts(fixture.root.path()).unwrap();
+    let posts: BTreeMap<_,_> = counts.into_iter().filter(|(key,_)|key.starts_with("incident:merge-audit:")).collect();
+    assert_eq!(posts.len(), notices.len());
+    assert!(posts.values().all(|count|*count == 1));
+    drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut controller = fixture.open(&settings);
+    let body = m4_review_closed_event(&fixture);
+    assert!(Store::open(&settings).unwrap().receive_ingress("github-webhook", "m4-r2-distinct-replay", "pull_request", &serde_json::to_vec(&body).unwrap()).unwrap());
+    drain(&mut controller);
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    m4_review_one_merge(&mut controller, &settings);
+    assert_eq!(m4_notices(&mut controller).len(), notices.len());
+    let after: BTreeMap<_,_> = adapters::delivery_counts(fixture.root.path()).unwrap().into_iter().filter(|(key,_)|key.starts_with("incident:merge-audit:")).collect();
+    assert_eq!(after, posts, "every notice kind must be posted exactly once across restart and fresh delivery");
+}
+#[test]
+fn m4_r2_replay_own_tree_parent_zero_notices_once() { m4_r2_replay_notices(false); }
+#[test]
+fn m4_r2_replay_outside_failure_tree_notices_once() { m4_r2_replay_notices(true); }
