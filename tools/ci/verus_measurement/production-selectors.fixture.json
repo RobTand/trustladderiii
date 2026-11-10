@@ -1,10 +1,15 @@
 {
-  "source_head": "52b6639c57aaf3d983bfd400b61f1b588efb93b2",
+  "source_head": "3eced881a77be0d6a8c7b60289fca5cebef6ba7e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "20b937045e94927d27ce9f750a843642fedbe72870d278e78b0ce2846f73dafe",
-  "groups": 505,
-  "obligations": 703,
+  "source_sha256": "fc6d74f568375679137bd19ebfe4b1a9df69e0f9664503be8ab8cc37d55d803e",
+  "groups": 506,
+  "obligations": 704,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_kernel_pause_node_value",
+      "selector": "kernel#pause_node_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_allocation_incident_node",
       "selector": "kernel::allocation#incident_node",
