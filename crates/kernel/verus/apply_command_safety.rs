@@ -247,6 +247,7 @@ pub(super) proof fn world_rewrite(before: World, after: World, i: usize, v: Node
 pub(super) proof fn stop_rows_eq(b: Node, n: Node, id: u64, o: Outcome)
     requires n == retirement::stopped(Node { last_cmd: id, ..b }, o),
         node_headroom(b),
+        id > b.last_cmd,
     ensures n.repo == b.repo,
         n.footprint == b.footprint,
         n.generation as int <= b.generation as int + 1,
@@ -307,6 +308,7 @@ pub(super) proof fn change_request_dist(w: World, b: Node, n: Node, id: u64)
 pub(super) proof fn answer_rows_eq(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer)
     requires n == apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0,
         node_headroom(b), arithmetic_consistent(b), nq < u64::MAX,
+        id > b.last_cmd,
     ensures n.repo == b.repo,
         n.footprint == b.footprint,
         n.generation as int <= b.generation as int + 1,
