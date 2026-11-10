@@ -844,7 +844,7 @@ pub(in super::super) open spec fn outside_active(n: Node) -> bool {
 }
 
 pub(in super::super) open spec fn outside_prepared(n: Node, head: HeadId) -> Node {
-    Node { head: Some(head), checked: None,
+    Node { next_seq: 0, head: Some(head), checked: None,
         review_restarted: n.head == Some(head) && n.review_restarted, ..n }
 }
 
