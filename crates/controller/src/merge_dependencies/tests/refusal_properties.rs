@@ -2153,11 +2153,10 @@ fn invalid_step_result_retains_input_world_and_effects() {
     let node = intake(&mut c, &repository, 42);
     c.observe(
         "invalid-result-input",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node,
-            id: 1,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     let before = c.snapshot().unwrap();
@@ -2219,15 +2218,14 @@ fn invalid_stored_world_is_fatal_and_retains_inbox() {
     let node = intake(&mut c, &repository, 42);
     c.observe(
         "bad-store-reply",
-        Observation::Kernel(Event::Command {
+        Observation::Steering {
             node,
-            id: 1,
             command: Command::Stop,
-        }),
+        },
     )
     .unwrap();
     let mut world = c.world().unwrap();
-    world.gates.clear();
+    world.pool_capacity = 0;
     assert!(!world.valid(), "fixture must fail the real kernel checker");
     persist_world(&mut c, &world, "invalid-stored-world");
     let before = c.snapshot().unwrap();
