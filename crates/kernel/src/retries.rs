@@ -885,7 +885,7 @@ fn held_v(n: Node, target: Phase) -> (result: Node) [
         result.next_seq == n.next_seq,
 ] proof [reveal(reply_family_values::held);] {
     let mut m = n;
-    if !target.holding() { m.holds = false; }
+    if target.holding() { m.holds = false; }
     m
 }
 }
