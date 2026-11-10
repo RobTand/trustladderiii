@@ -337,7 +337,7 @@ class FluxAdmissionTests(unittest.TestCase):
 
     def test_owner_limit_verifier_checks_actual_jobspec_and_saved_intent(self):
         good = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
-        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 32, 1),
+        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 24, 1),
                                      ('walltime_s', 5400, None)):
             for value in (None, True, 0, -1, '8', float('nan'), float('inf'), maximum + 1):
                 with self.subTest(field=field, value=value):
@@ -350,7 +350,7 @@ class FluxAdmissionTests(unittest.TestCase):
                         spec['resources'][0]['with'][leaf]['count'] = value
                     with self.assertRaises((RuntimeError, KeyError, TypeError, ValueError)):
                         fx.validate_spec(intent, fx.digest(fx.encoded(intent)), spec)
-        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 32, 1),
+        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 24, 1),
                                      ('walltime_s', 5400, None)):
             intent = copy.deepcopy(self.intent)
             spec = copy.deepcopy(good)
@@ -1185,7 +1185,7 @@ class FluxAdmissionTests(unittest.TestCase):
             commands.append((command, kwargs))
             return Child()
         def checked(command, **kwargs):
-            return self.identifier.encode() if command[0] == fx.FLUX else b'btrfs'
+            return b'btrfs'
         for stage in ('build', 'fresh-init'):
             self.intent = fx.plan('a' * 40, 'b' * 40, stage, 'dev', self.root / 'release',
                                   self.root / 'manifest', self.root / 'backup', self.out)

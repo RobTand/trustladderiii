@@ -609,10 +609,13 @@ impl RunBackend for Flux {
                     .binding
                     .as_ref()
                     .is_some_and(|binding| binding.id != grant.run)
-                || current
-                    .allocation_grant
-                    .as_ref()
-                    .is_some_and(|previous| previous != &grant)
+                || current.allocation_grant.as_ref().is_some_and(|previous| {
+                    previous.run != grant.run
+                        || previous.request_digest != grant.request_digest
+                        || previous.host != grant.host
+                        || previous.rank != grant.rank
+                        || previous.os_pus != grant.os_pus
+                })
             {
                 return Err(BackendError::unknown(
                     "allocation changed or execution held",

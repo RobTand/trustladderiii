@@ -647,7 +647,10 @@ def payload(intent_path, expected):
     tree = source_identity(intent['head'])
     if tree != intent['tree'] or str(SOURCE) != intent['source']:
         raise RuntimeError('payload source mismatch')
-    identifier = job_id(checked([FLUX, 'job', 'id', '--to=f58', os.environ['FLUX_JOB_ID']]).strip())
+    code, raw, _ = native('job', 'id', '--to=f58', os.environ['FLUX_JOB_ID'])
+    if code:
+        raise RuntimeError('native job identity unavailable')
+    identifier = job_id(raw.strip())
     own = Path('/proc/self/cgroup').read_text().strip()
     if not own.startswith('0::') or '\n' in own:
         raise RuntimeError('unified owned scope required')

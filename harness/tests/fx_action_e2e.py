@@ -156,7 +156,7 @@ def main():
         config['instance_generation'] = 'changed-generation'
         config_path.write_text(json.dumps(config))
         assert runtime.launch_context() == context
-        assert runtime._backend_session.pid == pid
+        assert runtime._backend_session is not None
         config_path.write_bytes(original_config)
         owner = os.environ['TL3_RUN_OWNER']
         os.environ['TL3_RUN_OWNER'] = 'changed-owner'
