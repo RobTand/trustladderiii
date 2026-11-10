@@ -2146,17 +2146,20 @@ fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
     assert_eq!(incidents[0].value["open"], true);
 }
 
-
 #[test]
 fn invalid_step_result_retains_input_world_and_effects() {
     let mut db = Database::start();
     let (_repo, mut c, repository) = fixture(&mut db, "invalid_step_result");
     let node = intake(&mut c, &repository, 42);
-    c.observe("invalid-result-input", Observation::Kernel(Event::Command {
-        node,
-        id: 1,
-        command: Command::Stop,
-    })).unwrap();
+    c.observe(
+        "invalid-result-input",
+        Observation::Kernel(Event::Command {
+            node,
+            id: 1,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
     let before = c.snapshot().unwrap();
     let world = json!(c.world().unwrap());
     let effects = before.pending_effects.clone();
@@ -2164,31 +2167,65 @@ fn invalid_step_result_retains_input_world_and_effects() {
     // The readiness probe precedes the command's real step.
     c.invalid_result_injection.set(Some(1));
     let accepted = c.consume_kernel_input(&before, row).unwrap();
-    assert_eq!(c.invalid_result_injection.get(), None, "injected result must be exercised");
-    assert!(!accepted, "a checker-rejected step result must refuse its input");
+    assert_eq!(
+        c.invalid_result_injection.get(),
+        None,
+        "injected result must be exercised"
+    );
+    assert!(
+        !accepted,
+        "a checker-rejected step result must refuse its input"
+    );
     let after = c.snapshot().unwrap();
-    assert_eq!(json!(c.world().unwrap()), world, "old world must remain durable");
-    assert_eq!(after.pending_effects, effects, "no effects from the bad step");
-    assert!(after.rows.iter().any(|r| r.table == row.table && r.id == row.id && r.value == row.value));
-    let incidents: Vec<_> = after.rows.iter().filter(|r| r.table == "incidents").collect();
+    assert_eq!(
+        json!(c.world().unwrap()),
+        world,
+        "old world must remain durable"
+    );
+    assert_eq!(
+        after.pending_effects, effects,
+        "no effects from the bad step"
+    );
+    assert!(
+        after
+            .rows
+            .iter()
+            .any(|r| r.table == row.table && r.id == row.id && r.value == row.value)
+    );
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|r| r.table == "incidents")
+        .collect();
     assert_eq!(incidents.len(), 1);
     assert_eq!(incidents[0].value["open"], true);
     assert_eq!(incidents[0].value["blocking"], true);
     assert!(!c.consume_kernel_input(&after, row).unwrap());
-    assert_eq!(c.snapshot().unwrap().rows.iter().filter(|r| r.table == "incidents").count(), 1);
+    assert_eq!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| r.table == "incidents")
+            .count(),
+        1
+    );
 }
-
 
 #[test]
 fn invalid_stored_world_is_fatal_and_retains_inbox() {
     let mut db = Database::start();
     let (_repo, mut c, repository) = fixture(&mut db, "invalid_stored_world");
     let node = intake(&mut c, &repository, 42);
-    c.observe("bad-store-reply", Observation::Kernel(Event::Command {
-        node,
-        id: 1,
-        command: Command::Stop,
-    })).unwrap();
+    c.observe(
+        "bad-store-reply",
+        Observation::Kernel(Event::Command {
+            node,
+            id: 1,
+            command: Command::Stop,
+        }),
+    )
+    .unwrap();
     let mut world = c.world().unwrap();
     world.gates.clear();
     assert!(!world.valid(), "fixture must fail the real kernel checker");
@@ -2198,7 +2235,16 @@ fn invalid_stored_world_is_fatal_and_retains_inbox() {
     assert_eq!(error.to_string(), "invalid stored kernel world");
     let result = c.drive_once();
     let after = c.snapshot().unwrap();
-    assert_eq!(after.rows, before.rows, "fatal stored state must delete no inbox rows");
-    assert!(result.is_err(), "a running controller must stop on a bad stored world");
-    assert!(!crate::input_errors::recoverable(&error), "invalid stored kernel worlds must never be recoverable input errors");
+    assert_eq!(
+        after.rows, before.rows,
+        "fatal stored state must delete no inbox rows"
+    );
+    assert!(
+        result.is_err(),
+        "a running controller must stop on a bad stored world"
+    );
+    assert!(
+        !crate::input_errors::recoverable(&error),
+        "invalid stored kernel worlds must never be recoverable input errors"
+    );
 }
