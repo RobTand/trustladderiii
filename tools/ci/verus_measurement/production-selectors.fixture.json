@@ -1,5 +1,5 @@
 {
-  "source_head": "9819405fd6ab23e1574f880bf92960da288cc6b1",
+  "source_head": "3e77877e483b5d32ddd1ac3abc847e3d70324d05",
   "source_path": "tools/bazel/verus.bzl",
   "source_sha256": "90f0262bc25f11100c0956084866a1fbd1bb71fd6945168be2f22c0c3f88feb7",
   "groups": 915,
