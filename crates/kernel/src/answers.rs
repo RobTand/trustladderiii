@@ -50,7 +50,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                     }),
                     None => false,
                 }) {
-            withheld_after(old(w).nodes@[i as int].credit.withheld,
+            dependencies::withheld_after(old(w).nodes@[i as int].credit.withheld,
                 final(w).nodes@[i as int].planning_started,
                 final(w).nodes@[i as int].phase, final(w).nodes@[i as int].credit.ready,
                 final(w).dependencies@, NodeId(i as u64))
