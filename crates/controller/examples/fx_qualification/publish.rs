@@ -54,7 +54,7 @@ pub fn verify_private(inputs: &Inputs) -> Result<()> {
         },
     )?;
     let mut fixtures = vec![];
-    for (binary, filter) in [
+    for (index, (binary, filter)) in [
         (
             "lib_test_tl3_controller_binary",
             "adapters::flux_checks::activation::tests::",
@@ -63,7 +63,11 @@ pub fn verify_private(inputs: &Inputs) -> Result<()> {
             "example_test_fx-stage-packet_binary",
             "tests::canary_packet_stages_without_activation_record",
         ),
-    ] {
+        (
+            "lib_test_tl3_controller_binary",
+            "adapters::workers::execution::inputs::tests::direct_prepare_requires_deployment_activation_and_checks_actual_options",
+        ),
+    ].into_iter().enumerate() {
         let output =
             std::process::Command::new(inputs.out.join("qualified-production").join(binary))
                 .args([
@@ -78,13 +82,13 @@ pub fn verify_private(inputs: &Inputs) -> Result<()> {
                 .env("TL3_FX_QUALIFICATION_CHECKOUT", &inputs.repo)
                 .stdin(std::process::Stdio::null())
                 .output()?;
-        let stdout = durable::blob(&inputs.out.join(format!("{binary}.stdout")), &output.stdout)?;
-        let stderr = durable::blob(&inputs.out.join(format!("{binary}.stderr")), &output.stderr)?;
+        let stdout = durable::blob(&inputs.out.join(format!("{binary}-{index}.stdout")), &output.stdout)?;
+        let stderr = durable::blob(&inputs.out.join(format!("{binary}-{index}.stderr")), &output.stderr)?;
         let log = String::from_utf8_lossy(&output.stdout);
         let pass = output.status.success()
             && log.contains("test result: ok.")
             && !log.contains("0 passed;");
-        fixtures.push(json!({"binary":binary,"exit":output.status.code(),"pass":pass,"stdout":stdout,"stderr":stderr}));
+        fixtures.push(json!({"binary":binary,"filter":filter,"exit":output.status.code(),"pass":pass,"stdout":stdout,"stderr":stderr}));
     }
     write(&inputs.out.join("canonical-fixtures.json"), &fixtures)?;
     if fixtures.iter().any(|fixture| fixture["pass"] != true) {
