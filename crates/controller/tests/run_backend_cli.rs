@@ -6568,3 +6568,21 @@ fn cleanup_maintenance_persistent_failure_never_expires_debt() {
         assert!(f.state().cleanup_evidence.is_empty());
     }
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_never_sweeps_healthy_begin_launch_debt() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.ownership();
+    let frames = f.call(json!({"op":"begin_container_launch","owner":owned.owner.owner,"correlation":owned.owner.correlation,"launcher":owned}));
+    assert_eq!(frames.last().unwrap()["kind"], "result");
+    let before = cleanup_debts(&f);
+    assert!(!before.is_empty());
+    let backend = maintenance_backend(&f);
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+    assert!(backend.cleanup_maintenance(u64::MAX - 300_000).unwrap().is_empty());
+    assert_eq!(cleanup_debts(&f), before);
+    assert!(!f.intent.output_dir.join(format!("helper-called-{}", owned.execution)).exists());
+}
