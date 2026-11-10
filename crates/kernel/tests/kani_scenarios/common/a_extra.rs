@@ -162,6 +162,20 @@ fn candidates(phase: Option<Phase>, mut visit: impl FnMut(World)) {
             for ticket in [None, Some(0), Some(1023)] {
                 let mut w = base.clone(); w.nodes[0].ticket = ticket; visit(w);
             }
+            // Exhaust the retry/funding corners together. Independent random
+            // credit entries almost never produce exactly exhausted credit.
+            enumerate(&[3, 2, 2, 5, 3, 2, 2, 3], |_, d| {
+                let mut w = base.clone(); let n = &mut w.nodes[0];
+                n.credit.start = [0, 1, 4][d[0]];
+                w.fail_fast = d[1] != 0;
+                n.review_restarted = d[2] != 0;
+                n.rechecks = d[3] as u8;
+                n.attempt = 1 + d[4] as u8;
+                n.round = d[5] as u8;
+                n.replanned = d[6] != 0;
+                n.plan_retries = d[7] as u8;
+                visit(w);
+            });
             for kind in effects() {
                 for cancelling in [false, true] {
                     let mut w = base.clone();
@@ -327,6 +341,50 @@ fn body_policy_refused(before: &World, event: Event) {
     }
 }
 
+fn extra_covers(stats: &mut Stats, h: usize, w: &World, event: Event) {
+    let b = w.nodes[0];
+    let accepted = match event {
+        Event::Reply { generation, .. } => at_await(&b) && b.run == Some(generation),
+        _ => false,
+    };
+    let funded = b.credit.balance() >= 1;
+    let free = b.rechecks.saturating_add(1) <= FREE_RECHECKS;
+    let mut hit = |condition, label| { if condition { stats.covers.insert(label); } };
+    match h {
+        20 if accepted && b.phase == Phase::Reviewing => {
+            hit(!b.review_restarted && free, "first exhaustion: free review");
+            hit(!b.review_restarted && !free && funded, "first exhaustion: paid review");
+            hit(!b.review_restarted && !free && !funded, "first exhaustion: needs credit");
+            hit(b.review_restarted && funded, "second exhaustion: paid split");
+            hit(b.review_restarted && !funded, "second exhaustion: split needs credit");
+        }
+        22 if accepted && b.phase == Phase::Rebasing => {
+            hit(free, "clean rebase uses the free allowance");
+            hit(!free && funded, "clean rebase spends credit");
+            hit(!free && !funded, "clean rebase needs credit");
+        }
+        23 if accepted && b.phase == Phase::Rebasing => {
+            hit(free && funded, "conflict fix pays despite free allowance");
+            hit(!free && funded, "conflict fix spends credit after allowance");
+            hit(!funded, "conflict fix needs credit");
+        }
+        29 => {
+            let Event::Ack { seq, .. } = event else { unreachable!() };
+            let open_pr = b.effect.is_some_and(|e| e.seq == seq && !e.cancelling && e.kind == EffectKind::OpenPr);
+            hit(open_pr && w.fail_fast, "OpenPr refusal with fail_fast");
+            hit(open_pr && !w.fail_fast, "OpenPr refusal without fail_fast");
+            hit(b.effect.is_some_and(|e| e.seq != seq), "a stale refusal is ignored");
+            hit(b.effect.is_some_and(|e| e.seq == seq && e.cancelling), "a cancelled effect only clears its delivery");
+            hit(!open_pr && b.effect.is_some_and(|e| e.seq == seq && !e.cancelling), "other effect kinds retain permanent failure handling");
+        }
+        56 => {
+            let Event::NewAdoption { repo, .. } = event else { unreachable!() };
+            hit(repo.0 < w.gates.len() as u64, "new adoption retains the requested head");
+        }
+        _ => {},
+    }
+}
+
 pub fn run_event(h: usize, name: &str) {
     assert_source_identity();
     let start = Instant::now();
@@ -337,10 +395,12 @@ pub fn run_event(h: usize, name: &str) {
         for mode in 0..3 {
             let e = event(h, &w, payload, mode);
             if event_filter(&mut stats, e) {
+                let passed = stats.passed;
                 stats.case(index, A_SEED, Some(w.clone()), vec![], || {
                     let before = assert_apply(e);
                     if h == 29 { body_policy_refused(&before, e); }
                 });
+                if stats.passed > passed { extra_covers(&mut stats, h, &w, e); }
             }
             index += 1;
         }
@@ -364,10 +424,12 @@ pub fn run_event(h: usize, name: &str) {
                     for mode in 0..3 {
                         let e = event(h, &w, payload, mode);
                         if event_filter(&mut stats, e) {
+                            let passed = stats.passed;
                             stats.case(index, A_SEED, Some(w.clone()), vec![], || {
                                 let before = assert_apply(e);
                                 if h == 29 { body_policy_refused(&before, e); }
                             });
+                            if stats.passed > passed { extra_covers(&mut stats, h, &w, e); }
                         }
                         index += 1;
                     }
