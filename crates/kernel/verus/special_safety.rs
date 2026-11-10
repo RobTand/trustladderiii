@@ -685,8 +685,6 @@ mod answer_frontier {
             after.dependencies@ == before.dependencies@,
             before.next_question <= after.next_question,
             before.nodes@.len() <= u64::MAX,
-            retirement::node_rules(before, before.nodes@[node.0 as int])
-                ==> retirement::node_rules(after, after.nodes@[node.0 as int]),
             after.nodes@[node.0 as int].holds ==> before.nodes@[node.0 as int].holds,
             after.nodes@[node.0 as int].pool ==> before.nodes@[node.0 as int].pool,
             after.nodes@[node.0 as int].ticket == before.nodes@[node.0 as int].ticket
