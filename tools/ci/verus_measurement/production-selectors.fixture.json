@@ -1,9 +1,9 @@
 {
-  "source_head": "3b4fd71fec3ab2372010a7f5bda97a9dfc7c0476",
+  "source_head": "a86f4310e872896fc71b4d72c295d6afcc023f81",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4392d4f4436ec40e04236cb3ea2b7262441c97351726aba6f47db7b172c7c11d",
-  "groups": 927,
-  "obligations": 1135,
+  "source_sha256": "bf12e465b50e2c7f10c8d319e775394f633a550f7c413f06d2d250d93daf2662",
+  "groups": 917,
+  "obligations": 1125,
   "selections": [
     {
       "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
@@ -13,56 +13,6 @@
     {
       "target": "//crates/kernel:verus_event_frames_reveal_out_of_range_stutter_rows",
       "selector": "kernel::event_frames_reveal#out_of_range_stutter_rows",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_rows_unwithheld",
-      "selector": "kernel::answer_owner#owner_rows_unwithheld",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_same",
-      "selector": "kernel::answer_owner#owner_same",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_unclear",
-      "selector": "kernel::answer_owner#owner_unclear",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_continue",
-      "selector": "kernel::answer_owner#owner_continue",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_no_retry",
-      "selector": "kernel::answer_owner#owner_no_retry",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_no_credit",
-      "selector": "kernel::answer_owner#owner_no_credit",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_stopped",
-      "selector": "kernel::answer_owner#owner_stopped",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_owner_cleanup",
-      "selector": "kernel::answer_owner#owner_cleanup",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_awaiting_owner",
-      "selector": "kernel::answer_owner#awaiting_owner",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answer_owner_n4c_after_last_cmd",
-      "selector": "kernel::answer_owner#n4c_after_last_cmd",
       "expected": 1
     },
     {
