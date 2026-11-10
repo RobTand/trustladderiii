@@ -346,7 +346,7 @@ pub(super) proof fn confirmed_irrelevant_rows(b: Node, n: Node, e: InFlight, ack
 
 pub(super) proof fn confirmed_ack_rows(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64)
     requires confirmed_ack_frame(b, n, e, ack, nq, nqa),
-    ensures (ack == Ack::Confirmed && e.cancelling) ==> ((n.effect.is_none())
+    ensures !(ack == Ack::Confirmed && e.cancelling) ==> ((n.effect.is_none())
         && (n.phase == b.phase)
         && (n.pos == b.pos)
         && (n.holds == b.holds)
