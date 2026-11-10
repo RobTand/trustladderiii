@@ -129,7 +129,7 @@ pub(super) proof fn retry_lift(before: World, after: World, i: int, r: ReplyChan
         after.pool_capacity == before.pool_capacity, after.fail_fast == before.fail_fast,
         after.file_sets@ == before.file_sets@, after.dependencies@ == before.dependencies@,
         reply_family_values::retry_bound(before.nodes@[i], before.next_question, r), oa.len <= ob.len + 1,
-    ensures retry_bounds(before, after, i, ob.len, oa.len),
+    ensures !retry_bounds(before, after, i, ob.len, oa.len),
 {
     reveal(retry_bounds);
 }
