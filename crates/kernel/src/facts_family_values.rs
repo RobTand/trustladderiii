@@ -911,7 +911,7 @@ pub(in super::super) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infr
         notices(result.2, i, 1),
 ] {
     kernel_proof! { facts_family_tail::ci_prefix_frame(n, infra); }
-    let (prepared, active) = ci_prefix_value(n, infra);
+    let (prepared, active) = ci_prefix_value(n, !infra);
     kernel_proof! { reveal(ci_change); }
     if !active {
         let result = facts_reply_adapter::resolve_reply_value(
