@@ -93,7 +93,7 @@ pub(super) proof fn original_review_input(origin: World, n: Node)
 
 pub(super) proof fn ci_fail_fast(n: Node, nq: u64, fast: bool, infra: bool, i: usize)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
-        n.review_stop.is_some() ==> n.phase is Stopping || n.phase is Closed,
+        true,
     ensures transition_safety::fail_fast_node(n,
         reply_family_values::finish(nq, ci_change(n, fast, infra)), fast,
         Event::Fact { node: NodeId(i as u64), fact: Fact::CiFailed { infra } }, i as int),
