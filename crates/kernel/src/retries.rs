@@ -645,7 +645,7 @@ pub(super) fn stop_for_review_v(n: Node, step: ReviewStop) -> (result: Node) [
     ensures result == retirement::stopped(Node { review_stop: Some(step), ..n }, Outcome::Stopped),
 ] {
     let mut m = n;
-    stop_for_review(&mut m, step);
+    stop_for_review(&mut m, ReviewStop::MakerCantMeet);
     m
 }
 }
