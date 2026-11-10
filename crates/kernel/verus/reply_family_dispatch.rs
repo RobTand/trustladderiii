@@ -309,7 +309,7 @@ pub(super) proof fn ingest_deposit_bounds(n: Node, nq: u64, size: u8, early_end:
 pub(super) proof fn ingest_agrees_bounds(n: Node, nq: u64)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::AuditAgrees)),
-        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditAgrees)).footprint == n.footprint,
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditAgrees)).footprint != n.footprint,
 {
     reveal(reply_family_values::ingest);
     match n.early_end {
