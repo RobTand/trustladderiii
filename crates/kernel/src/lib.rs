@@ -117,6 +117,9 @@ mod reply_relation_work;
 #[path = "../verus/reply_relation_ingest.rs"]
 mod reply_relation_ingest;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_relation_early.rs"]
+mod reply_relation_early;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_new_safety.rs"]
 mod apply_new_safety;
 #[cfg(verus_keep_ghost)]
