@@ -1555,6 +1555,36 @@ mod tests {
     }
 
     #[test]
+    fn c1_pr_evidence_keeps_the_optional_not_checked_count() {
+        for count in [None, Some(3)] {
+            let (mut snapshot, mut delivery) = fixture();
+            if let Some(count) = count {
+                snapshot
+                    .rows
+                    .iter_mut()
+                    .find(|row| row.table == "check_reports")
+                    .unwrap()
+                    .value["results"][0]["base_failures_not_checked"] = json!(count);
+            }
+            delivery.evidence = Some(
+                capture(
+                    &snapshot,
+                    &Commit::new("publish", json!({}), &snapshot),
+                    &delivery,
+                )
+                .unwrap(),
+            );
+            let proof = publication(&delivery, "Publish check results in the PR").unwrap();
+            let projected = &delivery.evidence.as_ref().unwrap().checks[0]["results"][0];
+            assert_eq!(
+                projected.get("base_failures_not_checked"),
+                count.map(|value| json!(value)).as_ref()
+            );
+            assert_eq!(proof.contains("base_failures_not_checked"), count.is_some());
+        }
+    }
+
+    #[test]
     fn fix_round_capture_ignores_foreign_rows_and_projects_reports() {
         let (mut snapshot, delivery) = fixture();
         snapshot.rows.push(tl3_store::WorldRow {

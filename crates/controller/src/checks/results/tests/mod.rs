@@ -997,6 +997,17 @@ fn proof_refusal_rows_reach_maker_feedback_without_clipping() {
 }
 
 #[test]
+fn c1_old_harness_pass_without_failure_details_is_refused() {
+    for outcome in ["assertion", "error"] {
+        let (job, report) = fixture(outcome, outcome, true, true);
+        let evidence = evaluate(&job, &report);
+        assert!(!evidence.0 && !evidence.1);
+        assert_eq!(evidence.4, Some(HARNESS));
+        assert!(evidence.2.is_empty());
+    }
+}
+
+#[test]
 fn c1_replay_rejects_a_different_existing_failure() {
     let (job, mut report) = fixture("error", "error", true, true);
     let passed = json!({"outcome":"passed", "exception":"", "assertion":false});
