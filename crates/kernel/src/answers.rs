@@ -435,7 +435,7 @@ fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
-        permits(q.kind, Answer::Continue),
+        apply_answer_values::permits(q.kind, Answer::Continue),
     ensures result == ({ let r = apply_answer_values::continued_answer(n, q, 0); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
@@ -453,7 +453,7 @@ fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
-        permits(q.kind, Answer::TryAgain),
+        apply_answer_values::permits(q.kind, Answer::TryAgain),
     ensures result == ({ let r = apply_answer_values::retried_answer(n, q); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
@@ -471,7 +471,7 @@ fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
-        permits(q.kind, Answer::AddCredit(k)),
+        apply_answer_values::permits(q.kind, Answer::AddCredit(k)),
     ensures result == ({ let r = apply_answer_values::continued_answer(n, q, k); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
