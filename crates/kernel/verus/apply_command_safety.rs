@@ -1050,4 +1050,24 @@ pub(super) proof fn rules_incident(w: World, n: Node)
     reveal(retirement::node_rules);
 }
 
+
+/// E2.N4a (CONTRACTS.md v2.20, rule 6): the stop update keeps planning_started, clears the question and
+/// enters Stopping (blocked, not early), so a waiting owner stays one. Over stopped_v's own result term.
+pub(super) proof fn stop_owner_waiting(n: Node, o: Outcome)
+    ensures dependencies::owner_waiting_ok(n) ==> dependencies::owner_waiting_ok(retirement::stopped(n, o)),
+{
+    reveal(retirement::stopped);
+}
+
+/// E2.N4b (CONTRACTS.md v2.20, rule 6): pause_v changes only paused and last_cmd, which same_endpoint does
+/// not read. Over pause_v's own post term.
+pub(super) proof fn pause_endpoint(n: Node, id: u64)
+    ensures dependencies::same_endpoint(n, (if n.phase is Stopping || n.phase is Closed {
+            Node { last_cmd: id, ..n }
+        } else {
+            Node { paused: true, ..Node { last_cmd: id, ..n } }
+        })),
+{
+}
+
 }

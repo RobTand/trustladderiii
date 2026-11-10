@@ -71,6 +71,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // E2.N4a (R28 framing, CONTRACTS.md v2.20): Stop and ChangeRequest keep a waiting owner's rows.
+        (((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+            ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
+        // E2.N4b (R28 framing, CONTRACTS.md v2.20): Pause keeps the dependency endpoint.
+        ((command is Pause) ==> dependencies::same_endpoint(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])

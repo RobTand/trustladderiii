@@ -54,15 +54,19 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4a (R28 framing, CONTRACTS.md v2.20): a waiting owner stays a waiting owner.
+        (dependencies::owner_waiting_ok(old(w).nodes@[i as int]) ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
     m.last_cmd = id;
+    kernel_snapshot! { m1 = m }
     m = stopped_v(m, Outcome::Stopped);
     w.nodes[i] = m;
     kernel_proof! {
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::stop_world(before_rules_world@, *w, i, id);
+        apply_command_safety::stop_owner_waiting(m1@, Outcome::Stopped);
     }
 }
 }
@@ -117,15 +121,19 @@ pub(super) fn change_request_command(w: &mut World, i: usize, id: u64) -> (resul
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4a (R28 framing, CONTRACTS.md v2.20): a waiting owner stays a waiting owner.
+        (dependencies::owner_waiting_ok(old(w).nodes@[i as int]) ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
     m.last_cmd = id;
+    kernel_snapshot! { m1 = m }
     m = stopped_v(m, Outcome::Replaced);
     w.nodes[i] = m;
     kernel_proof! {
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::change_request_world(before_rules_world@, *w, i, id);
+        apply_command_safety::stop_owner_waiting(m1@, Outcome::Replaced);
     }
 }
 }
@@ -199,14 +207,18 @@ pub(super) fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4b (R28 framing, CONTRACTS.md v2.20): the dependency endpoint is unchanged.
+        dependencies::same_endpoint(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
+    kernel_snapshot! { m0 = m }
     m = pause_v(m, id);
     w.nodes[i] = m;
     kernel_proof! {
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::pause_world(before_rules_world@, *w, i, id);
+        apply_command_safety::pause_endpoint(m0@, id);
     }
 }
 }
