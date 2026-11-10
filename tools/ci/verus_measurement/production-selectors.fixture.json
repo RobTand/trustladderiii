@@ -1,10 +1,20 @@
 {
-  "source_head": "95e2a5b8abe9981afaa94a7853415f8c6e70a4e6",
+  "source_head": "9d7948b86c6102ed50789528cf2710940595931f",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "a188669ccda5a2127c886902a558dd465658afba6e1d6575053ae8f56196bd2f",
-  "groups": 533,
-  "obligations": 731,
+  "source_sha256": "06cff59c7bdeef434dd8a4028aae578708876026ad6a0b6569f4a5e665166830",
+  "groups": 535,
+  "obligations": 733,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_advance_start_value",
+      "selector": "kernel::ranks#advance_start_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_start_item",
+      "selector": "kernel::advance_family_post#start_item",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_post_slot_grant_from_value",
       "selector": "kernel::advance_family_post#slot_grant_from_value",
