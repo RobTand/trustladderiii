@@ -777,6 +777,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "answer_owner_owner_rows_unwithheld": ("kernel::answer_owner#owner_rows_unwithheld", 1),
             "answer_owner_owner_same": ("kernel::answer_owner#owner_same", 1),
             "answer_owner_owner_unclear": ("kernel::answer_owner#owner_unclear", 1),
             "answer_owner_owner_continue": ("kernel::answer_owner#owner_continue", 1),
@@ -785,7 +786,6 @@ def verus_proofs():
             "answer_owner_owner_stopped": ("kernel::answer_owner#owner_stopped", 1),
             "answer_owner_owner_cleanup": ("kernel::answer_owner#owner_cleanup", 1),
             "answer_owner_awaiting_owner": ("kernel::answer_owner#awaiting_owner", 1),
-            "answer_owner_owner_rows_withheld": ("kernel::answer_owner#owner_rows_withheld", 1),
             "answer_owner_n4c_after_last_cmd": ("kernel::answer_owner#n4c_after_last_cmd", 1),
             "stop_frames_stop_owner_waiting_frame": ("kernel::stop_frames#stop_owner_waiting_frame", 1),
             "stop_frames_pause_endpoint_frame": ("kernel::stop_frames#pause_endpoint_frame", 1),
