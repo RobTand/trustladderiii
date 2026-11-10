@@ -321,14 +321,38 @@ pub(super) fn run_failed_node(n: Node, i: usize, report: &mut Report) -> (result
         !(result is Ask),
         !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(0, result)),
 
-] proof [reveal(retirement::stopped); reveal(retirement::incident); reveal(retries_facts::failed_run); reveal(retries_facts::abandoned);] {
+] {
     kernel_snapshot! { before_report = report.entries@ }
+    report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
+    kernel_proof! {
+        report::lemmas::read_failed_round(before_report@, report.entries@,
+            NodeId(i as u64), FailedRoundCause::RunFailed);
+    }
+    run_failed_value(n)
+}
+}
+
+kernel_fn! {
+/// Node-only work after the failed-round report entry.
+pub(super) fn run_failed_value(n: Node) -> (result: ReplyChange) [
+    requires n.generation as int + 2 <= u64::MAX as int, n.run_failures <= 1, n.run_incidents <= 2,
+    ensures
+        reply_family_values::finish(0, result) == retries_facts::failed_run(n),
+        reply_family_values::callable(result),
+        reply_family_values::frames(n, reply_family_values::finish(0, result)),
+        reply_family_values::finish(0, result).footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(reply_family_values::finish(0, result))),
+        reply_family_values::finish(0, result).generation as int <= n.generation as int + 2,
+        reply_family_values::finish(0, result).credit == n.credit,
+        reply_family_values::finish(0, result).question == n.question,
+        reply_family_values::finish(0, result).run_failures <= 1,
+        reply_family_values::finish(0, result).run_incidents <= 2,
+        !(result is Ask),
+        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(0, result)),
+
+] proof [reveal(retirement::stopped); reveal(retirement::incident); reveal(retries_facts::failed_run); reveal(retries_facts::abandoned);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
-
-    kernel_proof! { report::lemmas::read_failed_round(before_report@, report.entries@,
-        NodeId(i as u64), FailedRoundCause::RunFailed); }
     let m = &mut node;
     abandon_operation(m);
     m.pos = operation_start(m.phase);

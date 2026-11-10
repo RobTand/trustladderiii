@@ -1,10 +1,15 @@
 {
-  "source_head": "e8b995781ce44b17fa8687fe8f1bcc3037b62e18",
+  "source_head": "68941427996661bcc1b08867440a2e06a2f971d6",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "826b13c270d5b05008b69e1715333bd39e126c86fede3f2931608489862af038",
-  "groups": 528,
-  "obligations": 726,
+  "source_sha256": "3251835c3c0e89df6de18e2c1b756afdcfdec192b6afc68eb58ef7feb37a9fb0",
+  "groups": 529,
+  "obligations": 727,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_run_failed_value",
+      "selector": "kernel::retries#run_failed_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_reply_end_node",
       "selector": "kernel::reply_admission#reply_end_node",
