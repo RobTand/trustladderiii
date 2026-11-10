@@ -211,7 +211,7 @@ pub(super) proof fn rebase_value_posts(n: Node, c: ReplyCtx)
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::rebase(n, c.reply)),
         reply_family_safety::rows(n, c, reply_family_values::rebase(n, c.reply)),
         (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::rebase(n, c.reply))) < distance(n)),
-        reply_family_values::finish(c.next_question, reply_family_values::rebase(n, c.reply)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::rebase(n, c.reply)).footprint != n.footprint,
 {
     reply_family_posts::rebase_value_posts(n, c.next_question, c.reply);
     rebase_rows(n, c);
