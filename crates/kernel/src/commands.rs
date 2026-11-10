@@ -371,7 +371,7 @@ fn answer_command(w: &mut World, i: usize, id: u64, question: u64, answer: Answe
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int],
-            id > old(w).nodes@[i as int].last_cmd, question, answer, final(w).dependencies@,
+            false, question, answer, final(w).dependencies@,
             NodeId(i as u64)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (match (Command::Answer { question, answer }) {
