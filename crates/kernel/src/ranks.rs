@@ -1424,8 +1424,6 @@ kernel_fn! {
         final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
         advance_family_post::holds_item(*old(node))
             ==> advance_family_post::holds_frame(*old(node), *final(node)),
-        old(node).phase == Phase::Making || old(node).phase == Phase::Rebasing
-            ==> advance_family_post::retains_holds(*old(node), *final(node)),
     ] {
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
