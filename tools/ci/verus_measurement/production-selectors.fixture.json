@@ -1,10 +1,35 @@
 {
-  "source_head": "b898c15bfea04439564972f09d57cb2e5e73e6ba",
+  "source_head": "6ff3563a84ff7b437de87cd580ff3acbd6f66f9b",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "c539791ead6d5f2835175fde687dd1155c8c4c1df5fff4003630d48fdc3ce73f",
-  "groups": 502,
-  "obligations": 700,
+  "source_sha256": "f880390959d8b95299481368b56a5d7897efafc32f826ef86f661a7212502f5d",
+  "groups": 507,
+  "obligations": 705,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
+      "selector": "kernel::footprint#disjoint_under_table_growth",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_node_rules_grow",
+      "selector": "kernel::footprint#node_rules_grow",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_append_preserves",
+      "selector": "kernel::dependencies#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_preserves",
+      "selector": "kernel::dependencies::preservation#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_cover",
+      "selector": "kernel::dependencies::preservation#append_cover",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_events_apply_new_request",
       "selector": "kernel::events#apply_new_request",
