@@ -289,7 +289,8 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
         pass: probes,
         evidence: vec![artifact],
     });
-    let prepared: Value = serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
+    let prepared: Value =
+        serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
     let rootless: api::BlobRef = serde_json::from_value(prepared["rootless"].clone())?;
     let rootless_raw = durable::checked_blob(&rootless, &inputs.out.join("prepared"))?;
     let rootless_pass = std::str::from_utf8(&rootless_raw)?.trim() == "true";
@@ -347,7 +348,12 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
                 && facts["ReadonlyRootfs"] == true
                 && facts["Privileged"] == false
                 && facts["CapAdd"].as_array().is_none_or(Vec::is_empty)
-                && facts["CapDrop"].as_array().is_some_and(|caps| caps.iter().any(|cap| cap.as_str().is_some_and(|cap| cap.eq_ignore_ascii_case("all"))))
+                && facts["CapDrop"].as_array().is_some_and(|caps| {
+                    caps.iter().any(|cap| {
+                        cap.as_str()
+                            .is_some_and(|cap| cap.eq_ignore_ascii_case("all"))
+                    })
+                })
                 && facts["SecurityOpt"].as_array().is_some_and(|v| {
                     v.iter().any(|v| {
                         v.as_str()

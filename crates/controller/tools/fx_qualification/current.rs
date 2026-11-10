@@ -2,13 +2,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tl3_contracts::run_binding::Ending;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::PermissionsExt,
     path::Path,
 };
+use tl3_contracts::run_binding::Ending;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -176,7 +176,8 @@ pub fn generate(path: &Path) -> Result<Vec<u8>, String> {
             || acceptance["source"] != index.source
             || acceptance["kind"] != run.kind
             || acceptance["status"] != "PASS"
-            || serde_json::from_value::<Ending>(acceptance["ending"].clone()).ok() != Some(expected_ending)
+            || serde_json::from_value::<Ending>(acceptance["ending"].clone()).ok()
+                != Some(expected_ending)
             || acceptance["cleanup_verified"] != true
             || acceptance["allocation_verified"] != true
             || acceptance["job_id"].as_str().is_none_or(str::is_empty)
@@ -372,6 +373,24 @@ mod tests {
             generate(&path).unwrap_err(),
             "qualification.accepted_provenance"
         );
+    }
+
+    #[test]
+    fn ending_must_be_the_producers_typed_canonical_value() {
+        for ending in [json!(Ending::Passed), json!("infra_lost"), Value::Null, json!("unknown")] {
+            let (directory, mut index) = fixture();
+            let path = directory.path().join("current.json");
+            let name = "launch_failure-acceptance.json";
+            let file = directory.path().join("fx-current").join(name);
+            let mut acceptance: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+            acceptance["ending"] = ending;
+            let raw = serde_json::to_vec(&acceptance).unwrap();
+            fs::write(&file, &raw).unwrap();
+            index.inputs.get_mut(name).unwrap().sha256 = sha256(&raw);
+            index.inputs.get_mut(name).unwrap().bytes = raw.len() as u64;
+            fs::write(&path, serde_json::to_vec(&index).unwrap()).unwrap();
+            assert_eq!(generate(&path).unwrap_err(), "qualification.accepted_provenance");
+        }
     }
 
     #[test]

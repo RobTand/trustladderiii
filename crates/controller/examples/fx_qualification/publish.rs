@@ -229,16 +229,27 @@ pub fn publish(
     )
 }
 
-
 fn fixtures_passed(log: &str) -> bool {
-    let summaries: Vec<_> = log.lines().filter(|line| line.starts_with("test result:")).collect();
-    !summaries.is_empty() && summaries.iter().all(|line| {
-        let Some(counts) = line.strip_prefix("test result: ok. ") else { return false; };
-        let mut counts = counts.split(';').map(str::trim);
-        let passed = counts.next().and_then(|s| s.strip_suffix(" passed")).and_then(|n| n.parse::<u64>().ok());
-        let failed = counts.next().and_then(|s| s.strip_suffix(" failed")).and_then(|n| n.parse::<u64>().ok());
-        passed.is_some_and(|n| n > 0) && failed == Some(0)
-    })
+    let summaries: Vec<_> = log
+        .lines()
+        .filter(|line| line.starts_with("test result:"))
+        .collect();
+    !summaries.is_empty()
+        && summaries.iter().all(|line| {
+            let Some(counts) = line.strip_prefix("test result: ok. ") else {
+                return false;
+            };
+            let mut counts = counts.split(';').map(str::trim);
+            let passed = counts
+                .next()
+                .and_then(|s| s.strip_suffix(" passed"))
+                .and_then(|n| n.parse::<u64>().ok());
+            let failed = counts
+                .next()
+                .and_then(|s| s.strip_suffix(" failed"))
+                .and_then(|n| n.parse::<u64>().ok());
+            passed.is_some_and(|n| n > 0) && failed == Some(0)
+        })
 }
 
 #[cfg(test)]
@@ -247,9 +258,17 @@ mod tests {
     #[test]
     fn fixture_counts_require_tests_and_zero_failures() {
         for passed in [1, 10, 17, 20, 100] {
-            assert!(fixtures_passed(&format!("test result: ok. {passed} passed; 0 failed; 0 ignored;")));
+            assert!(fixtures_passed(&format!(
+                "test result: ok. {passed} passed; 0 failed; 0 ignored;"
+            )));
         }
-        for log in ["", "test result: ok. 0 passed; 0 failed;", "test result: FAILED. 10 passed; 1 failed;", "test result: ok. 10 passed; 1 failed;", "test result: ok. nope passed; 0 failed;"] {
+        for log in [
+            "",
+            "test result: ok. 0 passed; 0 failed;",
+            "test result: FAILED. 10 passed; 1 failed;",
+            "test result: ok. 10 passed; 1 failed;",
+            "test result: ok. nope passed; 0 failed;",
+        ] {
             assert!(!fixtures_passed(log));
         }
     }

@@ -304,15 +304,29 @@ fn collect_inner(
         })
         .cloned()
         .collect();
-    let scratch_status: Vec<_> = scratch.iter().filter(|r| r.path.to_string_lossy().ends_with(".status.json")).collect();
+    let scratch_status: Vec<_> = scratch
+        .iter()
+        .filter(|r| r.path.to_string_lossy().ends_with(".status.json"))
+        .collect();
     let mut scratch_pass = !scratch_status.is_empty();
     for status in scratch_status {
-        let exit: Value = serde_json::from_slice(&durable::checked_blob(status, &intent.output_dir)?)?;
-        scratch_pass &= exit == 0;
-        let stdout = status.path.with_file_name(status.path.file_name().ok_or("scratch status name")?.to_string_lossy().replace(".status.json", ".stdout"));
-        let observed = scratch.iter().find(|r| r.path == stdout).ok_or("scratch observation missing")?;
-        let observed: Value = serde_json::from_slice(&durable::checked_blob(observed, &intent.output_dir)?)?;
-        scratch_pass &= observed["schema"] == "tl3.scratch_cleanup.v1" && observed["observation"] == json!({"kind":"absent","errno":2});
+        let exit: Value =
+            serde_json::from_slice(&durable::checked_blob(status, &intent.output_dir)?)?;
+        let stdout = status.path.with_file_name(
+            status
+                .path
+                .file_name()
+                .ok_or("scratch status name")?
+                .to_string_lossy()
+                .replace(".status.json", ".stdout"),
+        );
+        let observed = scratch
+            .iter()
+            .find(|r| r.path == stdout)
+            .ok_or("scratch observation missing")?;
+        let observed: Value =
+            serde_json::from_slice(&durable::checked_blob(observed, &intent.output_dir)?)?;
+        scratch_pass &= scratch_observed(&exit, &observed);
     }
     add("scratch_absence", scratch_pass, scratch);
     let grant = record
@@ -351,11 +365,15 @@ fn collect_inner(
             &intent.output_dir,
         )?)?;
         let mut cause = report.outcome == api::ReportOutcome::PostBeginLaunchFailure
-            && report.worker_payload.is_none() && report.payload.is_none()
+            && report.worker_payload.is_none()
+            && report.payload.is_none()
             && !report.launch_failures.is_empty();
         let mut proofs = vec![];
         for failure in &report.launch_failures {
-            let events = flushed_events(&durable::checked_blob(&failure.process_record, &intent.output_dir)?)?;
+            let events = flushed_events(&durable::checked_blob(
+                &failure.process_record,
+                &intent.output_dir,
+            )?)?;
             cause &= absent_interpreter_failure(&events);
             proofs.push(failure.process_record.clone());
         }
@@ -368,7 +386,12 @@ fn collect_inner(
         add(
             "real_pytest_base_red_head_green",
             success_results(results, record.container_launches.len())
-                && record.container_launches.keys().all(|execution| intent.output_dir.join(format!("{execution}.runtime.jsonl")).is_file()),
+                && record.container_launches.keys().all(|execution| {
+                    intent
+                        .output_dir
+                        .join(format!("{execution}.runtime.jsonl"))
+                        .is_file()
+                }),
             vec![],
         );
     }
@@ -407,22 +430,45 @@ fn collect_inner(
 
 fn absent_interpreter_failure(events: &[Value]) -> bool {
     !events.iter().any(|e| e["event"] == "payload_released")
-        && events.iter().filter(|e| e["event"] == "launcher_exit").count() == 1
-        && events.iter().any(|e| e["event"] == "launcher_exit"
-            && e["exit_code"].as_i64().is_some_and(|code| code != 0)
-            && e["stderr_tail"].as_str().is_some_and(|cause| {
-                cause.contains("/opt/tl3/bin/python-canary2-absent")
-                    && ["no such file", "not found"].iter().any(|text| cause.to_ascii_lowercase().contains(text))
-            }))
+        && events
+            .iter()
+            .filter(|e| e["event"] == "launcher_exit")
+            .count()
+            == 1
+        && events.iter().any(|e| {
+            e["event"] == "launcher_exit"
+                && e["exit_code"].as_i64().is_some_and(|code| code != 0)
+                && e["stderr_tail"].as_str().is_some_and(|cause| {
+                    cause.contains("/opt/tl3/bin/python-canary2-absent")
+                        && ["no such file", "not found"]
+                            .iter()
+                            .any(|text| cause.to_ascii_lowercase().contains(text))
+                })
+        })
+}
+
+fn scratch_observed(status: &Value, observed: &Value) -> bool {
+    status["code"] == 0 && status.get("signal") == Some(&Value::Null)
+        && observed["schema"] == "tl3.scratch_cleanup.v1"
+        && observed["observation"] == json!({"kind":"absent","errno":2})
 }
 
 fn success_results(results: &[Value], executions: usize) -> bool {
-    executions == 2 && !results.is_empty() && results.iter().all(|r| {
-        r["verdict"] == "pass" && r["tests"].as_array().is_some_and(|tests| {
-            !tests.is_empty() && tests.iter().all(|t| t["base"] == "assertion" && t["head"] == "passed"
-                && t["message"].as_str().is_some_and(|m| m.contains("sandbox value must be 2")))
+    executions == 2
+        && !results.is_empty()
+        && results.iter().all(|r| {
+            r["verdict"] == "pass"
+                && r["proof"]["declaration"]["red_message"] == "sandbox value must be 2"
+                && r["tests"].as_array().is_some_and(|tests| {
+                    !tests.is_empty()
+                        && tests.iter().all(|t| {
+                            t["base"] == "assertion" && t["head"] == "passed" && t["passed"] == true
+                                && t["test"].as_str().is_some_and(|test| {
+                                    matches!(r["proof"]["red_message_matches"][test].as_str(), Some("message" | "source-assertion"))
+                                })
+                        })
+                })
         })
-    })
 }
 
 pub fn job_absence(
@@ -435,7 +481,8 @@ pub fn job_absence(
         return Err("invalid owned job id".into());
     }
     let uid = unsafe { libc::geteuid() };
-    let control = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/flux.slice");
+    let control =
+        format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/flux.slice");
     let path = format!("{control}/flux-jobs.slice/shell-{id}:sys.service");
     let (exit, _) = admission::capture(
         options,
@@ -487,21 +534,42 @@ mod tests {
     }
     #[test]
     fn lifecycle_predicates_require_the_specific_causes_and_both_executions() {
-        let row = json!({"verdict":"pass","tests":[{"base":"assertion","head":"passed","message":"AssertionError: sandbox value must be 2"}]});
+        let row = json!({"verdict":"pass","proof":{"declaration":{"red_message":"sandbox value must be 2"},"red_message_matches":{"test_value.py::test_value":"message"}},"tests":[{"test":"test_value.py::test_value","base":"assertion","head":"passed","passed":true,"message":""}]});
         assert!(success_results(std::slice::from_ref(&row), 2));
         assert!(!success_results(std::slice::from_ref(&row), 1));
-        let mut wrong = row.clone(); wrong["tests"][0]["message"] = "unrelated assertion".into();
+        let mut wrong = row.clone();
+        wrong["proof"]["declaration"]["red_message"] = "unrelated assertion".into();
         assert!(!success_results(&[wrong], 2));
-        let mut wrong = row; wrong["tests"][0]["head"] = "assertion".into();
+        let mut wrong = row.clone();
+        wrong["proof"]["red_message_matches"]["test_value.py::test_value"] = "mismatch".into();
+        assert!(!success_results(&[wrong], 2));
+        let mut wrong = row;
+        wrong["tests"][0]["head"] = "assertion".into();
         assert!(!success_results(&[wrong], 2));
         let exit = json!({"event":"launcher_exit","exit_code":127,"stderr_tail":"crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"});
         assert!(absent_interpreter_failure(std::slice::from_ref(&exit)));
-        assert!(!absent_interpreter_failure(&[exit.clone(), json!({"event":"payload_released"})]));
-        let mut wrong = exit.clone(); wrong["stderr_tail"] = "image unavailable".into();
+        assert!(!absent_interpreter_failure(&[
+            exit.clone(),
+            json!({"event":"payload_released"})
+        ]));
+        let mut wrong = exit.clone();
+        wrong["stderr_tail"] = "image unavailable".into();
         assert!(!absent_interpreter_failure(&[wrong]));
-        let mut wrong = exit; wrong["exit_code"] = 0.into();
+        let mut wrong = exit;
+        wrong["exit_code"] = 0.into();
         assert!(!absent_interpreter_failure(&[wrong]));
         assert!(!absent_interpreter_failure(&[]));
+    }
+
+    #[test]
+    fn scratch_absence_requires_successful_status_and_absence_contents() {
+        let status = json!({"code":0,"signal":null});
+        let observed = json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"absent","errno":2}});
+        assert!(scratch_observed(&status, &observed));
+        assert!(!scratch_observed(&json!({"code":1,"signal":null}), &observed));
+        assert!(!scratch_observed(&json!({"code":0,"signal":9}), &observed));
+        assert!(!scratch_observed(&status, &json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"present"}})));
+        assert!(!scratch_observed(&status, &json!({})));
     }
 
     #[test]

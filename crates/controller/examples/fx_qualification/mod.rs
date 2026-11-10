@@ -62,29 +62,47 @@ struct State {
     canaries: Vec<evidence::CanaryEvidence>,
 }
 
-fn lifecycle_canaries(canaries: &[evidence::CanaryEvidence]) -> Result<Vec<evidence::CanaryEvidence>> {
-    ["launch_failure", "cancel", "success"].into_iter().map(|kind| {
-        let mut matches = canaries.iter().filter(|canary| canary.kind == kind);
-        let canary = matches.next().ok_or("missing lifecycle canary kind")?;
-        if matches.next().is_some() {
-            return Err("duplicate lifecycle canary kind".into());
-        }
-        Ok(canary.clone())
-    }).collect()
+fn lifecycle_canaries(
+    canaries: &[evidence::CanaryEvidence],
+) -> Result<Vec<evidence::CanaryEvidence>> {
+    ["launch_failure", "cancel", "success"]
+        .into_iter()
+        .map(|kind| {
+            let mut matches = canaries.iter().filter(|canary| canary.kind == kind);
+            let canary = matches.next().ok_or("missing lifecycle canary kind")?;
+            if matches.next().is_some() {
+                return Err("duplicate lifecycle canary kind".into());
+            }
+            Ok(canary.clone())
+        })
+        .collect()
 }
 
 fn retain_canary(canaries: &mut Vec<evidence::CanaryEvidence>, result: evidence::CanaryEvidence) {
     canaries.retain(|canary| canary.kind != result.kind);
     canaries.push(result);
     canaries.sort_by_key(|canary| match canary.kind.as_str() {
-        "launch_failure" => 0, "cancel" => 1, "success" => 2, "generator" => 3, _ => 4,
+        "launch_failure" => 0,
+        "cancel" => 1,
+        "success" => 2,
+        "generator" => 3,
+        _ => 4,
     });
 }
 
 fn exit_code(verdict: &Value, dry: bool) -> i32 {
-    if verdict["status"] == "PASS" || dry && verdict["errors"].as_array().is_some_and(|errors| {
-        errors.len() == 1 && errors[0]["code"] == "dry_run_no_jobs_submitted"
-    }) { 0 } else if verdict["status"] == "FAIL" { 1 } else { 2 }
+    if verdict["status"] == "PASS"
+        || dry
+            && verdict["errors"].as_array().is_some_and(|errors| {
+                errors.len() == 1 && errors[0]["code"] == "dry_run_no_jobs_submitted"
+            })
+    {
+        0
+    } else if verdict["status"] == "FAIL" {
+        1
+    } else {
+        2
+    }
 }
 
 fn save(out: &Path, state: &State) -> Result<()> {
@@ -302,7 +320,9 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             canaries: vec![],
         }
     };
-    if !dry { bb::verify_client()?; }
+    if !dry {
+        bb::verify_client()?;
+    }
     save(&inputs.out, &state)?;
     let outcome = (|| -> Result<Value> {
         if inputs.out.join("verdict.json").exists() {

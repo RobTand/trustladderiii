@@ -221,10 +221,20 @@ pub fn build(
         )?;
         fs::File::create(&submitted)?.sync_all()?;
         let mut args = vec![
-            "step".into(), "--repo".into(), "https://github.com/RobTand/trustladderiii".into(),
-            "--commit".into(), inputs.head.clone(), "--branch".into(), "fx-x3-qualify".into(),
-            "--timeout".into(), "60".into(), "--max-wait".into(), "50".into(),
-            "--log-file".into(), root.join("remote.log").to_string_lossy().into_owned(), "--".into(),
+            "step".into(),
+            "--repo".into(),
+            "https://github.com/RobTand/trustladderiii".into(),
+            "--commit".into(),
+            inputs.head.clone(),
+            "--branch".into(),
+            "fx-x3-qualify".into(),
+            "--timeout".into(),
+            "60".into(),
+            "--max-wait".into(),
+            "50".into(),
+            "--log-file".into(),
+            root.join("remote.log").to_string_lossy().into_owned(),
+            "--".into(),
         ];
         args.extend(argv);
         client(&args, &submitted)?
@@ -343,13 +353,22 @@ if qualified == 'true':
 
 fn gzip(bytes: Vec<u8>, decompress: bool) -> Result<Vec<u8>> {
     let mut child = Command::new("/usr/bin/gzip")
-        .args(if decompress { &["-d", "-c"][..] } else { &["-n", "-c"][..] })
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        .args(if decompress {
+            &["-d", "-c"][..]
+        } else {
+            &["-n", "-c"][..]
+        })
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
     let mut stdin = child.stdin.take().ok_or("gzip input absent")?;
     let writer = std::thread::spawn(move || stdin.write_all(&bytes));
     let output = child.wait_with_output()?;
     writer.join().map_err(|_| "gzip writer panicked")??;
-    if !output.status.success() { return Err("overlay gzip failed".into()); }
+    if !output.status.success() {
+        return Err("overlay gzip failed".into());
+    }
     Ok(output.stdout)
 }
 
@@ -361,16 +380,27 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
         policy::publication_order(&overlay.keys().cloned().collect::<Vec<_>>())?;
         removed = obsolete(inputs, overlay)?;
         for (path, bytes) in overlay {
-            files.push(json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,
-                "data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
+            files.push(
+                json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,
+                "data":base64::engine::general_purpose::STANDARD.encode(bytes)}),
+            );
         }
     }
-    let payload = base64::engine::general_purpose::STANDARD.encode(gzip(serde_json::to_vec(&json!({"files":files,"obsolete":removed}))?, false)?);
+    let payload = base64::engine::general_purpose::STANDARD.encode(gzip(
+        serde_json::to_vec(&json!({"files":files,"obsolete":removed}))?,
+        false,
+    )?);
     // Leave room for the pinned client's secured wrappers and JSON escaping.
     if payload.len() + REMOTE_BUILD.len() > 80 * 1024 {
         return Err("compressed BuildBuddy overlay exceeds 80 KiB action budget".into());
     }
-    let mut argv = vec!["/usr/bin/python3".into(), "-c".into(), REMOTE_BUILD.into(), inputs.head.clone(), overlay.is_some().to_string()];
+    let mut argv = vec![
+        "/usr/bin/python3".into(),
+        "-c".into(),
+        REMOTE_BUILD.into(),
+        inputs.head.clone(),
+        overlay.is_some().to_string(),
+    ];
     for chunk in payload.as_bytes().chunks(16 * 1024) {
         argv.push(std::str::from_utf8(chunk)?.into());
     }
@@ -387,22 +417,50 @@ mod tests {
         let mut inputs = super::super::tests::inputs(root.path());
         inputs.head = git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap();
         let index = d8::current::Index {
-            schema: "tl3.fx_qualification_inputs.v1".into(), source: inputs.head.clone(), inputs: BTreeMap::new(), runs: vec![],
-            fixtures: BTreeMap::from([("fixtures/helper $(literal).py".into(), d8::current::Input { sha256: "a".repeat(64), bytes: 3, mode: 0o755 })]),
+            schema: "tl3.fx_qualification_inputs.v1".into(),
+            source: inputs.head.clone(),
+            inputs: BTreeMap::new(),
+            runs: vec![],
+            fixtures: BTreeMap::from([(
+                "fixtures/helper $(literal).py".into(),
+                d8::current::Input {
+                    sha256: "a".repeat(64),
+                    bytes: 3,
+                    mode: 0o755,
+                },
+            )]),
         };
         let name = format!("{}fixtures/helper $(literal).py", policy::INPUTS);
-        let overlay = BTreeMap::from([(policy::INDEX.into(), serde_json::to_vec(&index).unwrap()), (policy::PIN.into(), b"pin".to_vec()), (name.clone(), b"\0\xff'".to_vec())]);
+        let overlay = BTreeMap::from([
+            (policy::INDEX.into(), serde_json::to_vec(&index).unwrap()),
+            (policy::PIN.into(), b"pin".to_vec()),
+            (name.clone(), b"\0\xff'".to_vec()),
+        ]);
         let argv = build_argv(&inputs, Some(&overlay)).unwrap();
         assert_eq!(&argv[..2], ["/usr/bin/python3", "-c"]);
         assert_eq!(argv[3], inputs.head);
         assert_eq!(argv[4], "true");
         assert!(argv.iter().all(|arg| arg.len() < 32 * 1024));
-        let payload: Value = serde_json::from_slice(&gzip(base64::engine::general_purpose::STANDARD.decode(argv[5..].concat()).unwrap(), true).unwrap()).unwrap();
+        let payload: Value = serde_json::from_slice(
+            &gzip(
+                base64::engine::general_purpose::STANDARD
+                    .decode(argv[5..].concat())
+                    .unwrap(),
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let files = payload["files"].as_array().unwrap();
         assert_eq!(files.len(), overlay.len());
         for file in files {
             let path = file["path"].as_str().unwrap();
-            assert_eq!(base64::engine::general_purpose::STANDARD.decode(file["data"].as_str().unwrap()).unwrap(), overlay[path]);
+            assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(file["data"].as_str().unwrap())
+                    .unwrap(),
+                overlay[path]
+            );
             assert_eq!(file["mode"], if path == name { 0o755 } else { 0o644 });
         }
         assert_eq!(build_argv(&inputs, None).unwrap()[4], "false");

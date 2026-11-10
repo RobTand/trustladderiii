@@ -79,10 +79,9 @@ fn accepted(canary: &CanaryEvidence) -> bool {
         .is_some_and(|id| !id.is_empty())
         && canary.ending.as_ref() == Some(&expected)
         && canary.terminal_receipt.is_some()
-        && canary
-            .cleanup
-            .as_ref()
-            .is_some_and(|cleanup| cleanup.stopped && cleanup.pending_executions.is_empty() && !cleanup.evidence.is_empty())
+        && canary.cleanup.as_ref().is_some_and(|cleanup| {
+            cleanup.stopped && cleanup.pending_executions.is_empty() && !cleanup.evidence.is_empty()
+        })
         && canary.checks.iter().all(|check| check.pass)
         && required.iter().all(|name| {
             canary
@@ -128,15 +127,24 @@ mod tests {
         for kind in ["launch_failure", "cancel", "success", "generator"] {
             let good = super::super::tests::canary(root.path(), kind);
             assert!(accepted(&good));
-            let mut wrong = good.clone(); wrong.ending = Some(if good.ending == Some(api::Ending::Passed) { api::Ending::Cancelled } else { api::Ending::Passed });
+            let mut wrong = good.clone();
+            wrong.ending = Some(if good.ending == Some(api::Ending::Passed) {
+                api::Ending::Cancelled
+            } else {
+                api::Ending::Passed
+            });
             assert!(!accepted(&wrong));
-            let mut wrong = good.clone(); wrong.cleanup.as_mut().unwrap().stopped = false;
+            let mut wrong = good.clone();
+            wrong.cleanup.as_mut().unwrap().stopped = false;
             assert!(!accepted(&wrong));
-            let mut wrong = good.clone(); wrong.checks.push(wrong.checks[0].clone());
+            let mut wrong = good.clone();
+            wrong.checks.push(wrong.checks[0].clone());
             assert!(!accepted(&wrong));
-            let mut wrong = good.clone(); wrong.checks.pop();
+            let mut wrong = good.clone();
+            wrong.checks.pop();
             assert!(!accepted(&wrong));
-            let mut wrong = good; wrong.terminal_receipt = None;
+            let mut wrong = good;
+            wrong.terminal_receipt = None;
             assert!(!accepted(&wrong));
         }
     }
