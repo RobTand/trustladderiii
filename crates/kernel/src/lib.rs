@@ -96,6 +96,14 @@ mod answer_rules;
 mod answer_owner;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/event_frames.rs"]
+mod event_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/event_frames_reveal.rs"]
+mod event_frames_reveal;
+
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/stop_frames.rs"]
 mod stop_frames;
 

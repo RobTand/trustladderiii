@@ -127,6 +127,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        // R_T out-of-range stutter (MASTER-CURRENT item 6): ONE opaque clause; consumers use
+        // event_frames_reveal::out_of_range_stutter_rows.
+        event_frames::out_of_range_stutter(*old(w), *final(w), *old(out), *final(out), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { report_before = report.entries@ }
     kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
@@ -228,6 +231,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         if event is NewAdoption {
             events_lemmas::footprints_after(before_apply@, *w);
         }
+        event_frames::out_of_range_stutter_intro(before_apply@, *w, before_apply_out@, *out, event);
     }
 }
 }
@@ -497,6 +501,8 @@ fn apply_reply(w: &mut World, node: NodeId, generation: u64, reply: Reply,
         node.0 < old(w).nodes@.len() ==> report::forwards(old(report).entries@, final(report).entries@,
             report::event_entries((Event::Reply { node, generation, reply }), report_input(*old(w), (Event::Reply { node, generation, reply })))),
         node.0 >= old(w).nodes@.len() ==> final(report).entries@ == old(report).entries@,
+        // R_T out-of-range stutter (MASTER-CURRENT item 6): an out-of-range target changes nothing.
+        node.0 >= old(w).nodes@.len() ==> *final(w) == *old(w) && *final(out) == *old(out),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
@@ -772,6 +778,8 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
             report_input(*old(w), (Event::Fact { node, fact })).phase, report_input(*old(w), (Event::Fact { node, fact })).current,
             final(w).nodes@[node.0 as int].phase, fact),
         node.0 >= old(w).nodes@.len() ==> final(report).entries@ == old(report).entries@,
+        // R_T out-of-range stutter (MASTER-CURRENT item 6): an out-of-range target changes nothing.
+        node.0 >= old(w).nodes@.len() ==> *final(w) == *old(w) && *final(out) == *old(out),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
@@ -919,6 +927,8 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 && n.repo == b.repo && n.footprint == b.footprint
                 && final(w).nodes@ == old(w).nodes@.update(node.0 as int, n)
         }),
+        // R_T out-of-range stutter (MASTER-CURRENT item 6): an out-of-range target changes nothing.
+        node.0 >= old(w).nodes@.len() ==> *final(w) == *old(w) && *final(out) == *old(out),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
