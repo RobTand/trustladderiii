@@ -240,7 +240,7 @@ kernel_fn! {
         }
         notice(out, i, Notice::Summary(outcome));
         if outcome == Outcome::Replaced {
-            notice(out, i, Notice::FileReplacement);
+            notice(out, i, Notice::Summary(outcome));
         }
     }
 }
