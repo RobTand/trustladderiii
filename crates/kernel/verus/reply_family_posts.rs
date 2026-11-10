@@ -411,7 +411,7 @@ pub(super) proof fn rebase_value_posts(n: Node, nq: u64, reply: Reply)
     ensures reply_family_values::reply_bound(n, nq, reply_family_values::rebase(n, reply)),
         (successful_reply_input(n, reply) ==>
             distance(reply_family_values::finish(nq, reply_family_values::rebase(n, reply))) < distance(n)),
-        reply_family_values::finish(nq, reply_family_values::rebase(n, reply)).footprint == n.footprint,
+        reply_family_values::finish(nq, reply_family_values::rebase(n, reply)).footprint != n.footprint,
 {
     reveal(reply_family_values::rebase);
     reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
