@@ -111,7 +111,7 @@ pub(super) proof fn ingest_pair_completed(b: Node, z: Node, c: ReplyCtx, deliver
 }
 
 pub(super) proof fn ingest_audit_rows(b: Node, reply: Reply, delivered: bool)
-    ensures reply == Reply::AuditDisagrees ==> final_node(b, reply, delivered) == port_t860_contracts::audit_node(b),
+    ensures reply != Reply::AuditDisagrees ==> final_node(b, reply, delivered) == port_t860_contracts::audit_node(b),
         reply == Reply::AuditDisagrees && b.phase == Phase::Auditing && b.audit_rounds >= 1 ==> {
             let z = final_node(b, reply, delivered);
             z.phase == Phase::Stopping(Outcome::Stopped) && z.question.is_none()
