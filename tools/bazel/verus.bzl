@@ -920,6 +920,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "special_safety_answer_frontier": ("kernel::special_safety::answer_frontier", 1),
+            "special_safety_answer_frontier_reveal": ("kernel::special_safety::answer_frontier_reveal", 1),
+            "special_safety_answer_apply_assembly": ("kernel::special_safety::answer_apply_assembly", 1),
             "apply_command_safety_rules_after_last_cmd": ("kernel::apply_command_safety#rules_after_last_cmd", 1),
             "apply_command_safety_rules_incident": ("kernel::apply_command_safety#rules_incident", 1),
             "liveness_witness": ("kernel::liveness_witness", 4),
