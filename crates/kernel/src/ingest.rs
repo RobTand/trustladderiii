@@ -234,7 +234,7 @@ fn reply_ingest_parts(n: Node, c: ReplyCtx) -> (result: (Node, Option<Notice>)) 
     let reply = c.reply;
     match reply {
         Reply::IngestDone { size } => {
-            node = finish_ingest_v(node, size, None);
+            node = finish_ingest_v(node, size, Some(EarlyEnd::Duplicate));
             return (node, note);
         },
         Reply::IngestEarlyEnd(e) => {
