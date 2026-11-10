@@ -1,0 +1,76 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::dependency-coverage",
+ "request": {
+  "base": "75d791f4d1184173c29e34c9ee5020deaf87b76b",
+  "effect_key": "checks:dependency-coverage",
+  "head": "0d228e897e0822676dfaf76cc3a6f440f79c1873",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "value is unchanged",
+    "tests": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "coverage_note": "not covered by checks: dependency or packaging file changed: requirements.txt",
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "value is unchanged",
+   "tests": [
+    {
+     "base": "passed",
+     "head": "passed",
+     "message": "",
+     "passed": true,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      }
+     },
+     "pre_existing": false,
+     "test": "tests/test_value.py::test_value"
+    }
+   ],
+   "verdict": "pass"
+  }
+ ]
+}

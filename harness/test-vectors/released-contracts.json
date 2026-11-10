@@ -27,6 +27,13 @@
    "harness_commit": "7ee4fb38ca7c64010509768507b646c0cb2f51da",
    "harness_src_tree": "9b98d8c908326fbdb893724e009fca648b2685c3",
    "check_report_sha256": "0aa7017f76e7d7f23d7d7a7239e75c30f8459d1f539b72070ae0be63a4f442cf"
+  },
+  {
+   "set": "tl3.checks.v3-e1ac57be86",
+   "version": "tl3.checks.v3",
+   "harness_commit": "e1ac57be86da36bda189cae714042a82e2e0c6da",
+   "harness_src_tree": "dd375a7a66e19f690cc15b93d7f92d5ba635719b",
+   "check_report_sha256": "b9cc725df39888d731e30cc0d33d8c404e9db452723d29db1e44f901347dce53"
   }
  ]
 }
