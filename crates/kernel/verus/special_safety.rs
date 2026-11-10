@@ -171,7 +171,7 @@ mod resume_assembly {
                 proof {
                     checking::accepted_node(before, i as int);
                     command_projection::resume_dependencies(before, w, i as int, id);
-                    internal_safety::apply_step_preserves_accepted(before, w, i as int);
+
                 }
             },
             _ => {},
