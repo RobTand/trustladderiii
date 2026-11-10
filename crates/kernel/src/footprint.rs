@@ -4,10 +4,7 @@ use crate::{FileId, World};
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,10 +14,7 @@ enum Repr {
 }
 
 /// A world-scoped immutable file set. Create it with World::intern_footprint.
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,15 +325,6 @@ impl World {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return a & b == 0;
         }
-        #[cfg(kani)]
-        {
-            // Assert before pruning: the four-file proof fixture must stay inline.
-            assert!(
-                false,
-                "interned footprints are outside the bounded proof fixture"
-            );
-            kani::assume(false);
-        }
 
         let files = self.collect_files(a);
         let mut offset = 0usize;
@@ -393,12 +378,6 @@ impl World {
         if let (Repr::Inline(a), Repr::Inline(b)) = (a.0, b.0) {
             return Footprint::inline(a | b);
         }
-        #[cfg(kani)]
-        {
-            // Assert before pruning: the four-file proof fixture must stay inline.
-            assert!(false, "interned footprints are outside the bounded proof fixture");
-            kani::assume(false);
-        }
 
         let left = self.collect_files(a);
         let right = self.collect_files(b);
@@ -440,15 +419,6 @@ impl World {
         } }
         self.intern_sorted_files(files)
     }
-    }
-}
-
-#[cfg(kani)]
-impl kani::Arbitrary for Footprint {
-    fn any() -> Self {
-        let bits = kani::any();
-        kani::assume(bits < 16);
-        Self::inline(bits)
     }
 }
 

@@ -50,7 +50,7 @@ FALLBACK = [
 IRRELEVANT = [
     'docs/*', '*.md', 'assets/*', 'spikes/*', 'LICENSE', 'LICENSE.*', '.mergify.yml',
     '.github/*.md', '.github/ISSUE_TEMPLATE/*', '.github/CODEOWNERS',
-    # The Kani manifest writer; only PrismaBuild proof campaigns run it.
+    # Development test runner; invoked only inside an admitted action.
     'crates/kernel/run.py',
 ]
 CONFIGS = {'amd64': 'remote', 'arm64': 'remote-arm64'}

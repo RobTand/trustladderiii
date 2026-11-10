@@ -28,16 +28,6 @@ class FeatureGateTests(unittest.TestCase):
         })
         self.assertEqual(len(commands), 6)
 
-    def test_kani_only_compiles_every_kernel_feature_combination(self):
-        commands = feature_gate.commands(self.metadata(), 'kani')
-        self.assertEqual(len(commands), 2)
-        for command in commands:
-            self.assertEqual(command[:2], ['cargo', 'kani'])
-            self.assertIn('--only-codegen', command)
-            self.assertIn('--no-default-features', command)
-            self.assertEqual(command[command.index('-p') + 1], 'tl3-kernel')
-        self.assertEqual(sum('--features' in command for command in commands), 1)
-
     def test_unknown_compile_mode_fails_closed(self):
         with self.assertRaises(ValueError):
             feature_gate.commands(self.metadata(), 'unknown')

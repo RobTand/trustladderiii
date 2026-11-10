@@ -12,10 +12,7 @@ mod writes;
 #[path = "../verus/dependency_preservation.rs"]
 mod preservation;
 
-#[cfg_attr(
-    all(feature = "serde", not(kani)),
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -751,13 +748,7 @@ impl World {
                 }
             } }
         }
-        #[cfg(kani)]
-        {
-            // Proof worlds have at most three roots. Prove this before pruning
-            // the heap traversal, as for interned footprints.
-            assert!(false, "dependency proof entered the large-world traversal");
-            kani::assume(false);
-        }
+
         let mut seen = alloc::vec![false; self.nodes.len()];
         let mut pending = alloc::vec![from];
         kernel_loop! { [

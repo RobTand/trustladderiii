@@ -123,7 +123,7 @@ class ReceiptTests(unittest.TestCase):
                     helpers = (bbrun.RemoteError, bbrun.ActionTooLarge, bbrun.check_action_size,
                                bbrun.BuildBuddy, bbrun.child_env, bbrun.run_and_record,
                                bbrun.scan_artifacts, bbrun.secured_steps)
-                    renderer = root / 'kani-extracted.py'
+                    renderer = root / 'coordinator-extracted.py'
                     source = 'import base64,contextlib,inspect,json,os,shlex,sys,urllib.request,urllib.error,uuid\nfrom pathlib import Path\n'
                     source += 'SCANNER_SHA256=' + repr(hashlib.sha256(data).hexdigest()) + '\n'
                     source += '\n'.join(inspect.getsource(fn) for fn in helpers)
@@ -131,7 +131,7 @@ class ReceiptTests(unittest.TestCase):
                     renderer.write_text(source)
                     rendered = subprocess.run([sys.executable, '-I', '-S', str(renderer)],
                                               env={'PATH': os.defpath}, capture_output=True, timeout=30)
-                    self.assertEqual(rendered.returncode, 0, 'Kani extraction rendering failed')
+                    self.assertEqual(rendered.returncode, 0, 'coordinator extraction rendering failed')
                     steps = json.loads(rendered.stdout)
             # The real upload and private status have different parents. A
             # same-parent rename would hide the readonly-root permission gap.
@@ -284,7 +284,7 @@ os.link = unavailable
         self.assertEqual(receipt['scanner']['status'], 'pass')
         self.assertEqual(names, [])
 
-    def test_extracted_kani_source(self):
+    def test_extracted_coordinator_source(self):
         namespace = {}
         exec('import base64,contextlib,inspect,json,os,shlex,sys,urllib.request,urllib.error,uuid\nfrom pathlib import Path\nfrom unittest.mock import patch', namespace)
         for name in ('API', 'MAX_SERIALIZED_ACTION_BYTES', 'SCANNER_SHA256'):
@@ -292,7 +292,7 @@ os.link = unavailable
         helpers = (bbrun.RemoteError, bbrun.ActionTooLarge, bbrun.check_action_size,
                    bbrun.BuildBuddy, bbrun.child_env, bbrun.run_and_record,
                    bbrun.scan_artifacts, bbrun.secured_steps)
-        exec(compile('\n'.join(inspect.getsource(fn) for fn in helpers), '<kani-extracted>', 'exec'), namespace)
+        exec(compile('\n'.join(inspect.getsource(fn) for fn in helpers), '<coordinator-extracted>', 'exec'), namespace)
         # inspect.getsource on extracted definitions is exercised using the
         # original module functions, exactly as captain's patched import does.
         for fn in (bbrun.run_and_record, bbrun.scan_artifacts):

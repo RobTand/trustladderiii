@@ -642,7 +642,6 @@ def verus_proofs():
             "kernel::dependencies::delivery_changed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::tests::scan_budget_checks_the_actual_u32_width": "Rust unit test; absent from the Verus cfg.",
             "kernel::tests::settle_budget_reserves_all_six_internal_moves_per_open_node": "Rust unit test; absent from the Verus cfg.",
-            "kernel::footprint::Footprint::any": "Frozen Kani-only constructor; absent from the Verus cfg.",
             "kernel::queries::Node::waiting_on": "Read-only presentation API outside the scoped kernel proof.",
             "kernel::queries::Node::operation_pending": "Read-only presentation API outside the scoped kernel proof.",
             "kernel::queries::Node::effect_cancelling": "Read-only presentation API outside the scoped kernel proof.",
@@ -1305,7 +1304,7 @@ def verus_proofs():
             verus_test(
                 name = "verus_" + name,
                 src = "verus/progress.rs",
-                srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + [
+                srcs = native.glob(["src/**/*.rs"]) + [
                     "//crates/controller:src/kernel_boundary.rs",
                     "//crates/controller:src/dispatch_liveness/decision.rs",
                     "//crates/controller:src/dispatch_liveness/model.rs",
