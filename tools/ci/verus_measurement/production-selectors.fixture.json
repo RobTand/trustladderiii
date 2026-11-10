@@ -1,10 +1,35 @@
 {
-  "source_head": "b6988a0a3100d6ca0cd160b7c0cf9ba56e91c89e",
+  "source_head": "e3cd78e7b970ba746d7679699917c9388492ad9d",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "72ec9f5b185534a301505d628f51289392af79b460f0149e2ea5a5fe54b93884",
-  "groups": 536,
-  "obligations": 734,
+  "source_sha256": "8f0d4397f14794c71ab3c24368dfe2c2087b384bc3d60f3544b1eff95a443093",
+  "groups": 541,
+  "obligations": 739,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_spend_v",
+      "selector": "kernel::retries#spend_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_prefix",
+      "selector": "kernel::retries#failed_prefix",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_incident_count",
+      "selector": "kernel::retries#incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission_clone_reply_change",
+      "selector": "kernel::reply_admission#ReplyChange::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission_clone_reply_ctx",
+      "selector": "kernel::reply_admission#ReplyCtx::clone",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_stop_for_review_v",
       "selector": "kernel::retries#stop_for_review_v",
