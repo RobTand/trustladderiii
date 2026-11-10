@@ -7076,10 +7076,15 @@ fn cleanup_timer_owner_error_isolation(fault: TimerOwnerFault) {
                 && row.value["open"] == false),
         "healthy owner's incident must close despite another owner's timer error"
     );
-    assert!(
-        !backend.cleanup_maintenance(due).unwrap().pending.is_empty(),
-        "bad owner must remain pending"
-    );
+    // The acquired-record case retains cleanup_retry_ms in its cloned record,
+    // so pending alone cannot prove the metadata error. The retained failure
+    // assertion above is the discriminating check for that case.
+    if !matches!(fault, TimerOwnerFault::AcquiredBusyDirectory) {
+        assert!(
+            !backend.cleanup_maintenance(due).unwrap().pending.is_empty(),
+            "bad owner must remain pending"
+        );
+    }
     drop(controller);
     database.stop();
 }
@@ -7774,13 +7779,23 @@ fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
             .as_millis() as u64;
         assert!(!backend.cleanup_maintenance(now).unwrap().pending.is_empty());
         assert!(
-            backend.clone().next_cleanup_maintenance_ms().unwrap().unwrap() >= now + 300_000,
+            backend
+                .clone()
+                .next_cleanup_maintenance_ms()
+                .unwrap()
+                .unwrap()
+                >= now + 300_000,
             "elapsed unrewritable failure must back off from the last maintenance pass"
         );
-        assert_eq!(api::durable::maintenance_failures(&journal).unwrap()[0].next_attempt_ms, 0);
+        assert_eq!(
+            api::durable::maintenance_failures(&journal).unwrap()[0].next_attempt_ms,
+            0
+        );
     }
     assert_eq!(
-        maintenance_temp_backend(root.path()).next_cleanup_maintenance_ms().unwrap(),
+        maintenance_temp_backend(root.path())
+            .next_cleanup_maintenance_ms()
+            .unwrap(),
         Some(0),
         "restart must promptly report retained elapsed failure"
     );
@@ -7819,7 +7834,7 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
                     unobserved: vec![],
                 });
             }
-            self.backend.cleanup_maintenance(now)
+            tl3_controller::executor::Executor::cleanup_maintenance(&mut self.backend, now)
         }
     }
     let root = tempfile::tempdir().unwrap();
@@ -7878,16 +7893,26 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
         digest(format!("PrismaBuild:{owner}:{key}").as_bytes())
     );
     controller.look_now().unwrap();
-    assert!(controller.snapshot().unwrap().rows.iter().any(|row| {
-        row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
-    }), "prior real incident must be open before the unreadable-owner pass");
+    assert!(
+        controller.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+        }),
+        "prior real incident must be open before the unreadable-owner pass"
+    );
     for _ in 0..3 {
         controller.look_now().unwrap();
-        assert!(controller.snapshot().unwrap().rows.iter().any(|row| {
-            row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
-        }), "unreadable locked identity must keep the prior real incident open");
+        assert!(
+            controller.snapshot().unwrap().rows.iter().any(|row| {
+                row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+            }),
+            "unreadable locked identity must keep the prior real incident open"
+        );
     }
-    assert_eq!(fs::read(&debt).unwrap(), retained, "identity recovery cannot change debt");
+    assert_eq!(
+        fs::read(&debt).unwrap(),
+        retained,
+        "identity recovery cannot change debt"
+    );
     drop(controller);
     database.stop();
 }

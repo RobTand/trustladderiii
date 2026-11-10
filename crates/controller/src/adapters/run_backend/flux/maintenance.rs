@@ -35,7 +35,10 @@ impl Flux {
             now.saturating_add(CADENCE_MS),
         ) {
             // A broken error directory must not stop attempts for other owners.
-            let mut state = self.maintenance_state.lock().expect("maintenance state mutex");
+            let mut state = self
+                .maintenance_state
+                .lock()
+                .expect("maintenance state mutex");
             if state
                 .last_error_print_ms
                 .is_none_or(|last| now.saturating_sub(last) >= CADENCE_MS)
@@ -86,7 +89,8 @@ impl Flux {
                     let path = debt.path();
                     if path.is_symlink()
                         || !path.file_name().is_some_and(|name| {
-                            name.to_str().is_some_and(|name| name.starts_with(&format!("{key}.")))
+                            name.to_str()
+                                .is_some_and(|name| name.starts_with(&format!("{key}.")))
                         })
                     {
                         continue;
@@ -94,9 +98,9 @@ impl Flux {
                     let intent = read(&path)
                         .ok()
                         .and_then(|bytes| serde_json::from_slice::<SubmissionIntent>(&bytes).ok());
-                    if let Some(intent) = intent.filter(|intent| {
-                        intent.correlation == key && token(&intent.owner)
-                    }) {
+                    if let Some(intent) =
+                        intent.filter(|intent| intent.correlation == key && token(&intent.owner))
+                    {
                         pending.insert(
                             format!("{key}:{}", intent.owner),
                             Owner {
