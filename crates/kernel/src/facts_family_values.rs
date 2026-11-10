@@ -662,7 +662,7 @@ pub(super) fn fact_dependency_entry(w: &mut World, i: usize, fact: Fact,
             w.remove_dependency(i, kind, number);
             kernel_proof! { reveal(dependencies::dependency_frame); }
         }
-        Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
+        Fact::Dependency { target, status } => {},
         _ => {}
     }
 }
