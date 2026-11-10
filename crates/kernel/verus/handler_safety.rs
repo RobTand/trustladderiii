@@ -474,7 +474,27 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
     requires transition_safety::event_target(event) == Some(i), 0 <= i < before.nodes@.len(),
         event is Command,
         node_checked(before, before.nodes@[i]),
-        command_step(before.nodes@[i], after.nodes@[i]),
+        (match event {
+            Event::Command { id, command: Command::Answer { question, answer }, .. } => ({
+                let b = before.nodes@[i];
+                let n = after.nodes@[i];
+                command_step(b, Node {
+                    credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
+                }) && n.credit.withheld == (if id > b.last_cmd
+                    && b.phase == Phase::AwaitingRob && (match b.question {
+                        Some(q) => q.id == question && (match (q.kind, answer) {
+                            (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                                | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                            _ => false,
+                        }),
+                        None => false,
+                    }) {
+                    dependencies::withheld_after(b.credit.withheld, n.planning_started,
+                        n.phase, n.credit.ready, after.dependencies@, NodeId(i as u64))
+                } else { b.credit.withheld })
+            }),
+            _ => command_step(before.nodes@[i], after.nodes@[i]),
+        }),
         after.nodes@[i].next_seq == before.nodes@[i].next_seq,
         after.nodes@[i].credit.earned == before.nodes@[i].credit.earned,
         transition_safety::notice_only(ob, oa, NodeId(i as u64)),

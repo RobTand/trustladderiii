@@ -83,8 +83,28 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 final(w).nodes@.len() == old(w).nodes@.len() + 1
                 && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
                 && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len() ==>
+                (match command {
+                    Command::Answer { question, answer } => ({
+                        let b = old(w).nodes@[node.0 as int];
+                        let n = final(w).nodes@[node.0 as int];
+                        handler_safety::command_step(b, Node {
+                            credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
+                        }) && n.credit.withheld == (if id > b.last_cmd
+                            && b.phase == Phase::AwaitingRob && (match b.question {
+                                Some(q) => q.id == question && (match (q.kind, answer) {
+                                    (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                                        | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                                    _ => false,
+                                }),
+                                None => false,
+                            }) {
+                            dependencies::withheld_after(b.credit.withheld, n.planning_started,
+                                n.phase, n.credit.ready, final(w).dependencies@, node)
+                        } else { b.credit.withheld })
+                    }),
+                    _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+                })
                 && transition_safety::notice_only(*old(out), *final(out), node)
                 && (match command {
                     Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
@@ -841,8 +861,28 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 final(w).nodes@.len() == old(w).nodes@.len() + 1
                 && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
                 && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len() ==>
+                (match command {
+                    Command::Answer { question, answer } => ({
+                        let b = old(w).nodes@[node.0 as int];
+                        let n = final(w).nodes@[node.0 as int];
+                        handler_safety::command_step(b, Node {
+                            credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
+                        }) && n.credit.withheld == (if id > b.last_cmd
+                            && b.phase == Phase::AwaitingRob && (match b.question {
+                                Some(q) => q.id == question && (match (q.kind, answer) {
+                                    (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                                        | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                                    _ => false,
+                                }),
+                                None => false,
+                            }) {
+                            dependencies::withheld_after(b.credit.withheld, n.planning_started,
+                                n.phase, n.credit.ready, final(w).dependencies@, node)
+                        } else { b.credit.withheld })
+                    }),
+                    _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+                })
                 && transition_safety::notice_only(*old(out), *final(out), node)
                 && (match command {
                     Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])

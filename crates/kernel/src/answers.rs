@@ -94,6 +94,20 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 None => false,
             }));
     }
+    kernel_proof! {
+        // This is answer_node's branch condition at its two go_on calls.
+        assert(withhold == (if before_answer@.phase == Phase::AwaitingRob {
+            match before_answer@.question {
+                Some(q) => if q.id == id && allowed(q.kind, answer) {
+                    match answer {
+                        Answer::Continue | Answer::AddCredit(_) => true,
+                        _ => false,
+                    }
+                } else { false },
+                None => false,
+            }
+        } else { false }));
+    }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
     kernel_proof! {
         reveal(handler_safety::command_step);
@@ -198,16 +212,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             }
             match answer {
                 Answer::Continue => {
-                    kernel_proof! {
-                        assert(n.phase == Phase::AwaitingRob && match n.question {
-                            Some(q) => q.id == id && match (q.kind, answer) {
-                                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                                _ => false,
-                            },
-                            None => false,
-                        });
-                    }
                     let (m1, x) = go_on(m, q, 0);
                     m = m1;
                     note = x;
@@ -218,16 +222,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     note = x;
                 }
                 Answer::AddCredit(k) => {
-                    kernel_proof! {
-                        assert(n.phase == Phase::AwaitingRob && match n.question {
-                            Some(q) => q.id == id && match (q.kind, answer) {
-                                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                                _ => false,
-                            },
-                            None => false,
-                        });
-                    }
                     let (m1, x) = go_on(m, q, k);
                     m = m1;
                     note = x;
