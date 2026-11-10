@@ -427,7 +427,8 @@ impl Controller {
             );
             let mut commit = Commit::new("controller:init", json!({"initialize": 1}), &snapshot);
             commit.rows = snapshot::changes(&snapshot::Rows::new(), snapshot::encode(&world)?);
-            commit.rows.push(put("kernel", "world_id".into(), json!(hex::encode(clock.new_world_id()?))));
+            let world_id = clock.new_world_id()?.into_iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            commit.rows.push(put("kernel", "world_id".into(), json!(world_id)));
             for (index, repo) in bootstrap.repos.iter().enumerate() {
                 store.intern_repo(&repo.owner, &repo.name)?;
                 commit
