@@ -78,6 +78,9 @@ mod transition_safety;
 #[path = "../verus/ack_family_safety.rs"]
 mod ack_family_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/acknowledgement_resources.rs"]
+mod acknowledgement_resources;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_safety.rs"]
 mod apply_safety;
 #[cfg(verus_keep_ghost)]
