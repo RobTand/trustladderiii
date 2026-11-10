@@ -103,7 +103,7 @@ pub closed spec fn pending_rank(n: Node) -> nat {
 }
 
 pub(super) proof fn pending_rank_definition(n: Node)
-    ensures pending_rank(n) == (
+    ensures pending_rank(n) == ({ let rank: nat = {
     if n.phase is Closed { 0 }
     else if n.waiting_incident { if n.ticket.is_some() { 1 } else { 0 } }
     else if n.effect.is_some() { 0 }
@@ -116,7 +116,7 @@ pub(super) proof fn pending_rank_definition(n: Node)
         },
         _ => 0,
     } }
-),
+}; rank }),
 {
 }
 
