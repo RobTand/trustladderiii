@@ -142,7 +142,7 @@ pub fn collect(
             let terminal = record.as_ref().and_then(|r| r.terminal.clone());
             let result=evidence::CanaryEvidence {kind:kind.into(),status:"UNKNOWN".into(),
                 job:record.as_ref().and_then(|r|r.binding.as_ref()).map(|binding|json!({"id":binding.id.job,"owner":owner,"instance_receipts":record.as_ref().and_then(|r|r.instance_observation.as_ref())})),
-                ending:terminal.as_ref().map(|t|t.ending.clone()),terminal_receipt:terminal.map(|t|t.receipt),cleanup:None,
+                ending:terminal.as_ref().map(|t|t.ending),terminal_receipt:terminal.map(|t|t.receipt),cleanup:None,
                 executions:vec![],artifacts:vec![],checks:vec![evidence::Check {name:"collection_complete".into(),pass:false,evidence:vec![failure]}]};
             durable::atomic(
                 &root.join("result.json"),

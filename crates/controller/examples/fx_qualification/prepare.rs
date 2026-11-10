@@ -285,10 +285,9 @@ pub fn lifecycle_inputs(
             .strip_prefix(private.join("qualification/fx-current"))
             .ok()
             .and_then(|p| p.to_str())
+            && let Some(input) = index.fixtures.get(name)
         {
-            if let Some(input) = index.fixtures.get(name) {
-                fs::set_permissions(&path, fs::Permissions::from_mode(input.mode))?;
-            }
+            fs::set_permissions(&path, fs::Permissions::from_mode(input.mode))?;
         }
     }
     let pin = d8::current::generate(&private.join("qualification/current.json"))?;

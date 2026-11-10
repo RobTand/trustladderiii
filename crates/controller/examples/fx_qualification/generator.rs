@@ -214,6 +214,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
 }
 
 pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<()> {
+    prepare::require_admitted()?;
     use base64::Engine;
     result.job.as_ref().ok_or("generator job absent")?;
     let receipt_ref = result

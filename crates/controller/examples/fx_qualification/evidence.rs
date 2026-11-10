@@ -180,10 +180,10 @@ pub fn verify_references(value: &Value) -> Result<()> {
                 if observed["sha256"] != hash || observed["bytes"] != bytes {
                     return Err("referenced evidence hash/size changed".into());
                 }
-                if let Some(mode) = fields.get("mode") {
-                    if observed["mode"] != *mode {
-                        return Err("referenced artifact mode changed".into());
-                    }
+                if let Some(mode) = fields.get("mode")
+                    && observed["mode"] != *mode
+                {
+                    return Err("referenced artifact mode changed".into());
                 }
             }
             for child in fields.values() {

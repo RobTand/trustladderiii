@@ -10,6 +10,29 @@ struct Publication {
 
 pub fn verify_private(inputs: &Inputs) -> Result<()> {
     prepare::require_admitted()?;
+    let mut canary: evidence::CanaryEvidence = serde_json::from_slice(&durable::read(
+        &inputs.out.join("canary-generator/result.json"),
+    )?)?;
+    evidence::verify_references(&serde_json::to_value(&canary)?)?;
+    if let Err(error) = generator::check(inputs, &mut canary) {
+        canary.status = "FAIL".into();
+        let reason = durable::blob(
+            &inputs.out.join("generator-validation-error.json"),
+            &serde_json::to_vec(&json!({"reason":error.to_string()}))?,
+        )?;
+        canary.checks.push(evidence::Check {
+            name: "admitted_generator_validation".into(),
+            pass: false,
+            evidence: vec![reason],
+        });
+    }
+    durable::atomic(
+        &inputs.out.join("generator-checked.json"),
+        &serde_json::to_vec_pretty(&canary)?,
+    )?;
+    if canary.status != "PASS" {
+        return Err("admitted generator validation failed".into());
+    }
     let private = inputs.out.join("private");
     let generated = d8::current::generate(&private.join("qualification/current.json"))?;
     if durable::digest(&generated)

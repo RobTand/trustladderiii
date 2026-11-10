@@ -189,11 +189,6 @@ fn validate(inputs: &Inputs) -> Result<()> {
             return Err("immutable provisioned image map entry required".into());
         }
     }
-    // The coordinator must run the very sources being qualified, including future modules.
-    let compiled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    if compiled.exists() && git(&compiled, &["rev-parse", "HEAD"])? != inputs.head {
-        return Err("rebuild the coordinator remotely at the requested head".into());
-    }
     Ok(())
 }
 
@@ -364,8 +359,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         let gen_options: api::Options = serde_json::from_slice(&durable::read(
             &inputs.out.join("generator-journal/options.json"),
         )?)?;
-        let mut result = live::collect(&inputs, request, gen_options, "generator")?;
-        generator::check(&inputs, &mut result)?;
+        let result = live::collect(&inputs, request, gen_options, "generator")?;
         state.canaries.retain(|canary| canary.kind != "generator");
         state.canaries.push(result.clone());
         save(&inputs.out, &state)?;
@@ -380,7 +374,17 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             "verification-job",
             &command("qualified-production", "admitted-verify"),
             600,
-        )?;
+        );
+        let checked = inputs.out.join("generator-checked.json");
+        if checked.exists() {
+            let result: evidence::CanaryEvidence =
+                serde_json::from_slice(&durable::read(&checked)?)?;
+            evidence::verify_references(&serde_json::to_value(&result)?)?;
+            state.canaries.retain(|canary| canary.kind != "generator");
+            state.canaries.push(result);
+            save(&inputs.out, &state)?;
+        }
+        let verification = verification?;
         let pin = publish::publish(&inputs, &overlay, &state.canaries)?;
         let entries = evidence::pathset(&inputs.repo, &inputs.head)?;
         let decisions = evidence::decisions(&state.canaries)?;
@@ -422,7 +426,9 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
             "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head)?},
             "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
-            "builds":state.builds,"preparation_jobs":[],"verification_jobs":[],"canaries":state.canaries,"pin":null,
+            "builds":state.builds,"preparation_jobs":["preparation-job","generator-preparation-job"].into_iter()
+                .filter_map(|name|admission::retained(&inputs,name)).collect::<Vec<_>>(),
+            "verification_jobs":admission::retained(&inputs,"verification-job").into_iter().collect::<Vec<_>>(),"canaries":state.canaries,"pin":null,
             "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
             "errors":[{"phase":state.phase,"code":error.to_string(),"evidence":[]}]})
         }

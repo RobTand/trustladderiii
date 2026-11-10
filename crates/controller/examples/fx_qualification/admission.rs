@@ -310,6 +310,7 @@ pub fn run(
         &native,
     )?;
     let status_ref = durable::blob(&root.join("status.json"), &status)?;
+    let _: Value = serde_json::from_slice(&status)?;
     let (events_exit, events) = capture(
         options,
         &[
@@ -410,4 +411,24 @@ fn original(options: &api::Options, id: &str, log: &Path) -> Result<Value> {
         return Err("original jobspec unavailable; no adoption".into());
     }
     Ok(serde_json::from_slice(&raw)?)
+}
+
+pub fn retained(inputs: &Inputs, name: &str) -> Option<Value> {
+    let root = inputs.out.join(name);
+    if !root.exists() {
+        return None;
+    }
+    if let Ok(bytes) = durable::read(&root.join("job.json"))
+        && let Ok(value) = serde_json::from_slice::<Value>(&bytes)
+    {
+        return Some(value);
+    }
+    let reference = |name| identity(&root.join(name)).ok();
+    Some(
+        json!({"id":fs::read_to_string(root.join("jobid")).ok().map(|id|id.trim().to_owned()),
+        "status":"UNKNOWN","reason":"incomplete_or_unreadable_native_collection","owner":"x3-qualification",
+        "intent":reference("intent.json"),"jobspec":reference("jobspec.json"),
+        "instance_receipts":reference("instance.json"),"events":reference("eventlog.jsonl"),
+        "allocation_R":reference("R.json"),"native_log":reference("native.log")}),
+    )
 }
