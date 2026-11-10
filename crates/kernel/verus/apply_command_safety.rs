@@ -964,10 +964,10 @@ pub(super) proof fn answer_world_f(before: World, mid: World, after: World, i: u
         (node_checked(mid, mid.nodes@[i as int])
             && after.nodes@[i as int] != mid.nodes@[i as int]
             ==> (match mid.nodes@[i as int].question {
-                Some(q) => q.question == question,
+                Some(q) => q.id == question,
                 None => false,
             }) && (match after.nodes@[i as int].question {
-                Some(q) => q.question != question,
+                Some(q) => q.id != question,
                 None => true,
             })),
 
