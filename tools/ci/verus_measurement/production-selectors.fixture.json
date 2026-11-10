@@ -1,10 +1,30 @@
 {
-  "source_head": "6fa055cd6fba7faa74284b3522a9a40207d51724",
+  "source_head": "267514d93a65562445b72cc742e2050ecee67581",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4392d4f4436ec40e04236cb3ea2b7262441c97351726aba6f47db7b172c7c11d",
-  "groups": 927,
-  "obligations": 1135,
+  "source_sha256": "f9c384c5df0cdcbbcf8b7374b4e63efa5444bd89cce1da4fb55b801e36dde1f3",
+  "groups": 931,
+  "obligations": 1139,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_fact_relation_rows_intro",
+      "selector": "kernel::fact_relation_exports#fact_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_fact_relation_rows_reveal",
+      "selector": "kernel::fact_relation_reveal#fact_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_fact_relation_priority_model",
+      "selector": "kernel::fact_relation_reveal#priority_model",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_fact_relation_priority_node",
+      "selector": "kernel::fact_relation_priority#node_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
       "selector": "kernel::event_frames#out_of_range_stutter_intro",
