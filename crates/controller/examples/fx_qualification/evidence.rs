@@ -281,7 +281,7 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<i32> {
     let mut reasons = Vec::new();
     let mut changed = Vec::new();
     let result = (|| -> Result<()> {
-        let verdict: Value = serde_json::from_slice(&durable::read(path)?)?;
+        let verdict: Value = read_json(path)?;
         if verdict["schema"] != "tl3.fx_executor_qualification.v1"
             || verdict["status"] != "PASS"
             || verdict["complete"] != true
@@ -339,7 +339,7 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<i32> {
             })
             .collect::<std::result::Result<_, _>>()?;
         let index: d8::current::Index =
-            serde_json::from_slice(&durable::read(&repo.join(policy::INDEX))?)?;
+            read_json(&repo.join(policy::INDEX))?;
         let mut observed: std::collections::BTreeSet<String> = index
             .inputs
             .keys()

@@ -27,8 +27,12 @@ mod d8;
 
 pub use bb::inventory_build;
 
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    Ok(serde_json::from_slice(&durable::read(path)?)?)
+}
+
 pub fn admitted_command(kind: &str, path: &Path) -> Result<()> {
-    let inputs: Inputs = serde_json::from_slice(&durable::read(path)?)?;
+    let inputs: Inputs = read_json(path)?;
     match kind {
         "admitted-prepare" => prepare::admitted(&inputs),
         "admitted-generator-prepare" => generator::admitted(&inputs),
@@ -194,7 +198,7 @@ fn validate(inputs: &Inputs) -> Result<()> {
     let head = git(&inputs.repo, &["rev-parse", "HEAD"])?;
     if head != inputs.head {
         let staged: bb::OverlayCommit =
-            serde_json::from_slice(&durable::read(&inputs.out.join("publication.json"))?)?;
+            read_json(&inputs.out.join("publication.json"))?;
         if head != staged.commit
             || staged.base_head != inputs.head
             || git(&inputs.repo, &["rev-list", "--parents", "-n1", &head])?
@@ -218,7 +222,7 @@ fn validate(inputs: &Inputs) -> Result<()> {
     if identity(&inputs.image_map)?["sha256"] != inputs.image_map_sha256 {
         return Err("image map digest mismatch".into());
     }
-    let map: Value = serde_json::from_slice(&durable::read(&inputs.image_map)?)?;
+    let map: Value = read_json(&inputs.image_map)?;
     for (profile, image) in [
         ("sandbox", &inputs.test_image),
         ("prismaquant", &inputs.generator_image),
@@ -310,7 +314,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     }
     let state_path = inputs.out.join("state.json");
     let mut state: State = if state_path.exists() {
-        let state: State = serde_json::from_slice(&durable::read(&state_path)?)?;
+        let state: State = read_json(&state_path)?;
         if state.schema != "tl3.fx_qualification_state.v1" || state.inputs != inputs {
             return Err("retained qualification inputs changed; use a new output directory".into());
         }
@@ -332,7 +336,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     let outcome = (|| -> Result<Value> {
         if inputs.out.join("verdict.json").exists() {
             let retained: Value =
-                serde_json::from_slice(&durable::read(&inputs.out.join("verdict.json"))?)?;
+                read_json(&inputs.out.join("verdict.json"))?;
             if retained["complete"] == true || retained["status"] == "FAIL" {
                 evidence::verify_references(&retained)?;
                 return Ok(retained);
@@ -403,9 +407,9 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         for kind in ["launch_failure", "cancel", "success"] {
             let packet = inputs.out.join(format!("packet-{kind}"));
             let request: api::Request =
-                serde_json::from_slice(&durable::read(&packet.join("request.json"))?)?;
+                read_json(&packet.join("request.json"))?;
             let options: api::Options =
-                serde_json::from_slice(&durable::read(&packet.join("held-options.json"))?)?;
+                read_json(&packet.join("held-options.json"))?;
             let result = live::collect(&inputs, request, options, kind)?;
             retain_canary(&mut state.canaries, result.clone());
             save(&inputs.out, &state)?;
@@ -431,12 +435,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             &command("qualified-production", "admitted-generator-prepare"),
             300,
         )?;
-        let request: api::Request = serde_json::from_slice(&durable::read(
-            &inputs.out.join("generator-prepared/request.json"),
-        )?)?;
-        let gen_options: api::Options = serde_json::from_slice(&durable::read(
-            &inputs.out.join("generator-journal/options.json"),
-        )?)?;
+        let request: api::Request = read_json(&inputs.out.join("generator-prepared/request.json"))?;
+        let gen_options: api::Options = read_json(&inputs.out.join("generator-journal/options.json"))?;
         let result = live::collect(&inputs, request, gen_options, "generator")?;
         retain_canary(&mut state.canaries, result.clone());
         save(&inputs.out, &state)?;
@@ -455,7 +455,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         let checked = inputs.out.join("generator-checked.json");
         if checked.exists() {
             let result: evidence::CanaryEvidence =
-                serde_json::from_slice(&durable::read(&checked)?)?;
+                read_json(&checked)?;
             evidence::verify_references(&serde_json::to_value(&result)?)?;
             retain_canary(&mut state.canaries, result);
             save(&inputs.out, &state)?;

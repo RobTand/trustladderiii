@@ -171,7 +171,7 @@ fn collect_inner(
     }
     let retained = root.join("result.json");
     if retained.exists() {
-        let result: evidence::CanaryEvidence = serde_json::from_slice(&durable::read(&retained)?)?;
+        let result: evidence::CanaryEvidence = read_json(&retained)?;
         evidence::verify_references(&serde_json::to_value(&result)?)?;
         if result.status != "UNKNOWN" {
             return Ok(result);
@@ -197,7 +197,7 @@ fn collect_inner(
         }
         let prepared_root = inputs.out.join("prepared");
         let prepared: Value =
-            serde_json::from_slice(&durable::read(&prepared_root.join("result.json"))?)?;
+            read_json(&prepared_root.join("result.json"))?;
         let preflight = &prepared["absent_interpreter_preflight"];
         let (proof, raw) = read_identity_proof(&preflight["proof"], &prepared_root)?;
         let observed: Value = serde_json::from_slice(&raw)?;

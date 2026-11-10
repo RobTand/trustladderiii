@@ -169,7 +169,7 @@ pub fn admitted_preview(inputs: &Inputs) -> Result<Value> {
         fs::copy(&log, upload.join("preview-build.log"))?;
         return Err("admitted preview build failed; collect outer invocation".into());
     }
-    let record: Value = serde_json::from_slice(&durable::read(&root.join("runtime-build.json"))?)?;
+    let record: Value = read_json(&root.join("runtime-build.json"))?;
     if record["base_head"] != inputs.head
         || record["tree"] != git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])?
     {
@@ -209,7 +209,7 @@ pub fn build(
     let tree = expected_tree(inputs, &root, overlay)?;
     let result = root.join("build.json");
     if result.exists() {
-        let build: Build = serde_json::from_slice(&durable::read(&result)?)?;
+        let build: Build = read_json(&result)?;
         verify_build_source(&build, &inputs.head, commit, &tree)?;
         verify_client()?;
         if build.client_sha256 != CLIENT_SHA256 {
@@ -301,14 +301,14 @@ pub fn build(
         return Err("BuildBuddy terminal failure; see remote log".into());
     }
     let wrapper = fetch(&id, "bbrun-wrapper-result.v1.json", &root)?;
-    let value: Value = serde_json::from_slice(&durable::read(&wrapper.path)?)?;
+    let value: Value = read_json(&wrapper.path)?;
     for phase in ["command", "cleanup", "scanner", "artifact_handoff"] {
         if value[phase]["status"] != "pass" {
             return Err("BuildBuddy wrapper phase did not pass".into());
         }
     }
     let inventory = fetch(&id, "runtime-build.json", &root)?;
-    let record: Value = serde_json::from_slice(&durable::read(&inventory.path)?)?;
+    let record: Value = read_json(&inventory.path)?;
     if record["base_head"] != *commit {
         return Err("remote build source mismatch".into());
     }
@@ -627,7 +627,7 @@ fn expected_tree(
     if let Some(overlay) = overlay {
         let record = root.join("overlay-commit.json");
         if record.exists() {
-            let staged: OverlayCommit = serde_json::from_slice(&durable::read(&record)?)?;
+            let staged: OverlayCommit = read_json(&record)?;
             verify_overlay(inputs, root, overlay, &staged)?;
         }
     }
@@ -705,7 +705,7 @@ fn stage_overlay(
 pub fn candidate(inputs: &Inputs, overlay: &BTreeMap<String, Vec<u8>>) -> Result<OverlayCommit> {
     let root = inputs.out.join("qualified-production");
     let staged: OverlayCommit =
-        serde_json::from_slice(&durable::read(&root.join("overlay-commit.json"))?)?;
+        read_json(&root.join("overlay-commit.json"))?;
     verify_overlay(inputs, &root, overlay, &staged)?;
     Ok(staged)
 }
@@ -956,6 +956,33 @@ mod staged_transport_tests {
             &serde_json::to_vec(value).unwrap(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn build_and_overlay_artifacts_round_trip_through_real_readers() {
+        let root = tempfile::tempdir().unwrap();
+        let _client = TestClient::install(root.path());
+        let (inputs, expected) = retained_fixture(root.path());
+        retain(&inputs, &expected);
+        let observed = build(&inputs, "production", None).unwrap();
+        assert_eq!(
+            serde_json::to_value(observed).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        let overlay_root = tempfile::tempdir().unwrap();
+        let (inputs, overlay) = fixture(overlay_root.path());
+        let work = inputs.out.join("qualified-production");
+        let staged = stage_overlay(&inputs, &work, &overlay).unwrap();
+        let loaded = candidate(&inputs, &overlay).unwrap();
+        assert_eq!(
+            serde_json::to_value(&staged).unwrap(),
+            serde_json::to_value(loaded).unwrap()
+        );
+        let publication = inputs.out.join("publication.json");
+        durable::atomic(&publication, &serde_json::to_vec_pretty(&staged).unwrap()).unwrap();
+        let published: OverlayCommit = read_json(&publication).unwrap();
+        assert_eq!(published.commit, staged.commit);
+        assert_eq!(published.tree, staged.tree);
     }
 
     struct TestClient(PathBuf);

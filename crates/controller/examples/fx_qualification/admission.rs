@@ -118,7 +118,7 @@ pub fn run(
     }
     let result = root.join("job.json");
     if result.exists() {
-        let value: Value = serde_json::from_slice(&durable::read(&result)?)?;
+        let value: Value = read_json(&result)?;
         evidence::verify_references(&value)?;
         if value["exit"] != 0
             || value["allocation_verified"] != true
@@ -162,7 +162,7 @@ pub fn run(
         if serde_json::from_slice::<Value>(&durable::read(&intent_path)?)? != intent {
             return Err("native recovery inputs changed".into());
         }
-        let expected: Value = serde_json::from_slice(&durable::read(&spec_path)?)?;
+        let expected: Value = read_json(&spec_path)?;
         let (exit, raw) = capture(
             options,
             &[
@@ -274,7 +274,7 @@ pub fn run(
         durable::atomic(&job_path, id.as_bytes())?;
         id
     };
-    let expected: Value = serde_json::from_slice(&durable::read(&spec_path)?)?;
+    let expected: Value = read_json(&spec_path)?;
     if original(options, &id, &native)? != expected {
         return Err("retained job original jobspec differs; no collection or cancellation".into());
     }

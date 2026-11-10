@@ -4,7 +4,10 @@ use super::*;
 fn preparation_identity_proofs_round_trip_through_live_reader() {
     let root = tempfile::tempdir().unwrap();
     for (name, raw) in [
-        ("absent-interpreter-preflight.stdout", &b"{\"absent\":true}\n"[..]),
+        (
+            "absent-interpreter-preflight.stdout",
+            &b"{\"absent\":true}\n"[..],
+        ),
         ("rootless.stdout", &b"true\n"[..]),
     ] {
         let path = root.path().join(name);
@@ -17,6 +20,142 @@ fn preparation_identity_proofs_round_trip_through_live_reader() {
         assert_eq!(proof.sha256, durable::digest(raw));
         assert_eq!(proof.bytes, raw.len() as u64);
         assert_eq!(observed, raw);
+    }
+}
+
+#[test]
+fn preparation_identity_reader_keeps_digest_size_and_path_checks() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let path = root.path().join("proof.json");
+    durable::atomic(&path, b"{}").unwrap();
+    let produced = identity(&path).unwrap();
+    live::read_identity_proof(&produced, root.path()).unwrap();
+    for field in ["sha256", "bytes"] {
+        let mut changed = produced.clone();
+        changed[field] = if field == "sha256" {
+            "0".repeat(64).into()
+        } else {
+            3.into()
+        };
+        assert!(
+            live::read_identity_proof(&changed, root.path())
+                .unwrap_err()
+                .to_string()
+                .contains("output digest mismatch")
+        );
+    }
+    let external = outside.path().join("proof.json");
+    durable::atomic(&external, b"{}").unwrap();
+    assert!(
+        live::read_identity_proof(&identity(&external).unwrap(), root.path())
+            .unwrap_err()
+            .to_string()
+            .contains("output outside owned directory")
+    );
+    let mut changed_mode = produced.clone();
+    changed_mode["mode"] = 0.into();
+    assert_eq!(
+        evidence::verify_references(&changed_mode).unwrap_err().to_string(),
+        "referenced artifact mode changed"
+    );
+    assert!(serde_json::from_value::<api::BlobRef>(produced).is_err());
+}
+
+#[test]
+fn coordinator_inputs_and_state_use_the_production_file_codec() {
+    let root = tempfile::tempdir().unwrap();
+    let expected = inputs(root.path());
+    let input_path = root.path().join("inputs.json");
+    write(&input_path, &expected).unwrap();
+    assert_eq!(read_json::<Inputs>(&input_path).unwrap(), expected);
+    let state = State {
+        schema: "tl3.fx_qualification_state.v1".into(),
+        inputs: expected,
+        phase: "lifecycle".into(),
+        builds: vec![],
+        canaries: ["launch_failure", "cancel", "success", "generator"]
+            .into_iter()
+            .map(|kind| canary(root.path(), kind))
+            .collect(),
+    };
+    save(root.path(), &state).unwrap();
+    let resumed: State = read_json(&root.path().join("state.json")).unwrap();
+    assert_eq!(
+        serde_json::to_value(resumed).unwrap(),
+        serde_json::to_value(state).unwrap()
+    );
+}
+
+#[test]
+fn typed_driver_artifacts_round_trip_through_production_writers_and_reader() {
+    fn round_trip<T: Serialize + serde::de::DeserializeOwned>(root: &Path, name: &str, value: &T) {
+        let path = root.join(name);
+        write(&path, value).unwrap();
+        let parsed: T = read_json(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap(),
+            serde_json::to_value(value).unwrap(),
+            "artifact {name}"
+        );
+        durable::atomic(&path, &serde_json::to_vec_pretty(value).unwrap()).unwrap();
+        let parsed: T = read_json(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap(),
+            serde_json::to_value(value).unwrap(),
+            "atomic artifact {name}"
+        );
+    }
+    let root = tempfile::tempdir().unwrap();
+    let flux = tl3_config::Flux {
+        activation: None,
+        instance_file: root.path().join("INSTANCE"),
+        executable: root.path().join("flux"),
+        backend_cli: root.path().join("tl3-run-backend"),
+        environment: tl3_controller::production::flux_job_environment(),
+        container_mode: tl3_config::ContainerMode::InJob,
+        runtime_bundles: vec![],
+        staging_root: root.path().join("staging"),
+        output_root: root.path().join("output"),
+        container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
+    };
+    let options = tl3_controller::production::flux_options(&flux);
+    for name in ["context.json", "held-options.json", "generator-options.json"] {
+        round_trip(root.path(), name, &options);
+    }
+    round_trip(root.path(), "job-environment.json", &options.environment);
+    round_trip(
+        root.path(),
+        "mode-prerequisites.json",
+        &api::ModePrerequisites {
+            no_cgroups_supported: true,
+            init_available: true,
+            user_scope_supported: false,
+        },
+    );
+    let delivery = super::super::fixture(
+        &root.path().join("served"),
+        super::super::FixtureKind::Success,
+    )
+    .unwrap();
+    round_trip(root.path(), "delivery.json", &delivery);
+    let profile = tl3_controller::adapters::workers::execution::Profile {
+        pass_flux_uri: generator::PASS_FLUX_URI,
+        activation: None,
+        schema: "tl3.worker_execution.v1".into(),
+        attempt: root.path().join("attempt"),
+        checkout: root.path().join("checkout"),
+        delivery,
+        options: root.path().join("generator-options.json"),
+        job_environment: root.path().join("job-environment.json"),
+        staging_root: root.path().join("staging"),
+        runtime_bundles: vec![],
+        container_mode: tl3_config::ContainerMode::InJob,
+        waits_root: root.path().join("waits"),
+    };
+    round_trip(root.path(), "execution.json", &profile);
+    for kind in ["launch_failure", "cancel", "success", "generator"] {
+        round_trip(root.path(), &format!("{kind}-result.json"), &canary(root.path(), kind));
     }
 }
 

@@ -105,9 +105,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
             .arg("--image-map").arg(&inputs.image_map).args(["--profile",profile,"--host","dl380g10","--platform","linux/amd64"])
             .arg("--producer-commit").arg(&inputs.head).arg("--mode-prerequisites").arg(&prerequisites);
         run(&mut command, &root, &format!("prepare-{kind}"))?;
-        let value: Value = serde_json::from_slice(&durable::read(
-            &destination.join("prepare-bundle-command.json"),
-        )?)?;
+        let value: Value = read_json(&destination.join("prepare-bundle-command.json"))?;
         let input: api::PrepareBundleInput = serde_json::from_value(value["input"].clone())?;
         let bundle = api::prepared::prepare_bundle(&input)?;
         bundles.insert(kind.to_owned(), bundle);
@@ -174,7 +172,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
             fixture,
         )?;
         let path = packet.join("request.json");
-        let mut request: api::Request = serde_json::from_slice(&durable::read(&path)?)?;
+        let mut request: api::Request = read_json(&path)?;
         let seconds = if kind == "cancel" { 300 } else { 120 };
         request.runner.arguments[1] = seconds.to_string();
         request.walltime_seconds = seconds.try_into()?;
@@ -215,7 +213,7 @@ pub fn lifecycle_inputs(
         fixtures: BTreeMap::new(),
     };
     let prepared: Value =
-        serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
+        read_json(&inputs.out.join("prepared/result.json"))?;
     let mut output = BTreeMap::new();
     for canary in &canaries {
         let key = if canary.kind == "launch_failure" {

@@ -2,9 +2,7 @@ use super::*;
 
 pub fn verify_private(inputs: &Inputs) -> Result<()> {
     prepare::require_admitted()?;
-    let mut canary: evidence::CanaryEvidence = serde_json::from_slice(&durable::read(
-        &inputs.out.join("canary-generator/result.json"),
-    )?)?;
+    let mut canary: evidence::CanaryEvidence = read_json(&inputs.out.join("canary-generator/result.json"))?;
     evidence::verify_references(&serde_json::to_value(&canary)?)?;
     if let Err(error) = generator::check(inputs, &mut canary) {
         canary.status = "FAIL".into();
@@ -32,9 +30,7 @@ pub fn verify_private(inputs: &Inputs) -> Result<()> {
     {
         return Err("rebuilt production pin differs from D8 inputs".into());
     }
-    let generator: Value = serde_json::from_slice(&durable::read(
-        &inputs.out.join("generator-prepared/result.json"),
-    )?)?;
+    let generator: Value = read_json(&inputs.out.join("generator-prepared/result.json"))?;
     evidence::verify_references(&generator)?;
     // Re-run the production activation boundary with the exact prepared options,
     // bundle set and private record. No service registration or deployment.
@@ -106,9 +102,7 @@ pub fn publish(
     for canary in canaries {
         evidence::verify_references(&serde_json::to_value(canary)?)?;
     }
-    let verified: Value = serde_json::from_slice(&durable::read(
-        &inputs.out.join("private-verification.json"),
-    )?)?;
+    let verified: Value = read_json(&inputs.out.join("private-verification.json"))?;
     let pin = outputs.get(policy::PIN).ok_or("generated pin missing")?;
     if verified["status"] != "PASS" || verified["qualification_sha256"] != durable::digest(pin) {
         return Err("final admitted verification missing or changed".into());
