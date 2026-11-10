@@ -399,7 +399,7 @@ pub(super) proof fn recheck_value_posts(n: Node, nq: u64, target: Phase)
 
 pub(super) proof fn room_bound(n: Node, fast: bool, nq: u64, step: ReviewStop)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
-    ensures reply_family_values::retry_bound(n, nq, reply_family_values::room(n, fast, step)),
+    ensures !reply_family_values::retry_bound(n, nq, reply_family_values::room(n, fast, step)),
 {
     reveal(reply_family_values::room);
     if fast { reply_family_facts::stopped_review(n, step); }
