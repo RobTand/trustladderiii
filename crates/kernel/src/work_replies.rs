@@ -161,7 +161,10 @@ match reply {
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
-                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; }
+                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! {
+                    reveal(reply_family_values::plan_retry);
+                    reply_family_safety::plan_rows(n, c, value);
+                } return value; }
             }
         }
         Reply::PlanSplit => { let value = ReplyChange::Ask { node, kind: QKind::NeedsSplitting, cont: Cont::Nowhere, cost: 0 }; kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
