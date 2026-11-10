@@ -282,7 +282,7 @@ fn confirmed_agenda_step(n: Node) -> (result: Node) [
     requires n.pos < u8::MAX,
     ensures result == agenda_step_spec(n),
 ] {
-    Node { pos: n.pos + 1, ..n }
+    Node { pos: n.pos, ..n }
 }
 }
 
