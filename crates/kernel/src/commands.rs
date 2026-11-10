@@ -46,24 +46,9 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         (match command {
-            Command::Answer { question, answer } => ({
-                let b = old(w).nodes@[i as int];
-                let n = final(w).nodes@[i as int];
-                handler_safety::command_step(b, Node {
-                    credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
-                }) && n.credit.withheld == (if id > b.last_cmd
-                    && b.phase == Phase::AwaitingRob && (match b.question {
-                        Some(q) => q.id == question && (match (q.kind, answer) {
-                            (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                                | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                            _ => false,
-                        }),
-                        None => false,
-                    }) {
-                    dependencies::withheld_after(b.credit.withheld, n.planning_started,
-                        n.phase, n.credit.ready, final(w).dependencies@, NodeId(i as u64))
-                } else { b.credit.withheld })
-            }),
+            Command::Answer { question, answer } => handler_safety::answer_pair(
+                old(w).nodes@[i as int], final(w).nodes@[i as int], id > old(w).nodes@[i as int].last_cmd,
+                question, answer, final(w).dependencies@, NodeId(i as u64)),
             _ => handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
         }),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
@@ -85,6 +70,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         kernel_proof! {
             handler_safety::same_step(w.nodes@[i as int]);
             handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
+            match command {
+                Command::Answer { question, answer } => handler_safety::answer_pair_same(
+                    w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64)),
+                _ => {}
+            }
         }
         return; // a repeated command
     }
@@ -380,24 +370,9 @@ fn answer_command(w: &mut World, i: usize, id: u64, question: u64, answer: Answe
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        ({
-            let b = old(w).nodes@[i as int];
-            let n = final(w).nodes@[i as int];
-            handler_safety::command_step(b, Node {
-                credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
-            }) && n.credit.withheld == (if id > b.last_cmd
-                && b.phase == Phase::AwaitingRob && (match b.question {
-                    Some(q) => q.id == question && (match (q.kind, answer) {
-                        (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                            | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                        _ => false,
-                    }),
-                    None => false,
-                }) {
-                dependencies::withheld_after(b.credit.withheld, n.planning_started,
-                    n.phase, n.credit.ready, final(w).dependencies@, NodeId(i as u64))
-            } else { b.credit.withheld })
-        }),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            id > old(w).nodes@[i as int].last_cmd, question, answer, final(w).dependencies@,
+            NodeId(i as u64)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (match (Command::Answer { question, answer }) {
             Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
@@ -431,15 +406,8 @@ fn answer_command(w: &mut World, i: usize, id: u64, question: u64, answer: Answe
         reveal(progress_gate_apply::resume_post);
     }
     kernel_proof! {
-        let answered = Node {
-            credit: Credit {
-                withheld: before_command_node@.credit.withheld,
-                ..w.nodes@[i as int].credit
-            },
-            ..w.nodes@[i as int]
-        };
-        handler_safety::last_cmd_step(before_command_node@, after_id@, answered);
-        handler_safety::step_identity(before_command_node@, answered);
+        handler_safety::answer_pair_rebase(before_command_node@, after_id@, w.nodes@[i as int],
+            id > before_command_node@.last_cmd, question, answer, w.dependencies@, NodeId(i as u64));
     }
 }
 }

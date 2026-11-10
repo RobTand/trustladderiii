@@ -39,28 +39,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], Node {
-            credit: Credit {
-                withheld: old(w).nodes@[i as int].credit.withheld,
-                ..final(w).nodes@[i as int].credit
-            },
-            ..final(w).nodes@[i as int]
-        }),
-        final(w).nodes@[i as int].credit.withheld == (if
-            old(w).nodes@[i as int].phase == Phase::AwaitingRob
-                && (match old(w).nodes@[i as int].question {
-                    Some(q) => q.id == id && (match (q.kind, answer) {
-                        (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                            | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                        _ => false,
-                    }),
-                    None => false,
-                }) {
-            dependencies::withheld_after(old(w).nodes@[i as int].credit.withheld,
-                final(w).nodes@[i as int].planning_started,
-                final(w).nodes@[i as int].phase, final(w).nodes@[i as int].credit.ready,
-                final(w).dependencies@, NodeId(i as u64))
-        } else { old(w).nodes@[i as int].credit.withheld }),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int], true, id, answer,
+            final(w).dependencies@, NodeId(i as u64)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && final(w).nodes@[i as int] != old(w).nodes@[i as int]
@@ -84,55 +64,27 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         None => false,
     };
     kernel_proof! {
-        assert(withhold == (before_answer@.phase == Phase::AwaitingRob
-            && match before_answer@.question {
-                Some(q) => q.id == id && match (q.kind, answer) {
-                    (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                        | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                    _ => false,
-                },
-                None => false,
-            }));
-    }
-    kernel_proof! {
-        // This is answer_node's branch condition at its two go_on calls.
-        assert(withhold == (if before_answer@.phase == Phase::AwaitingRob {
-            match before_answer@.question {
-                Some(q) => if q.id == id && (match (q.kind, answer) {
-                    (QKind::CleanupFailed, Answer::Retry | Answer::MarkHandled) => true,
-                    (QKind::CleanupFailed, _) => false,
-                    (_, Answer::ChangeRequest | Answer::Stop) => true,
-                    (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue) => true,
-                    (QKind::CantMeet, Answer::TryAgain) => true,
-                    (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                    _ => false,
-                }) {
-                    match answer {
-                        Answer::Continue | Answer::AddCredit(_) => true,
-                        _ => false,
-                    }
-                } else { false },
-                None => false,
-            }
-        } else { false }));
+        assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
     }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
-    kernel_proof! {
-        reveal(handler_safety::command_step);
-        assert(n1.credit.withheld == before_answer@.credit.withheld);
-    }
+    kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
         w.withhold_dependency_credit(i);
         kernel_proof! {
-            assert(distance(w.nodes@[i as int]) == distance(continued@)) by {
-                reveal(distance);
+            let n = w.nodes@[i as int];
+            assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
+            handler_safety::distance_withheld(continued@, n.credit.withheld);
+            if continued@ == before_answer@ {
+                // An answer that left the node AwaitingRob withholds nothing.
+                handler_safety::unwithheld_same(before_answer@);
             }
         }
     }
     kernel_proof! {
-        reveal(handler_safety::command_step);
+        handler_safety::answer_pair_intro(before_answer@, n1, w.nodes@[i as int], id, answer,
+            w.dependencies@, NodeId(i as u64));
     }
     w.next_question = nq1;
     match note {

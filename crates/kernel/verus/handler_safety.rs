@@ -85,6 +85,119 @@ pub(super) proof fn last_cmd_step(b: Node, m: Node, n: Node)
     reveal(command_step);
 }
 
+/// K5-L1 (N4-W): on_answer withholds dependency credit after the answer
+/// exactly when Continue or AddCredit answers the open AwaitingRob question.
+pub(super) open spec fn answer_withholds(b: Node, question: u64, answer: Answer) -> bool {
+    b.phase == Phase::AwaitingRob && (match b.question {
+        Some(q) => q.id == question && (match (q.kind, answer) {
+            (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+            _ => false,
+        }),
+        None => false,
+    })
+}
+
+/// K5-L1: n with its dependency-credit flag set back to `withheld`.
+pub(super) open spec fn unwithheld(n: Node, withheld: bool) -> Node {
+    Node { credit: Credit { withheld, ..n.credit }, ..n }
+}
+
+/// K5-L1 (N4-W): the world-level answer rows. The node rows of command_step
+/// hold with the pre-answer flag restored, and the flag is exactly the guarded
+/// world withholding of withhold_dependency_credit.
+#[verifier::opaque]
+pub(super) open spec fn answer_pair(b: Node, n: Node, fresh: bool, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId) -> bool {
+    command_step(b, unwithheld(n, b.credit.withheld))
+        && n.credit.withheld == (if fresh && answer_withholds(b, question, answer) {
+            dependencies::withheld_after(b.credit.withheld, n.planning_started, n.phase,
+                n.credit.ready, table, node)
+        } else { b.credit.withheld })
+}
+
+/// K5-L1: a command step keeps the dependency-credit flag.
+pub(super) proof fn step_withheld(b: Node, n: Node)
+    requires command_step(b, n),
+    ensures n.credit.withheld == b.credit.withheld,
+{
+    reveal(command_step);
+}
+
+/// K5-L1: the node distance does not read the dependency-credit flag.
+pub(super) proof fn distance_withheld(n: Node, withheld: bool)
+    ensures distance(unwithheld(n, withheld)) == distance(n),
+{
+    reveal(distance);
+}
+
+/// K5-L1: restoring a node's own flag gives the node.
+pub(super) proof fn unwithheld_same(n: Node)
+    ensures unwithheld(n, n.credit.withheld) == n,
+{
+}
+
+/// K5-L1: on_answer's write-back then guarded withholding gives the pair.
+/// Only the rows command_step reads are carried from the answered node.
+pub(super) proof fn answer_pair_intro(b: Node, answered: Node, n: Node, question: u64,
+    answer: Answer, table: Seq<Dependency>, node: NodeId)
+    requires command_step(b, answered), answered.credit.withheld == b.credit.withheld,
+        n.proposed == answered.proposed, n.adopted == answered.adopted,
+        n.phase == answered.phase, n.review_stop == answered.review_stop,
+        n.attempt == answered.attempt, n.replanned == answered.replanned,
+        n.question == answered.question,
+        n.credit.merge_credited == answered.credit.merge_credited,
+        n.credit.withheld == (if answer_withholds(b, question, answer) {
+            dependencies::withheld_after(b.credit.withheld, n.planning_started, n.phase,
+                n.credit.ready, table, node)
+        } else { b.credit.withheld }),
+    ensures answer_pair(b, n, true, question, answer, table, node),
+{
+    reveal(answer_pair);
+    reveal(command_step);
+}
+
+/// K5-L1: answer_command records the command id before on_answer; the pair
+/// ignores last_cmd, and the fresh id makes the guard the same.
+pub(super) proof fn answer_pair_rebase(b: Node, m: Node, n: Node, fresh: bool, question: u64,
+    answer: Answer, table: Seq<Dependency>, node: NodeId)
+    requires m == (Node { last_cmd: m.last_cmd, ..b }), fresh,
+        answer_pair(m, n, true, question, answer, table, node),
+    ensures answer_pair(b, n, fresh, question, answer, table, node),
+        n.proposed == b.proposed, n.adopted == b.adopted,
+        b.phase is Closed ==> n.phase == b.phase,
+{
+    reveal(answer_pair);
+    reveal(command_step);
+}
+
+/// K5-L1: a repeated (stale) answer changes nothing and withholds nothing.
+pub(super) proof fn answer_pair_same(b: Node, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    ensures answer_pair(b, b, false, question, answer, table, node),
+        command_step(b, b),
+{
+    reveal(answer_pair);
+    reveal(command_step);
+}
+
+/// K5-L1: the node rows the pair gives command_node_safety.
+pub(super) proof fn answer_pair_rows(b: Node, n: Node, fresh: bool, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires answer_pair(b, n, fresh, question, answer, table, node),
+    ensures n.proposed == b.proposed && n.adopted == b.adopted
+        && (b.phase is Closed ==> n.phase == b.phase)
+        && n.review_stop == b.review_stop
+        && n.attempt <= (if b.attempt > 1 { b.attempt } else { 1u8 })
+        && (b.replanned || !n.replanned)
+        && (n.phase is Planning ==> b.phase is Planning || b.phase == Phase::AwaitingRob)
+        && !transition_safety::asks_cant_meet(b, n)
+        && n.credit.merge_credited == b.credit.merge_credited,
+{
+    reveal(answer_pair);
+    reveal(command_step);
+}
+
 
 /// Q54 rows of one retry-ladder step (fail_fast_rows (1)-(3) at the node):
 /// a step that is not a retry keeps the review stop; with the flag a retry
@@ -475,24 +588,9 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
         event is Command,
         node_checked(before, before.nodes@[i]),
         (match event {
-            Event::Command { id, command: Command::Answer { question, answer }, .. } => ({
-                let b = before.nodes@[i];
-                let n = after.nodes@[i];
-                command_step(b, Node {
-                    credit: Credit { withheld: b.credit.withheld, ..n.credit }, ..n
-                }) && n.credit.withheld == (if id > b.last_cmd
-                    && b.phase == Phase::AwaitingRob && (match b.question {
-                        Some(q) => q.id == question && (match (q.kind, answer) {
-                            (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                                | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                            _ => false,
-                        }),
-                        None => false,
-                    }) {
-                    dependencies::withheld_after(b.credit.withheld, n.planning_started,
-                        n.phase, n.credit.ready, after.dependencies@, NodeId(i as u64))
-                } else { b.credit.withheld })
-            }),
+            Event::Command { id, command: Command::Answer { question, answer }, .. } => answer_pair(
+                before.nodes@[i], after.nodes@[i], id > before.nodes@[i].last_cmd, question, answer,
+                after.dependencies@, NodeId(i as u64)),
             _ => command_step(before.nodes@[i], after.nodes@[i]),
         }),
         after.nodes@[i].next_seq == before.nodes@[i].next_seq,
@@ -521,6 +619,12 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
     reveal(command_step);
     let b = before.nodes@[i];
     let n = after.nodes@[i];
+    match event {
+        Event::Command { id, command: Command::Answer { question, answer }, .. } =>
+            answer_pair_rows(b, n, id > b.last_cmd, question, answer, after.dependencies@,
+                NodeId(i as u64)),
+        _ => {}
+    }
     assert forall|k: int| ob.len <= k < oa.len implies match #[trigger] oa.items@[k] {
         Some(Out::Effect { node, seq, kind, head }) => node.0 == i
             && transition_safety::effect_node_ok(b, n, seq, kind, head,
