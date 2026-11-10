@@ -358,7 +358,7 @@ pub(super) open spec fn held(n: Node, target: Phase) -> Node {
     if holding(target) { n } else { Node { holds: false, ..n } }
 }
 pub(super) open spec fn work_made(n: Node, head: HeadId) -> ReplyChange {
-    ReplyChange::Done { node: retirement::phased(Node { head: Some(head), checked: None, ..n }, Phase::Checking), note: None }
+    ReplyChange::Done { node: retirement::phased(Node { head: None, checked: None, ..n }, Phase::Checking), note: None }
 }
 pub(super) open spec fn work_checked(n: Node) -> ReplyChange {
     ReplyChange::Done { node: retirement::phased(Node { checked: n.head, ..n }, Phase::Reviewing), note: None }
