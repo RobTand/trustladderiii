@@ -96,8 +96,16 @@ fn invocation(raw: &str) -> Result<String> {
         .ok_or_else(|| "uncertain BuildBuddy submission; retain log and never resubmit".into())
 }
 
+fn remove_existing(path: &Path) -> Result<()> {
+    if path.try_exists()? {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 fn fetch(id: &str, name: &str, root: &Path) -> Result<api::BlobRef> {
     let target = root.join(name);
+    remove_existing(&target)?;
     let raw = client(
         &[
             "artifacts".into(),
@@ -180,7 +188,9 @@ pub fn admitted_preview(inputs: &Inputs) -> Result<Value> {
         let name = artifact["name"].as_str().ok_or("preview artifact name")?;
         let path = root.join(name);
         verify_binary(&path, name)?;
-        fs::copy(&path, upload.join(name))?;
+        let target = upload.join(name);
+        remove_existing(&target)?;
+        fs::copy(&path, &target)?;
         artifacts.push(identity(&path)?);
     }
     fs::copy(&log, upload.join("preview-build.log"))?;
@@ -773,14 +783,17 @@ pub fn inventory_build(repo: &Path, out: &Path) -> Result<()> {
             continue;
         }
         let target = out.join(name);
+        remove_existing(&target)?;
         fs::copy(source, &target)?;
         let mut value = identity(&target)?;
         value["name"] = name.into();
         artifacts.push(value);
     }
+    let inventory = out.join("runtime-build.json");
+    remove_existing(&inventory)?;
     write(
-        &out.join("runtime-build.json"),
-        &json!({"base_head":git(&repo,&["rev-parse","HEAD"])?,"tree":git(&repo,&["write-tree"])?,"artifacts":artifacts}),
+        &inventory,
+        &json!({"base_head":git(repo,&["rev-parse","HEAD"])?,"tree":git(repo,&["write-tree"])?,"artifacts":artifacts}),
     )
 }
 
