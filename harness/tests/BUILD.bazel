@@ -428,3 +428,13 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_regression_failures",
+    srcs = ["test_regression_failures.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
