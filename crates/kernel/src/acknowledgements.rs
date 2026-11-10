@@ -801,7 +801,7 @@ fn ack_stopped_value(n: Node) -> (result: Node) [
     match n.phase {
         Phase::Closed(_) | Phase::Stopping(_) => n,
         _ => ack_phase_value(Node { question: None, waiting_incident: false,
-            incident_needs_rob: false, ..n }, Phase::Stopping(Outcome::Stopped)),
+            incident_needs_rob: false, ..n }, Phase::Stopping(Outcome::Replaced)),
     }
 }
 }
