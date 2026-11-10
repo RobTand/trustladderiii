@@ -59,6 +59,9 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
+        ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+            ==> answer_owner::owner_rows(final(w).nodes@[i as int], old(w).nodes@[i as int], id, answer)),
 ] {
     kernel_snapshot! { before_answer_rules = *w }
     kernel_proof! {
@@ -86,8 +89,11 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
+        kernel_snapshot! { mid_world = *w }
         w.withhold_dependency_credit(i);
         kernel_proof! {
+            answer_owner::owner_rows_withheld(continued@, w.nodes@[i as int],
+                dependencies::prerequisites_delivered(mid_world@, NodeId(i as u64)), before_answer@, id, answer);
             let n = w.nodes@[i as int];
             assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
             handler_safety::distance_withheld(continued@, n.credit.withheld);
@@ -161,6 +167,9 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         result.0.credit.withheld == n.credit.withheld,
         nq <= result.1,
         (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+            ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let result = answer_value(n, nq, id, answer);
     kernel_proof! {
@@ -331,10 +340,14 @@ pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
         arithmetic_consistent(n),
         nq < u64::MAX,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+            ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let m = n;
     let nq = nq;
     let note: Option<Notice> = None;
+    kernel_proof! { answer_owner::owner_same(n, id, answer); }
     let Some(q) = m.question else {
         kernel_proof! { reveal(apply_answer_values::answered); }
         return (m, nq, note);
@@ -384,6 +397,9 @@ fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
     requires n.phase is Stopping,
         match n.question { Some(q) => q.id == id, None => false },
     ensures result == apply_answer_values::answered(n, nq, id, answer),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+            ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let mut m = n;
     let note: Option<Notice> = None;
@@ -396,7 +412,7 @@ fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
         }
         _ => {}
     }
-    kernel_proof! { reveal(apply_answer_values::answered); }
+    kernel_proof! { reveal(apply_answer_values::answered); answer_owner::owner_cleanup(n, id, answer); }
     (m, nq, note)
 }
 }
@@ -411,8 +427,11 @@ fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
         nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+            ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
-    kernel_proof! { apply_answer_safety::awaiting_arms_bridge(n, nq, id, answer, q); }
+    kernel_proof! { apply_answer_safety::awaiting_arms_bridge(n, nq, id, answer, q); answer_owner::awaiting_owner(n, nq, id, answer, q); }
     if answer == Answer::Unclear {
         return awaiting_unclear_v(n, nq, id, q);
     }

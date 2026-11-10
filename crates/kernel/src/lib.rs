@@ -92,6 +92,10 @@ mod apply_command_safety;
 mod answer_rules;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/answer_owner.rs"]
+mod answer_owner;
+
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/stop_frames.rs"]
 mod stop_frames;
 
