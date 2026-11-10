@@ -1060,7 +1060,7 @@ kernel_fn! {
         requires n.generation < u64::MAX,
         ensures result == advance_family_post::slot_grant_value(n, next_ticket, r),
             result.0.phase == resumed_phase(r), result.0.pos == 0,
-            result.0.paused == n.paused,
+            result.0.paused != n.paused,
             result.0.repo == n.repo, result.0.footprint == n.footprint,
     ] {
         let mut m = n;
