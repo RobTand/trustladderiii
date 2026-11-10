@@ -97,3 +97,79 @@ def test_reviewed_commit_protected_change_is_refused(repo):
                                    protected=PROTECTED)
     assert [result.verdict for result in results] == [Verdict.FAIL]
     assert 'deploy/run.sh' in results[0].tests[0].message
+
+
+@pytest.mark.parametrize('filename', ['pytest.toml', '.pytest.toml'])
+@pytest.mark.parametrize('directory', ['', 'nested/tests/'])
+@pytest.mark.parametrize('operation', ['add', 'modify', 'delete', 'rename_in', 'rename_out'])
+def test_c6_pytest_configuration_changes_are_refused(repo, filename, directory, operation):
+    repo, base, ran = repo
+    name = directory + filename
+    if operation in ('modify', 'delete', 'rename_out'):
+        write(repo, {name: '# before\n'})
+    if operation == 'rename_in':
+        write(repo, {directory + 'other.toml': ''})
+    if operation != 'add':
+        base = save(repo, 'configuration baseline')
+    if operation in ('add', 'modify'):
+        write(repo, {name: ''})
+    elif operation == 'delete':
+        (repo / name).unlink()
+    elif operation == 'rename_in':
+        (repo / (directory + 'other.toml')).rename(repo / name)
+    else:
+        (repo / name).rename(repo / (directory + 'other.toml'))
+    head = save(repo, operation)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert [r.verdict for r in results] == [Verdict.FAIL], 'pytest configuration must be refused'
+    assert name in results[0].tests[0].message
+    assert ran == []
+
+
+@pytest.mark.parametrize('name', ['PYTEST.TOML', '.Pytest.toml', 'nested/PyTest.toml'])
+def test_c6_different_case_does_not_name_a_pytest_configuration(repo, name):
+    repo, base, ran = repo
+    write(repo, {name: ''})
+    head = save(repo, 'different case')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert all(r.verdict == Verdict.PASS for r in results)
+    assert ran
+
+
+def test_c6_configuration_lists_agree_and_are_complete():
+    import ast
+    from pathlib import Path
+    import re
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS
+
+    source = (Path(__file__).resolve().parents[2] / 'crates/config/src/lib.rs').read_text()
+    declaration = re.search(r'pub const TEST_CONFIGURATION_PATHS: &\[&str\] = &(\[.*?\]);',
+                            source, re.S)
+    assert declaration, 'the Rust defaults must expose the authoritative filename constant'
+    assert tuple(ast.literal_eval(declaration[1])) == TEST_CONFIGURATION_PATHS
+    assert {'**/conftest.py', 'pytest.toml', '.pytest.toml', '**/pytest.toml',
+            '**/.pytest.toml', 'pytest.ini', '.pytest.ini', 'pyproject.toml',
+            'tox.ini', 'setup.cfg', 'noxfile.py'} <= set(TEST_CONFIGURATION_PATHS)
+
+
+def test_c6_every_configuration_pattern_is_exercised(tmp_path):
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS, changed_configuration
+    base, head = tmp_path / 'base', tmp_path / 'head'
+    base.mkdir()
+    head.mkdir()
+    for pattern in TEST_CONFIGURATION_PATHS:
+        for directory in ['', 'nested/tests/'] if pattern.startswith('**/') else ['']:
+            name = directory + pattern.removeprefix('**/')
+            write(head, {name: ''})
+            assert changed_configuration(base, head) == [name]
+            (head / name).unlink()
+
+
+@pytest.mark.parametrize('name', ['pytest.toml', '.pytest.toml',
+                                  'nested/tests/pytest.toml', 'nested/tests/.pytest.toml'])
+def test_c6_default_configuration_patterns_match_committed_paths(repo, name):
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS, changed_protected
+    repo, base, ran = repo
+    write(repo, {name: ''})
+    head = save(repo, 'pytest configuration')
+    assert changed_protected(repo, base, head, TEST_CONFIGURATION_PATHS) == [name]

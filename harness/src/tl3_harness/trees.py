@@ -120,6 +120,18 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
     return frozenset(names(head) - names(base))
 
 
+# Existing catalog exposed for the config parity test before completing it.
+TEST_CONFIGURATION_PATHS = (
+    "**/conftest.py",
+    "pytest.ini",
+    ".pytest.ini",
+    "tox.ini",
+    "noxfile.py",
+    "setup.cfg",
+    "pyproject.toml",
+)
+
+
 def changed_configuration(base: Path, head: Path) -> list[str]:
     """Protected test configuration files that differ between two trees."""
     protected = {"pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "noxfile.py"}
