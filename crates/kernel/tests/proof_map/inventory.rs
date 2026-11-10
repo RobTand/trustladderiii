@@ -1064,8 +1064,8 @@ fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
                 let mut inner = false;
                 while after < end && ts[after] == Token::Punct('#') {
                     let mut open = after + 1;
-                    if ts.get(open) == Some(&Token::Punct('!')) {
-                        inner = true;
+                    let inner_attribute = ts.get(open) == Some(&Token::Punct('!'));
+                    if inner_attribute {
                         open += 1;
                     }
                     if ts.get(open) != Some(&Token::Punct('[')) {
@@ -1073,13 +1073,15 @@ fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
                     }
                     let close = group_end(ts, open);
                     let attribute = &ts[open + 1..close];
-                    kani |= attribute
+                    let kani_attribute = attribute
                         == [
                             Token::Name("cfg".into()),
                             Token::Punct('('),
                             Token::Name("kani".into()),
                             Token::Punct(')'),
                         ];
+                    kani |= kani_attribute;
+                    inner |= inner_attribute && kani_attribute;
                     attributes.push((open + 1, close));
                     after = close + 1;
                 }
@@ -1310,6 +1312,9 @@ kani::assume(false);
     assert!(!trusted_markers("#[cfg(kani)] fn f() { admit(); } assume(false);").is_empty());
     assert!(!trusted_markers("other::kani::assume(false);").is_empty());
     assert!(!trusted_markers("mod kani {} kani::assume(false);").is_empty());
+    assert!(
+        !trusted_markers("#![allow(dead_code)] #[cfg(kani)] fn f() {} assume(false);").is_empty()
+    );
 }
 
 #[test]
