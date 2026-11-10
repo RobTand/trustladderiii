@@ -192,7 +192,7 @@ pub(super) proof fn plan_retry_posts(n: Node, fast: bool, nq: u64, cant_meet: bo
     ensures ({ let r = reply_family_values::plan_retry(n, fast, cant_meet);
         let z = reply_family_values::finish(nq, r);
         reply_family_values::retry_bound(n, nq, r)
-        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && z.repo != n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
         && reply_family_values::next_question(nq, r) as int <= nq as int + 1
         && (n.phase is Planning ==> handler_safety::ladder(fast, cant_meet, n, z, ob, oa))
         && (fast && cant_meet && n.phase is Planning ==>
