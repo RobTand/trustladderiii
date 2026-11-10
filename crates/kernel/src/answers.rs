@@ -146,15 +146,7 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             None => true,
         })),
 ] proof [reveal(distance);] {
-    kernel_snapshot! { go_on_path = n.phase == Phase::AwaitingRob
-        && match n.question {
-            Some(q) => q.id == id && match (q.kind, answer) {
-                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                _ => false,
-            },
-            None => false,
-        } }
+
     let mut m = n;
     let mut nq = nq;
     let mut note: Option<Notice> = None;
@@ -197,7 +189,15 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             }
             match answer {
                 Answer::Continue => {
-                    kernel_proof! { assert(go_on_path@); }
+                    kernel_proof! { assert(n.phase == Phase::AwaitingRob
+        && match n.question {
+            Some(q) => q.id == id && match (q.kind, answer) {
+                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                _ => false,
+            },
+            None => false,
+        }); }
                     let (m1, x) = go_on(m, q, 0);
                     m = m1;
                     note = x;
@@ -208,7 +208,15 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     note = x;
                 }
                 Answer::AddCredit(k) => {
-                    kernel_proof! { assert(go_on_path@); }
+                    kernel_proof! { assert(n.phase == Phase::AwaitingRob
+        && match n.question {
+            Some(q) => q.id == id && match (q.kind, answer) {
+                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                _ => false,
+            },
+            None => false,
+        }); }
                     let (m1, x) = go_on(m, q, k);
                     m = m1;
                     note = x;
