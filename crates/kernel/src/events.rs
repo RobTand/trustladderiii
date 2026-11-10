@@ -938,16 +938,8 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
                         fact_relation_priority::node_rows(before_apply@,
                             before_apply@.nodes@[i as int], priority, i, before_apply_out@);
                         fact_relation_reveal::priority_model(before_apply@.nodes@[i as int], priority);
-                        retirement::node_frame(before_apply@, *w, w.nodes@[i as int]);
-                        checking::accepted_parts(before_apply@);
-                        if !dependencies::prerequisites_delivered(before_apply@, node) {
-                            dependency_owner_exports::waiting_owner_ok(before_apply@, i as int);
-                        }
-                        assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
-                        internal_safety::apply_step_preserves_accepted_full(before_apply@, *w, i as int);
-                        apply_safety::apply_frame(before_apply@, *w);
-                        transition_safety::lift_apply(before_apply@, *w,
-                            Event::Fact { node, fact }, i as int, before_apply_out@, *out);
+                        fact_relation_step::priority(before_apply@, *w, i as int, priority,
+                            before_apply_out@, *out);
                     }
                 }
             }
