@@ -67,7 +67,9 @@ pub(super) fn second_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(
     let mut report = Report::new();
     let moved = scheduler::advance(w, i, &mut out, &mut report);
     proof {
-        if !before.nodes@[i as int].holds {
+        if before.nodes@[i as int].holds {
+            advance_family_rules::holds_from_frame(before.nodes@[i as int], w.nodes@[i as int]);
+        } else {
             assert(!moved);
         }
         liveness_bounds::advance_accepts(before, *w, i as int);
