@@ -145,6 +145,23 @@ fn candidates(phase: Option<Phase>, mut visit: impl FnMut(World)) {
             for early in [None, Some(EarlyEnd::Duplicate), Some(EarlyEnd::AlreadyDone), Some(EarlyEnd::NotActionable)] {
                 let mut w = base.clone(); w.nodes[0].early_end = early; visit(w);
             }
+            for stop in [None, Some(ReviewStop::ChecksFailed), Some(ReviewStop::ChangesRequested),
+                Some(ReviewStop::CiFailed), Some(ReviewStop::MakerCantMeet), Some(ReviewStop::MakerNeedsFiles),
+                Some(ReviewStop::MakerOutOfRoom), Some(ReviewStop::ReviewerOutOfRoom), Some(ReviewStop::PlanCantMeet),
+                Some(ReviewStop::PublicationBody), Some(ReviewStop::AuditDisagreement)] {
+                let mut w = base.clone(); w.nodes[0].review_stop = stop; visit(w);
+            }
+            for axis in 0..5 {
+                for head in std::iter::once(None).chain((0..8).map(|v| Some(HeadId(v)))) {
+                    let mut w = base.clone(); let n = &mut w.nodes[0];
+                    match axis { 0 => n.head = head, 1 => n.checked = head,
+                        2 => n.approved = head, 3 => n.proposed = head, _ => n.merged = head }
+                    visit(w);
+                }
+            }
+            for ticket in [None, Some(0), Some(1023)] {
+                let mut w = base.clone(); w.nodes[0].ticket = ticket; visit(w);
+            }
             for kind in effects() {
                 for cancelling in [false, true] {
                     let mut w = base.clone();
@@ -204,23 +221,25 @@ fn candidates(phase: Option<Phase>, mut visit: impl FnMut(World)) {
 
 fn event(h: usize, w: &World, payload: usize, mode: usize) -> Event {
     let n = w.nodes[0];
-    let generation = if mode == 0 { n.generation } else { n.generation + 1 };
-    let seq = n.effect.map_or(n.next_seq, |e| e.seq) + u64::from(mode != 0);
-    let id = n.last_cmd + u64::from(mode == 0);
-    let question = n.question.map_or(0, |q| q.id) + u64::from(mode != 0);
+    let wide = A_SEED ^ n.generation.rotate_left(17) ^ n.next_seq.rotate_left(31) ^ payload as u64;
+    let generation = if mode == 0 { n.generation } else if mode == 1 { n.generation + 1 } else { wide };
+    let seq = if mode == 2 { wide } else { n.effect.map_or(n.next_seq, |e| e.seq) + u64::from(mode != 0) };
+    let id = if mode == 2 { wide } else { n.last_cmd + u64::from(mode == 0) };
+    let question = if mode == 2 { wide } else { n.question.map_or(0, |q| q.id) + u64::from(mode != 0) };
+    let head = HeadId(if mode == 2 { wide } else { (payload % 8) as u64 });
     let reply = match h {
         7 => Some(Reply::IngestDone { size: payload as u8 }),
         8 => Some(Reply::IngestEarlyEnd([EarlyEnd::Duplicate, EarlyEnd::AlreadyDone, EarlyEnd::NotActionable][payload % 3])),
         9 => Some(Reply::ProtectedPaths), 10 => Some(Reply::AuditAgrees),
         11 => Some(Reply::PlanLeaf { footprint: Footprint::inline((payload % 16) as u64), fits: payload / 16 != 0 }),
         12 => Some(Reply::PlanSplit), 13 => Some(Reply::PlanCantMeet),
-        14 => Some(Reply::MakerDone { head: HeadId((payload % 8) as u64) }),
+        14 => Some(Reply::MakerDone { head }),
         15 => Some(Reply::MakerNeedsFiles { files: Footprint::inline((payload % 16) as u64), fits: payload / 16 != 0 }),
         16 => Some(Reply::MakerCantMeet), 17 => Some(Reply::MakerOutOfRoom),
         18 => Some(Reply::ChecksDone { report: payload & 1 != 0, pass: payload & 2 != 0, in_footprint: payload & 4 != 0 }),
-        19 => Some(Reply::Approved { head: HeadId((payload % 8) as u64) }),
+        19 => Some(Reply::Approved { head }),
         20 => Some(Reply::ReviewerOutOfRoom), 21 => Some(Reply::ChangesRequested),
-        22 => Some(Reply::RebaseClean { head: HeadId((payload % 8) as u64) }),
+        22 => Some(Reply::RebaseClean { head }),
         23 => Some(Reply::RebaseNeedsChanges), 24 => Some(Reply::RunFailed), _ => None,
     };
     if let Some(reply) = reply { return Event::Reply { node: NodeId(0), generation, reply }; }
@@ -230,12 +249,12 @@ fn event(h: usize, w: &World, payload: usize, mode: usize) -> Event {
     }
     match h {
         6 | 56 => {
-            let repo = RepoId([0, 1, 2, u64::MAX][payload / 5 % 4]);
+            let repo = RepoId(if mode == 2 { wide } else { [0, 1, 2, u64::MAX][payload / 5 % 4] });
             let priority = priorities()[payload % 5];
             if h == 6 { Event::NewRequest { repo, priority } }
             else { Event::NewAdoption { repo, head: HeadId(7), priority } }
         }
-        30 => Event::Fact { node: NodeId(0), fact: Fact::PushByOther { head: HeadId((payload % 8) as u64) } },
+        30 => Event::Fact { node: NodeId(0), fact: Fact::PushByOther { head } },
         31 => Event::Fact { node: NodeId(0), fact: Fact::CiFailed { infra: payload != 0 } },
         32..=35 => Event::Command { node: NodeId(0), id,
             command: [Command::Stop, Command::Pause, Command::Resume, Command::ChangeRequest][h - 32] },
@@ -252,6 +271,23 @@ fn event(h: usize, w: &World, payload: usize, mode: usize) -> Event {
 fn payload_count(h: usize) -> usize {
     match h { 6 | 56 => 20, 7 | 38 => 256, 8 => 3, 11 | 15 => 32,
         14 | 18 | 19 | 22 | 30 => 8, 31 => 2, _ => 1 }
+}
+
+/// Retain the event-wrapper assumes even though payloads are supplied directly.
+fn event_filter(stats: &mut Stats, e: Event) -> bool {
+    let (allowed, site) = match e {
+        Event::Reply { reply: Reply::MakerDone { head } | Reply::Approved { head } | Reply::RebaseClean { head }, .. } =>
+            (head.0 < 8, "proofs.rs:582 head.0 < 8"),
+        Event::Fact { fact: Fact::PushByOther { head }, .. } =>
+            (head.0 < 8, "proofs.rs:807 head.0 < 8"),
+        _ => (true, ""),
+    };
+    if !allowed {
+        stats.attempted += 1;
+        stats.skipped += 1;
+        *stats.filters.entry(site.into()).or_default() += 1;
+    }
+    allowed
 }
 
 fn body_policy_refused(before: &World, event: Event) {
@@ -279,12 +315,14 @@ pub fn run_event(h: usize, name: &str) {
     let mut index = 0;
     candidates(None, |w| {
         let payload = index % payload_count(h);
-        for mode in 0..2 {
+        for mode in 0..3 {
             let e = event(h, &w, payload, mode);
-            stats.case(index, A_SEED, Some(w.clone()), vec![], || {
-                let before = assert_apply(e);
-                if h == 29 { body_policy_refused(&before, e); }
-            });
+            if event_filter(&mut stats, e) {
+                stats.case(index, A_SEED, Some(w.clone()), vec![], || {
+                    let before = assert_apply(e);
+                    if h == 29 { body_policy_refused(&before, e); }
+                });
+            }
             index += 1;
         }
     });
@@ -304,18 +342,21 @@ pub fn run_event(h: usize, name: &str) {
             for fast in [false, true] {
                 w.fail_fast = fast;
                 for payload in 0..payload_count(h) {
-                    for mode in 0..2 {
+                    for mode in 0..3 {
                         let e = event(h, &w, payload, mode);
-                        stats.case(index, A_SEED, Some(w.clone()), vec![], || {
-                            let before = assert_apply(e);
-                            if h == 29 { body_policy_refused(&before, e); }
-                        });
+                        if event_filter(&mut stats, e) {
+                            stats.case(index, A_SEED, Some(w.clone()), vec![], || {
+                                let before = assert_apply(e);
+                                if h == 29 { body_policy_refused(&before, e); }
+                            });
+                        }
                         index += 1;
                     }
                 }
             }
         }
     }
+    assert!(stats.covers.contains("the event changes the world"), "no changing event witness: {name}");
     stats.finish(name, A_SEED, start);
 }
 
@@ -339,5 +380,6 @@ pub fn run_advance(h: usize, name: &str) {
             index += 1;
         });
     }
+    assert!(stats.covers.contains("the phase moves under settle, or waits"), "missing original advance cover: {name}");
     stats.finish(name, A_SEED, start);
 }

@@ -1,4 +1,5 @@
 //! The same assertions on enumerated and sampled inputs.
+extern crate alloc;
 #[path = "kani_scenarios/common/mod.rs"]
 mod common;
 use common::*;
