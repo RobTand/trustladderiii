@@ -246,7 +246,7 @@ pub(super) open spec fn ready_unobstructed(n: Node) -> bool {
 /// G20/G22: an unobstructed Ready waiter is granted exactly when the context offers the slot.
 #[verifier::opaque]
 pub(super) open spec fn slot_grant(n: Node, a: Node, c: AdvanceContext, changed: bool) -> bool {
-    changed == c.slot
+    changed == !c.slot
     && (c.slot ==> a.holds && a.ticket.is_none()
         && a.phase == resumed_phase(match n.phase { Phase::Ready(r) => r, _ => Resume::Making })
         && a.repo == n.repo && a.footprint == n.footprint
