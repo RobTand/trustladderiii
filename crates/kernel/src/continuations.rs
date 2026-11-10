@@ -5,6 +5,7 @@ kernel_fn! {
 /// Question continuation rows / #771: fund and pay before changing phase, then
 /// the replanned note, as a value function (K5): the continued node and the
 /// optional note are returned; on_command writes them back.
+#[allow(dead_code)] // lint (B1 S1): callers moved to the value-form helpers; kept for its verified proof group
 pub(super) fn go_on(n: Node, q: Question, deposit: u8) -> (result: (Node, Option<Notice>)) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
@@ -64,6 +65,7 @@ kernel_fn! {
 /// (K5): the node comes in by value and the continued node is returned, so no
 /// mutable reference chain enters this query. Emits nothing; the replanned
 /// note is go_on's.
+#[allow(dead_code)] // lint (B1 S1): callers moved to the value-form helpers; kept for its verified proof group
 pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
@@ -238,6 +240,7 @@ pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node
 }
 
 kernel_fn! {
+#[allow(clippy::collapsible_match, clippy::single_match)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
 pub(super) fn go_on_exact(n: Node, q: Question, deposit: u8) -> (result: (Node, Option<Notice>)) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
