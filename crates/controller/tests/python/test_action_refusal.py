@@ -55,16 +55,32 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
         "plan": plan, "image": "sha256:" + "1" * 64, "footprint": list(footprint), "generated_paths": list(generated),
         **({} if protected is None else {"protected_paths": protected})}))
 
-    # Admission is a PrismaBuild contract; a refusal must return before any container runs.
-    shim = root / "bin/docker"
-    shim.parent.mkdir()
-    shim.write_text("#!/bin/sh\n# Docker CLI shim fixture\nexit 99\n")
-    shim.chmod(0o755)
-    env.update(PATH=f"{shim.parent}{os.pathsep}{env['PATH']}",
-               PRISMABUILD_CONTAINER_OWNER="fixture", PRISMABUILD_CONTAINER_MARKER=str(root / "marker"),
-               PRISMABUILD_ACTION_PROGRESS_PATH=str(root / "progress.json"),
-               PRISMABUILD_ACTION_PROGRESS_TOKEN="fixture",
-               PRISMABUILD_ACTION_PROGRESS_ALLOWANCES=json.dumps({"tests": 60}))
+    # Supply the Flux launch contract; refusals must return before any container runs.
+    output = root / "output"
+    output.mkdir()
+    home = root / "home"
+    home.mkdir(mode=0o700)
+    context = root / "context.json"
+    context.write_text(json.dumps({
+        "owner": "fixture", "correlation": "fixture", "request_digest": "a" * 64,
+        "run": {"backend": "flux", "uri": "local:///fixture/flux", "instance": "fixture", "job": "f123"},
+        "scratch": {"leaf": str(root / "scratch")},
+        "progress": {"journal": str(output / "progress.jsonl"), "no_progress_seconds": 60},
+        "output_dir": str(output),
+    }))
+    cli = root / "backend-cli"
+    cli.write_text(f"#!{sys.executable}\n" + """import json, sys
+from pathlib import Path
+request = json.load(sys.stdin)
+assert request == {'op': 'launch_context', 'owner': 'fixture', 'correlation': 'fixture', 'job': 'f123'}
+context = json.loads(Path(sys.argv[2]).read_text())
+print(json.dumps({'schema': 'tl3.run_backend.frame.v1', 'sequence': 0, 'kind': 'result',
+                  'result': {'op': 'launch_context', 'context': context}}))
+""")
+    cli.chmod(0o700)
+    env.update(TL3_EXECUTION_BACKEND="flux", TL3_RUN_OWNER="fixture", TL3_RUN_CORRELATION="fixture",
+               FLUX_JOB_ID="f123", TL3_RUN_BACKEND_CLI=str(cli), TL3_RUN_BACKEND_CONFIG=str(context),
+               TL3_RUN_BACKEND_SESSION="0", HOME=str(home), XDG_RUNTIME_DIR=str(home), XDG_CACHE_HOME=str(home))
     return staged, env
 
 
@@ -130,10 +146,10 @@ class ActionRefusalTests(unittest.TestCase):
             self.assertIn("KeyError", result.stderr)
             self.assertEqual(lines(result.stdout, "TL3_CHECKS_ERROR "), [])
 
-    def test_prismabuild_environment_error_stays_upstream(self):
+    def test_flux_environment_error_stays_upstream(self):
         with tempfile.TemporaryDirectory() as directory:
             staged, env = stage(Path(directory))
-            Path(env["PRISMABUILD_ACTION_PROGRESS_PATH"]).write_text("not a progress record")
+            Path(env["TL3_RUN_BACKEND_CONFIG"]).write_text("not a launch context")
             result = act(staged, env)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("JSONDecodeError", result.stderr)

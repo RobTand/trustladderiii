@@ -58,6 +58,19 @@ fn capture_to_incident(case: usize) {
 import json, os, sys, tempfile
 from pathlib import Path
 from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
+fixture = tempfile.TemporaryDirectory()
+root = Path(fixture.name)
+cli = root / 'backend-cli'
+cli.write_text('#!' + sys.executable + '\n' + '''import json, sys
+request = json.load(sys.stdin)
+assert request == {'op': 'launch_context', 'owner': 'fixture', 'correlation': 'fixture', 'job': 'f123'}
+print(json.dumps({'schema': 'tl3.run_backend.frame.v1', 'sequence': 0, 'kind': 'result',
+                  'result': {'op': 'launch_context', 'context': {'progress': {'no_progress_seconds': 120}}}}))
+''')
+cli.chmod(0o700)
+os.environ.update(TL3_EXECUTION_BACKEND='flux', TL3_RUN_OWNER='fixture', TL3_RUN_CORRELATION='fixture',
+                  FLUX_JOB_ID='f123', TL3_RUN_BACKEND_CLI=str(cli), TL3_RUN_BACKEND_CONFIG=str(root / 'options.json'))
+(root / 'options.json').write_text('{}')
 secret = 'zE9!pR4#cV7$'
 cause = 'container shim refused: pid limit reached'
 payloads = [

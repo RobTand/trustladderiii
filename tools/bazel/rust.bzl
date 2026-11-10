@@ -490,6 +490,7 @@ def _crate_test(kind, package, name, source, harness, options):
             # Shared-mount Flux fixtures run in the admitted PB check script. RBE
             # cannot create the fixed /mnt/shared output root; select its wire tests.
             # The two retained launch-failure lib fixtures likewise execute in PB.
+            # The release-boundary ports run on Flux.
             gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
                          (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
                           (["--libtest-select=staging_namespace_survives_consumer_argument_validation", "--libtest-select=qualification_gate_refuses_records_and_production_still_requires_one", "--libtest-select=fx_qualification::"] if kind == "example" and name == "fx-stage-packet" else
@@ -504,6 +505,14 @@ def _crate_test(kind, package, name, source, harness, options):
                             "--skip=adapters::flux_checks::activation::tests::tags_runtime_substitution_and_environment_override_cannot_grant_activation",
                             "--skip=adapters::flux_checks::activation::tests::environment_override_child",
                             "--skip=adapters::flux_checks::activation::tests::qualified_binding_passes_real_controller_capacity_and_startup_activation",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_running_controller_stages_its_qualified_release_after_producer_removal",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_bundle_missing_at_startup_never_creates_an_available_stager",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_failed_input_copy_never_falls_back_to_the_producer",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_second_controller_load_never_touches_the_owners_input_or_bundle",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_current_switch_never_changes_the_qualified_module_set",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::a_truncated_bundle_is_never_staged",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::repeated_failed_preparations_never_publish_partial_inputs",
+                            "--skip=adapters::flux_checks::activation::tests::release_boundary::interrupted_preparations_preserve_owned_partial_and_completed_inputs",
                             "--skip=adapters::workers::execution::inputs::tests::direct_prepare_requires_deployment_activation_and_checks_actual_options"] if kind == "lib" and name == "tl3_controller" else
                             (["--gate-group=" + group] if group else []))))),
         )

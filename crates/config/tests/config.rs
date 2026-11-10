@@ -269,13 +269,27 @@ fn flux_access_environment_accepts_only_provisioned_home_and_runtime_dir() {
 }
 
 #[test]
+fn repository_test_demand_refuses_over_aggregate_limit() {
+    for mem_gb in [7, 12, 24] {
+        let text = EXAMPLE.replace(
+            "installation_id = 1",
+            &format!("installation_id = 1\ntest_demand = {{ cpus = 4, mem_gb = {mem_gb} }}"),
+        );
+        assert_eq!(
+            Config::parse(&text).unwrap_err().to_string(),
+            "github.repos[0].test_demand: repository RobTand/tl3-sandbox: test_demand at parallel 4 exceeds dl380g10 plain limit of 10 cores / 24 GiB; choose a fitting demand without reducing requested parallelism"
+        );
+    }
+}
+
+#[test]
 fn repository_test_demand_is_optional_and_bounded() {
     assert!(
         Config::parse(EXAMPLE).unwrap().github.repos[0]
             .test_demand
             .is_none()
     );
-    for (cpus, mem_gb) in [(1, 1), (4, 12), (10, 24)] {
+    for (cpus, mem_gb) in [(1, 1), (4, 3), (10, 6)] {
         let text = EXAMPLE.replace(
             "installation_id = 1",
             &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"),

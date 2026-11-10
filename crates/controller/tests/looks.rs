@@ -70,11 +70,7 @@ fn labelled() -> LabelledIssue {
 }
 fn allowances() -> tl3_config::Allowances {
     let mut a = tl3_config::Allowances::default();
-    for value in [
-        &mut a.agent_worker,
-        &mut a.checks,
-        &mut a.github_delivery,
-    ] {
+    for value in [&mut a.agent_worker, &mut a.checks, &mut a.github_delivery] {
         value.silence_secs = 1;
         value.no_progress_secs = 3;
     }
