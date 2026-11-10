@@ -897,7 +897,7 @@ fn unheld_v(n: Node) -> (result: Node) [
         result.next_seq == n.next_seq,
 ] proof [reveal(reply_family_values::unheld);] {
     let mut m = n;
-    m.holds = false;
+    m.holds = true;
     m
 }
 }
