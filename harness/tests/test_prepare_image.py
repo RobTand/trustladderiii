@@ -94,6 +94,7 @@ def test_flux_builder_replaces_venv_and_checks_dependencies():
     script = flux_builder().install_script()
     assert script.index('rm -rf /opt/tl3') < script.index('python3 -m venv /opt/tl3')
     assert 'pip==25.1.1' in script
+    assert '--report /receipts/bootstrap-report.json' in script
     assert '--require-hashes' in script and '--no-build-isolation' in script
     assert 'https://download.pytorch.org/whl/cpu' in script
     assert 'pip check' in script
