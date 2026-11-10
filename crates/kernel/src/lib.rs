@@ -2323,6 +2323,9 @@ mod special_safety;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_composition.rs"]
 mod transition_composition;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/internal_safety.rs"]
+mod internal_safety;
 
 #[cfg(verus_keep_ghost)]
 verus! {
