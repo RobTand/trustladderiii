@@ -257,6 +257,9 @@ def test_killed_worker_leaves_a_complete_crash_marked_trace(request_doc, tmp_pat
         worker.wait(timeout=15)
     assert mlflow_server.only()['state'] == 'IN_PROGRESS'
     log = Path(request_doc['trace']['log'])
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert records and records[0]['kind'] == 'start'
+    assert not any(record['kind'] in {'end', 'final'} for record in records), records
     (log.parent / 'exit.json').write_text(json.dumps({'code': -9}))
     # What the controller starts when it sees the attempt end (#430). It adds -I;
     # Bazel's test Python finds packages through PYTHONPATH, which -I ignores.

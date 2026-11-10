@@ -2401,6 +2401,11 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
         1,
         "repeated failed subscriptions reuse their incident"
     );
+    assert_eq!(
+        subscriptions.get(),
+        2,
+        "two failed reads open the incident before later looks probe health"
+    );
     assert!(
         subscriptions.get() >= 3,
         "the failing subscription must be exercised"
