@@ -212,8 +212,7 @@ pub fn lifecycle_inputs(
         runs: vec![],
         fixtures: BTreeMap::new(),
     };
-    let prepared: Value =
-        read_json(&inputs.out.join("prepared/result.json"))?;
+    let prepared: Value = read_json(&inputs.out.join("prepared/result.json"))?;
     let mut output = BTreeMap::new();
     for canary in &canaries {
         let key = if canary.kind == "launch_failure" {

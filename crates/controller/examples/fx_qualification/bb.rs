@@ -704,8 +704,7 @@ fn stage_overlay(
 
 pub fn candidate(inputs: &Inputs, overlay: &BTreeMap<String, Vec<u8>>) -> Result<OverlayCommit> {
     let root = inputs.out.join("qualified-production");
-    let staged: OverlayCommit =
-        read_json(&root.join("overlay-commit.json"))?;
+    let staged: OverlayCommit = read_json(&root.join("overlay-commit.json"))?;
     verify_overlay(inputs, &root, overlay, &staged)?;
     Ok(staged)
 }

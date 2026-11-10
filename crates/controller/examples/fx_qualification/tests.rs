@@ -56,7 +56,9 @@ fn preparation_identity_reader_keeps_digest_size_and_path_checks() {
     let mut changed_mode = produced.clone();
     changed_mode["mode"] = 0.into();
     assert_eq!(
-        evidence::verify_references(&changed_mode).unwrap_err().to_string(),
+        evidence::verify_references(&changed_mode)
+            .unwrap_err()
+            .to_string(),
         "referenced artifact mode changed"
     );
     assert!(serde_json::from_value::<api::BlobRef>(produced).is_err());
@@ -120,7 +122,11 @@ fn typed_driver_artifacts_round_trip_through_production_writers_and_reader() {
         container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
     };
     let options = tl3_controller::production::flux_options(&flux);
-    for name in ["context.json", "held-options.json", "generator-options.json"] {
+    for name in [
+        "context.json",
+        "held-options.json",
+        "generator-options.json",
+    ] {
         round_trip(root.path(), name, &options);
     }
     round_trip(root.path(), "job-environment.json", &options.environment);
@@ -155,7 +161,11 @@ fn typed_driver_artifacts_round_trip_through_production_writers_and_reader() {
     };
     round_trip(root.path(), "execution.json", &profile);
     for kind in ["launch_failure", "cancel", "success", "generator"] {
-        round_trip(root.path(), &format!("{kind}-result.json"), &canary(root.path(), kind));
+        round_trip(
+            root.path(),
+            &format!("{kind}-result.json"),
+            &canary(root.path(), kind),
+        );
     }
 }
 

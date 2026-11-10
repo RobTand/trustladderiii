@@ -197,8 +197,7 @@ fn validate(inputs: &Inputs) -> Result<()> {
     }
     let head = git(&inputs.repo, &["rev-parse", "HEAD"])?;
     if head != inputs.head {
-        let staged: bb::OverlayCommit =
-            read_json(&inputs.out.join("publication.json"))?;
+        let staged: bb::OverlayCommit = read_json(&inputs.out.join("publication.json"))?;
         if head != staged.commit
             || staged.base_head != inputs.head
             || git(&inputs.repo, &["rev-list", "--parents", "-n1", &head])?
@@ -335,8 +334,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     save(&inputs.out, &state)?;
     let outcome = (|| -> Result<Value> {
         if inputs.out.join("verdict.json").exists() {
-            let retained: Value =
-                read_json(&inputs.out.join("verdict.json"))?;
+            let retained: Value = read_json(&inputs.out.join("verdict.json"))?;
             if retained["complete"] == true || retained["status"] == "FAIL" {
                 evidence::verify_references(&retained)?;
                 return Ok(retained);
@@ -406,10 +404,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         save(&inputs.out, &state)?;
         for kind in ["launch_failure", "cancel", "success"] {
             let packet = inputs.out.join(format!("packet-{kind}"));
-            let request: api::Request =
-                read_json(&packet.join("request.json"))?;
-            let options: api::Options =
-                read_json(&packet.join("held-options.json"))?;
+            let request: api::Request = read_json(&packet.join("request.json"))?;
+            let options: api::Options = read_json(&packet.join("held-options.json"))?;
             let result = live::collect(&inputs, request, options, kind)?;
             retain_canary(&mut state.canaries, result.clone());
             save(&inputs.out, &state)?;
@@ -436,7 +432,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             300,
         )?;
         let request: api::Request = read_json(&inputs.out.join("generator-prepared/request.json"))?;
-        let gen_options: api::Options = read_json(&inputs.out.join("generator-journal/options.json"))?;
+        let gen_options: api::Options =
+            read_json(&inputs.out.join("generator-journal/options.json"))?;
         let result = live::collect(&inputs, request, gen_options, "generator")?;
         retain_canary(&mut state.canaries, result.clone());
         save(&inputs.out, &state)?;
@@ -454,8 +451,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         );
         let checked = inputs.out.join("generator-checked.json");
         if checked.exists() {
-            let result: evidence::CanaryEvidence =
-                read_json(&checked)?;
+            let result: evidence::CanaryEvidence = read_json(&checked)?;
             evidence::verify_references(&serde_json::to_value(&result)?)?;
             retain_canary(&mut state.canaries, result);
             save(&inputs.out, &state)?;

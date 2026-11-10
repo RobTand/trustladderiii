@@ -48,8 +48,7 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
         &root.join("job-environment.json"),
         &production::flux_job_environment(),
     )?;
-    let preparation: Value =
-        read_json(&inputs.out.join("prepared/result.json"))?;
+    let preparation: Value = read_json(&inputs.out.join("prepared/result.json"))?;
     let bundle: api::BlobRef = serde_json::from_value(preparation["bundles"]["generator"].clone())?;
     let reservation = api::Reservation {
         cpus: 1.try_into()?,
@@ -222,7 +221,8 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
         .as_ref()
         .ok_or("generator receipt absent")?;
     let receipt: api::Receipt = read_json(&receipt_ref.path)?;
-    let report: api::RunnerReport = read_json(&receipt.report.ok_or("generator report absent")?.path)?;
+    let report: api::RunnerReport =
+        read_json(&receipt.report.ok_or("generator report absent")?.path)?;
     let api::WorkerPayload::Generator { artifact } =
         report.worker_payload.ok_or("generator payload absent")?
     else {
@@ -286,8 +286,7 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
         pass: probes,
         evidence: vec![artifact],
     });
-    let prepared: Value =
-        read_json(&inputs.out.join("prepared/result.json"))?;
+    let prepared: Value = read_json(&inputs.out.join("prepared/result.json"))?;
     let (rootless, rootless_raw) =
         live::read_identity_proof(&prepared["rootless"], &inputs.out.join("prepared"))?;
     let rootless_pass = std::str::from_utf8(&rootless_raw)?.trim() == "true";

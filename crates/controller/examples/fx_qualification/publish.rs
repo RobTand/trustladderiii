@@ -2,7 +2,8 @@ use super::*;
 
 pub fn verify_private(inputs: &Inputs) -> Result<()> {
     prepare::require_admitted()?;
-    let mut canary: evidence::CanaryEvidence = read_json(&inputs.out.join("canary-generator/result.json"))?;
+    let mut canary: evidence::CanaryEvidence =
+        read_json(&inputs.out.join("canary-generator/result.json"))?;
     evidence::verify_references(&serde_json::to_value(&canary)?)?;
     if let Err(error) = generator::check(inputs, &mut canary) {
         canary.status = "FAIL".into();

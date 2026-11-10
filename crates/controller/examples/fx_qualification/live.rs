@@ -196,8 +196,7 @@ fn collect_inner(
             return Err("launch failure manifest digest differs".into());
         }
         let prepared_root = inputs.out.join("prepared");
-        let prepared: Value =
-            read_json(&prepared_root.join("result.json"))?;
+        let prepared: Value = read_json(&prepared_root.join("result.json"))?;
         let preflight = &prepared["absent_interpreter_preflight"];
         let (proof, raw) = read_identity_proof(&preflight["proof"], &prepared_root)?;
         let observed: Value = serde_json::from_slice(&raw)?;

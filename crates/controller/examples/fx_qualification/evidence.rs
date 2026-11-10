@@ -338,8 +338,7 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<i32> {
                     .ok_or("relative output missing")
             })
             .collect::<std::result::Result<_, _>>()?;
-        let index: d8::current::Index =
-            read_json(&repo.join(policy::INDEX))?;
+        let index: d8::current::Index = read_json(&repo.join(policy::INDEX))?;
         let mut observed: std::collections::BTreeSet<String> = index
             .inputs
             .keys()
