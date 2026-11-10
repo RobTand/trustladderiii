@@ -1,10 +1,60 @@
 {
-  "source_head": "efb705813c9f1ca4b1694adce6a49fb1c9f2811e",
+  "source_head": "9004f1b6834152247b155af1fc3ff3f7bb2f4566",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "00db8406eb3bda5730f0372dde4a9b326d66c230589577f1d57188019bea92a9",
-  "groups": 540,
-  "obligations": 738,
+  "source_sha256": "b4f1dcacf598ca903c78d2fbe3d15031ec71bab0a59a6e6e16f73141ac6d1524",
+  "groups": 550,
+  "obligations": 748,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_continuations_fund_and_pay_v",
+      "selector": "kernel::continuations#fund_and_pay_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_stopped_v",
+      "selector": "kernel::continuations#stopped_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_retry_cost",
+      "selector": "kernel::answers#retry_cost",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_cleanup_handled_v",
+      "selector": "kernel::answers#cleanup_handled_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_cleanup_answer_v",
+      "selector": "kernel::answers#cleanup_answer_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_answer_v",
+      "selector": "kernel::answers#awaiting_answer_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_answer_rules",
+      "selector": "kernel::apply_answer_safety#continued_answer_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_retried_answer_rules",
+      "selector": "kernel::apply_answer_safety#retried_answer_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_handled_cleanup_step",
+      "selector": "kernel::handler_safety#handled_cleanup_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_resume_facts",
+      "selector": "kernel::apply_command_safety#resume_facts",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_apply_answer_safety_stopped_frame",
       "selector": "kernel::apply_answer_safety#stopped_frame",
