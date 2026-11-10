@@ -267,4 +267,4 @@ Manual notes: the following property descriptions were read from the proof sourc
 | `crates/delivery/proofs/approval.rs` | `action` approval permissions and `upstream` late-landing/repair model |
 | `crates/delivery/proofs/fence.rs` | `blocks_epoch_advance` model and an environment relation for admitted zombie issues; also covers production fence helpers |
 
-Manual note: M-7 deletes the unverified `mirror.rs` and the tests comparing it to production. Four tests of real delivery behavior remain in `crates/controller/tests/delivery_conformance/mod.rs`, without mirror calls. The delivery `action` model and its proofs remain unchanged. The pre-deletion table is retained as `PROOF-VS-PRODUCTION-BEFORE.md` in M-7 evidence.
+Manual note: M-7 deletes the unverified `mirror.rs` and the tests comparing it to production. Four tests of real delivery behavior remain in `crates/controller/tests/delivery_conformance/mod.rs`, without mirror calls. The delivery `action` model and its proofs remain unchanged.

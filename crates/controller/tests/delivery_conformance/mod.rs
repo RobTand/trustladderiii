@@ -14,18 +14,14 @@ use tl3_store::{Commit, EffectState, EffectTransition, NewEffect, Store};
 
 #[derive(Clone, Copy)]
 enum Answer {
-    Timeout,
     Found,
-    Absent,
     Pending,
-    Retryable,
     Ambiguous,
 }
 #[derive(Default)]
 struct Script {
     answers: VecDeque<Answer>,
     target: Option<String>,
-    late_resource: bool,
     observations: VecDeque<Vec<tl3_controller::executor::Observation>>,
     calls: Vec<String>,
 }
@@ -54,31 +50,10 @@ impl Executor for Recording {
             return Ok(Completion::confirmed(vec![]));
         }
         script.calls.push(format!("execute:{}", delivery.key));
-        if script.late_resource
-            && matches!(
-                delivery.output,
-                tl3_controller::executor::Output::Effect {
-                    kind: tl3_kernel::EffectKind::ClosePr | tl3_kernel::EffectKind::RemoveWorktree,
-                    ..
-                }
-            )
-        {
-            script.late_resource = false;
-            return Ok(Completion::confirmed(vec![]));
-        }
         match script.answers.pop_front().unwrap() {
             Answer::Found => Ok(Completion::confirmed(vec![])),
-            Answer::Retryable => Ok(Completion {
-                ack: tl3_kernel::Ack::Retryable,
-                ..Completion::confirmed(vec![])
-            }),
             Answer::Ambiguous => Err(tl3_controller::Error::ApprovalAmbiguous),
-            Answer::Timeout => Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "scheduled lost response",
-            )
-            .into()),
-            _ => panic!("execute response"),
+            Answer::Pending => panic!("execute response"),
         }
     }
     fn look(
@@ -106,9 +81,8 @@ impl Executor for Recording {
         script.calls.push(format!("reconcile:{}", delivery.key));
         Ok(match script.answers.pop_front().unwrap() {
             Answer::Found => Reconciliation::Found(Box::new(Completion::confirmed(vec![]))),
-            Answer::Absent => Reconciliation::Absent,
             Answer::Pending => Reconciliation::Pending,
-            _ => panic!("reconciliation response"),
+            Answer::Ambiguous => panic!("reconciliation response"),
         })
     }
 }
