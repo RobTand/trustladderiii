@@ -96,8 +96,8 @@ The helper performs this sequence:
    hygiene before stopping. Refuse before any stop while `tl3-workers.slice` is
    anything other than `inactive`, or a recorded supervisor or worker is alive.
    Require the configured `workers.launcher` to equal the deployment's `LAUNCHER`,
-   so newly started workers belong to that slice. Size the exact file inventory against the bounded
-   action budget. Stop tl3d, prove `inactive`, explicitly stop and prove
+   so newly started workers belong to that slice. Size the exact file inventory
+   against the bounded action budget. Stop tl3d, prove `inactive`, explicitly stop and prove
    MLflow/status/console inactive, then stop Postgres and prove it inactive.
 3. Recheck worker quiescence. Copy the complete cluster including WAL and declared tablespaces, controller
    journals, attempts and private config. Hash every file and record ownership,

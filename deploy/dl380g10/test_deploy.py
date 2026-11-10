@@ -342,8 +342,8 @@ class FreshInitTests(unittest.TestCase):
         self.assertEqual((self.backup / "world/snapshot").read_bytes(), b"old world")
         self.assertFalse((self.root / "world/snapshot").exists())
         stops = [call[3] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
-        self.assertEqual(stops[-6:], ["tl3d.service", "tl3-workers.slice", *reversed(deploy.DEPENDENT_UNITS),
-                                    "tl3-postgres.service"])
+        self.assertEqual(stops[-6:], ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                                    "tl3-workers.slice", "tl3-postgres.service"])
         self.assertFalse(any("restore" in item for call in self.calls for item in call))
 
     @contextlib.contextmanager
