@@ -1,7 +1,8 @@
 //! Derived properties over the exact Apply answer result.
-//! Design 3 audit check_design3.py sha256 097e007110bbed57828bb0d06e23d75865ff4c58d9ae378221ecdad6eb4137b2
+//! Design 3 audit check_design3.py sha256 0a29b5cd568e41b6c5177631b6f5a488ff7038a601ae6312f6bd9c162f789d67
 //! Design 3 audit k5_exec_compare.py sha256 407c83dc0a2df8cf3f102d3e6ee9d81b687adc481a15029c8d2ad770337120d1
 //! Design 3 audit k5_post_check.py sha256 d538b7df6aeacfb8c0584dc3e7e0178d4d24c8835af1f9628624e3c10b10f43a
+//! Arm split audit build_arm_split.py sha256 bf6096a6eb17bb350ebce13f5e09893c651bcec9009e951b58a22ecc931fa637
 use super::*;
 use super::apply_answer_values::*;
 verus! {
