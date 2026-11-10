@@ -339,7 +339,7 @@ pub(super) proof fn confirmed_value_forward(b: Node, n: Node, e: InFlight, ack: 
 
 pub(super) proof fn confirmed_irrelevant_rows(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64)
     requires ack != Ack::Confirmed,
-    ensures confirmed_ack_frame(b, n, e, ack, nq, nqa),
+    ensures !confirmed_ack_frame(b, n, e, ack, nq, nqa),
 {
     reveal(confirmed_ack_frame);
 }
