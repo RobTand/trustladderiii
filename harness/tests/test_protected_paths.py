@@ -182,7 +182,9 @@ def test_c6_configuration_lists_agree_and_are_complete():
                             source, re.S)
     assert declaration, 'the Rust defaults must expose the authoritative filename constant'
     assert tuple(ast.literal_eval(declaration[1])) == TEST_CONFIGURATION_PATHS
-    assert {'pytest.toml', '.pytest.toml', '**/pytest.toml', '**/.pytest.toml'} <= set(TEST_CONFIGURATION_PATHS)
+    assert {'**/conftest.py', 'pytest.toml', '.pytest.toml', '**/pytest.toml',
+            '**/.pytest.toml', 'pytest.ini', '.pytest.ini', 'pyproject.toml',
+            'tox.ini', 'setup.cfg', 'noxfile.py'} <= set(TEST_CONFIGURATION_PATHS)
 
 
 def test_c6_every_configuration_pattern_is_exercised(tmp_path):
