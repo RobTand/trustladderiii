@@ -1,9 +1,9 @@
 {
-  "source_head": "9ae5e5f66f0c283af90762329a281b11ba6fe774",
+  "source_head": "392188904cf25b5871df5c9357dce76d89040967",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b691230951448aa5b349f271391cfd110e563c932d7a3c80f9dacf0de428ca17",
-  "groups": 873,
-  "obligations": 1078,
+  "source_sha256": "3003a7f3316d412f1ee03233e837a3a979a0a8e794c06d052ad3329fef838573",
+  "groups": 883,
+  "obligations": 1089,
   "selections": [
     {
       "target": "//crates/kernel:verus_command_frames_command_frame_rows_intro",
@@ -2128,7 +2128,7 @@
     {
       "target": "//crates/kernel:verus_special_safety",
       "selector": "kernel::special_safety",
-      "expected": 3
+      "expected": 4
     },
     {
       "target": "//crates/kernel:verus_transition_composition",
@@ -4368,6 +4368,56 @@
     {
       "target": "//crates/kernel:verus_retries_raise_failed_run_incident",
       "selector": "kernel::retries#raise_failed_run_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_pause_assembly",
+      "selector": "kernel::special_safety::pause_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_assembly",
+      "selector": "kernel::special_safety::gate_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_projection",
+      "selector": "kernel::special_safety::gate_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_resume_assembly",
+      "selector": "kernel::special_safety::resume_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_stop_assembly",
+      "selector": "kernel::special_safety::stop_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_command_projection",
+      "selector": "kernel::special_safety::command_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_pool_assembly",
+      "selector": "kernel::special_safety::pool_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_change_assembly",
+      "selector": "kernel::special_safety::change_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_advance_rank",
+      "selector": "kernel::special_safety::advance_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_pause_projection",
+      "selector": "kernel::special_safety::pause_projection",
       "expected": 1
     }
   ]
