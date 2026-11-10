@@ -66,12 +66,6 @@ pub fn latest(items: &[Candidate], last_tie: bool) -> Option<usize> {
 }
 
 /// Q52, #447, #2705; cdacce8f docs/state-table.md:543-545,555,578.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out == !empty))]
-pub fn needs_checks(empty: bool) -> bool {
-    !empty
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:543-545,555,578.
 /// Every rule is inspected; an app-bound rule cannot consume a classic status.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == (exists|i: int| 0 <= i < apps.len() && apps[i].is_none()),
@@ -103,24 +97,6 @@ pub enum StatusRead {
     Available,
     Unavailable,
     Propagate,
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:543,555,578.
-/// A 403/404 makes absence unknowable. It does not force ready=false in the
-/// base implementation; C1 preserves that behavior for Q27 review.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == match result {
-        ReadResult::Success => StatusRead::Available,
-        ReadResult::Http(403) | ReadResult::Http(404) => StatusRead::Unavailable,
-        _ => StatusRead::Propagate,
-    },
-))]
-pub fn status_read(result: ReadResult) -> StatusRead {
-    match result {
-        ReadResult::Success => StatusRead::Available,
-        ReadResult::Http(403 | 404) => StatusRead::Unavailable,
-        _ => StatusRead::Propagate,
-    }
 }
 
 /// Q52, #447, #2705; cdacce8f docs/state-table.md:543-545,578.
@@ -253,41 +229,6 @@ pub fn classic_status(status: ClassicStatus) -> Contribution {
     }
 }
 
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:541-542,578.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == (failure == Failure::Infrastructure),
-))]
-pub fn rerun(failure: Failure) -> bool {
-    failure == Failure::Infrastructure
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:542,578.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == (on_head && suite == Some(run_suite)),
-))]
-pub fn matching_suite(on_head: bool, suite: Option<u64>, run_suite: u64) -> bool {
-    on_head && suite == Some(run_suite)
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:542,578.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == (same_head && open && !merged),
-))]
-pub fn writable(same_head: bool, open: bool, merged: bool) -> bool {
-    same_head && open && !merged
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:542,578.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == (waiting == Some(false)),
-))]
-pub fn needs_fence(waiting: Option<bool>) -> bool {
-    match waiting {
-        Some(waiting) => !waiting,
-        None => false,
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
@@ -309,47 +250,12 @@ pub enum RerunResult {
     Unknown,
 }
 
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:542,578; HC:353-366.
-/// Total classification over every u16, including the deliberately unknown 408.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == match result {
-        DispatchResult::Accepted => RerunResult::Accepted,
-        DispatchResult::InProgress => RerunResult::InProgress,
-        DispatchResult::Forbidden | DispatchResult::RateLimited => RerunResult::Refused,
-        DispatchResult::Http(status) => if 400 <= status <= 499 && status != 408 {
-            RerunResult::Refused
-        } else { RerunResult::Unknown },
-        DispatchResult::Other => RerunResult::Unknown,
-    },
-))]
-pub fn rerun_result(result: DispatchResult) -> RerunResult {
-    match result {
-        DispatchResult::Accepted => RerunResult::Accepted,
-        DispatchResult::InProgress => RerunResult::InProgress,
-        DispatchResult::Forbidden | DispatchResult::RateLimited => RerunResult::Refused,
-        DispatchResult::Http(400..=407 | 409..=499) => RerunResult::Refused,
-        _ => RerunResult::Unknown,
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 pub enum Loop {
     ReadAgain,
     Done,
-}
-
-/// Q52, #447, #2705; cdacce8f docs/state-table.md:542,578; HC:381.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
-    out == if read_pull { Loop::ReadAgain } else { Loop::Done },
-))]
-pub fn rerun_loop(read_pull: bool) -> Loop {
-    if read_pull {
-        Loop::ReadAgain
-    } else {
-        Loop::Done
-    }
 }
 
 #[cfg(test)]

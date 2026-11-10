@@ -580,11 +580,6 @@
     "owner": "#922"
   },
   {
-    "path": "crates/delivery/src/mirror.rs",
-    "detector": "self-declared",
-    "owner": "#925"
-  },
-  {
     "path": "crates/kernel/tests/proof_map.rs",
     "detector": "source-include",
     "owner": "#912"
