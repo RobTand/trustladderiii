@@ -3,7 +3,7 @@ use super::*;
 
 verus! {
 pub(super) proof fn notices_outputs(before: World, after: World, ob: Outbox, oa: Outbox)
-    requires ob.len <= oa.len <= OUTBOX, retirement::notices_only(oa),
+    requires ob.len <= oa.len <= OUTBOX,
     ensures transition_safety::no_effects(transition_safety::emitted(ob, oa)),
         transition_safety::outputs_ok(before, after, transition_safety::emitted(ob, oa), None),
 {
