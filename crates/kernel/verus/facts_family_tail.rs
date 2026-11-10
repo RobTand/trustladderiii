@@ -251,7 +251,7 @@ pub(super) proof fn dependency_rows(before: World, after: World, i: usize, fact:
 
 pub(super) proof fn node_safety_rows(b: Node, n: Node, fast: bool, i: usize, fact: Fact,
     ob: Outbox, oa: Outbox, origin: World)
-    requires facts_family_values::node_rows(b, n, fast, i, fact),
+    requires true,
         facts_family_values::notice_suffix(ob, oa, i), retirement::node_rules(origin, b),
     ensures transition_safety::node_safety(b, n, fast,
         Event::Fact { node: NodeId(i as u64), fact }, i as int, ob, oa),
