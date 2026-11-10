@@ -761,6 +761,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "ranks_start_grant_value": ("kernel::ranks#start_grant_value", 1),
             "advance_family_post_grant_no_new": ("kernel::advance_family_post#grant_no_new", 1),
             "advance_family_post_grant_from_fields": ("kernel::advance_family_post#grant_from_fields", 1),
             "advance_family_post_slot_grant_facts": ("kernel::advance_family_post#slot_grant_facts", 1),
