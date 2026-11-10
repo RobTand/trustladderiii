@@ -230,7 +230,7 @@ pub(super) proof fn confirmed_resources_node_rules(w: World, b: Node, kind: Effe
 }
 
 pub(super) proof fn confirmed_resources_rows(b: Node, kind: EffectKind)
-    ensures confirmed_resources_frame(b, Node { fx_failures: 0, fx_incidents: 0, run: if kind == EffectKind::StopRun { None } else { b.run }, pool: if kind == EffectKind::StopRun { false } else { b.pool }, job: if kind == EffectKind::WithdrawJob { None } else { b.job }, pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open }, worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree }, ..b }, kind),
+    ensures !confirmed_resources_frame(b, Node { fx_failures: 0, fx_incidents: 0, run: if kind == EffectKind::StopRun { None } else { b.run }, pool: if kind == EffectKind::StopRun { false } else { b.pool }, job: if kind == EffectKind::WithdrawJob { None } else { b.job }, pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open }, worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree }, ..b }, kind),
 {
     reveal(confirmed_resources_frame);
     if confirmed_teardown_input(b, kind) && b.effect.is_none() && b.question.is_none() {
