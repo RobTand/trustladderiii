@@ -1,6 +1,25 @@
 //! Executable reply admission transitions and their #771 safety contracts.
 use super::*;
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReplyChange {
+    Done { node: Node, note: Option<Notice> },
+    Ask { node: Node, kind: QKind, cont: Cont, cost: u8 },
+    Incident { node: Node, needs_rob: bool },
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[derive(Clone, Copy)]
+pub(super) struct ReplyCtx {
+    pub node: usize,
+    pub generation: u64,
+    pub reply: Reply,
+    pub fast: bool,
+    pub next_question: u64,
+}
+
 kernel_fn! {
 /// Reply rows / #771: phase, schema and commit identity use the executable checks.
 pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
@@ -180,6 +199,10 @@ kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i, 
         if reply == Reply::AuditDisagrees {
             assert(w.nodes@[i as int].phase == Phase::Auditing);
         }
+        reply_family_safety::admitted_stage(before_reply@,
+            port_t860_contracts::ended(before_reply@.nodes@[i as int]),
+            ReplyCtx { node: i, generation, reply, fast: before_reply@.fail_fast,
+                next_question: before_reply@.next_question });
     }
     on_admitted_reply(w, i, generation, reply, out, report);
     kernel_proof! {
@@ -285,7 +308,14 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     kernel_snapshot! { before_operation = *w }
-    end_operation(&mut w.nodes[i]);
+    w.nodes[i] = reply_end_node(w.nodes[i]);
+    kernel_proof! {
+        if port_t860_contracts::admissible(before_operation@, before_operation@.nodes@[i as int], reply) {
+            reply_family_safety::admitted_stage(before_operation@, w.nodes@[i as int],
+                ReplyCtx { node: i, generation: _generation, reply,
+                    fast: before_operation@.fail_fast, next_question: before_operation@.next_question });
+        }
+    }
     kernel_proof! {
         footprint::valid_under_table_growth(before_operation@, *w, w.nodes@[i as int].footprint);
     }
@@ -359,7 +389,8 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::valid_footprint(*old(w), files), footprint::ordered_table(*old(w)),
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures reply_family_safety::entry_rows(*old(w), *final(w), i as int, Reply::MakerNeedsFiles { files, fits }),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         footprint::valid_footprint(*final(w), final(w).nodes@[i as int].footprint),
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -390,11 +421,11 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
-        let m = &mut w.nodes[i];
-        m.credit.spend(1);
-        m.footprint = footprint;
-        m.holds = false;
-        set_phase(m, Phase::Ready(Resume::Making));
+        let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
+            reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
+            next_question: w.next_question };
+        let change = reply_files_node(w.nodes[i], c, files, fits, footprint, true);
+        resolve_reply_change(w, i, change, out);
         kernel_proof! {
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
                 w.nodes@[i as int], before_files_out@, *out);
@@ -404,15 +435,11 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         // Q54 stops retries, not credit decisions: Rob funds the extension.
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
-        w.nodes[i].footprint = footprint;
-        ask_rob(
-            w,
-            i,
-            QKind::OutOfCredit,
-            Cont::Ready(Resume::Making),
-            1,
-            out,
-        );
+        let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
+            reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
+            next_question: w.next_question };
+        let change = reply_files_node(w.nodes[i], c, files, fits, footprint, false);
+        resolve_reply_change(w, i, change, out);
         kernel_proof! {
             handler_safety::fund_fast(before_files@.nodes@[i as int], w.nodes@[i as int]);
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
@@ -420,7 +447,13 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         }
         kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
     } else {
-        out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+        let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
+            reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
+            next_question: w.next_question };
+        let change = out_of_room_node(w.nodes[i], w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles);
+        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+            files, fits, before_files@.nodes@[i as int].footprint, change); }
+        resolve_reply_change(w, i, change, out);
         kernel_proof! {
             if !(before_files@.nodes@[i as int].phase is Closed || before_files@.nodes@[i as int].phase is Stopping) {
                 if fits && !footprint::footprint_empty(files) {
@@ -433,6 +466,41 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
     }
     }
+}
+
+kernel_fn! {
+/// The two fitting-extension paths, after the original conditional union call.
+/// funded is the branch tag already selected by reply_files, not a new guard.
+pub(super) fn reply_files_node(n: Node, c: ReplyCtx, files: Footprint, fits: bool,
+    union: Footprint, funded: bool) -> (result: ReplyChange) [
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        c.reply == (Reply::MakerNeedsFiles { files, fits }),
+        fits, !footprint::footprint_empty(files),
+        funded == transition_safety::can_spend_one(n), funded || c.fast,
+    ensures result == reply_family_values::files(n, c.fast, files, fits, union),
+        reply_family_values::reply_bound(n, c.next_question, result),
+        reply_family_safety::rows(n, c, result),
+] proof [reveal(retirement::stopped);] {
+    let mut node = n;
+    if funded {
+        let footprint = union;
+        let m = &mut node;
+        m.credit.spend(1);
+        m.footprint = footprint;
+        m.holds = false;
+        set_phase(m, Phase::Ready(Resume::Making));
+        let result = ReplyChange::Done { node, note: None };
+        kernel_proof! { reply_family_safety::files_rows(n, c, files, fits, union, result); }
+        result
+    } else {
+        let footprint = union;
+        node.footprint = footprint;
+        let result = ReplyChange::Ask { node, kind: QKind::OutOfCredit,
+            cont: Cont::Ready(Resume::Making), cost: 1, };
+        kernel_proof! { reply_family_safety::files_rows(n, c, files, fits, union, result); }
+        result
+    }
+}
 }
 
 kernel_fn! {
@@ -675,9 +743,7 @@ pub(super) fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply
     kernel_snapshot! { before_stopping_node = w.nodes@[i as int] }
     kernel_snapshot! { before_outputs = *_out }
         // The run or job ended on its own, so teardown needn't stop it.
-        let m = &mut w.nodes[i];
-        release_run(m, generation);
-        release_job(m, generation);
+        w.nodes[i] = reply_stopping_node(w.nodes[i], generation);
         kernel_proof! {
             assert(port_t860_contracts::stopping_post(before_stopping_node@, w.nodes@[i as int], generation)) by {
                 reveal(port_t860_contracts::stopping_post);
@@ -693,6 +759,56 @@ pub(super) fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply
             port_t860_link::inactive(before_reply@, *w, i as int, generation, _reply, before_outputs@, *_out);
         }
 
+}
+}
+
+kernel_fn! {
+/// Reply completion as a value, before the admitted-path dispatcher.
+pub(super) fn reply_end_node(n: Node) -> (result: Node) [
+    ensures port_t860_contracts::ended_post(n, result),
+        result == (Node { run: None, job: None, pool: false,
+        run_failures: 0, run_incidents: 0,
+        effect: match n.effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling
+                || matches!(e.kind, EffectKind::StartRun(_)
+                    | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+            None => None,
+        }, ..n }),
+        result.repo == n.repo, result.footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(result)),
+        result.run.is_none(), result.job.is_none(), !result.pool,
+        result.run_failures == 0, result.run_incidents == 0,
+        result.phase == n.phase, result.pos == n.pos,
+        result.generation == n.generation, result.next_seq == n.next_seq,
+        result.credit == n.credit, result.question == n.question,
+        result.ticket == n.ticket,
+        result.footprint == n.footprint,
+        result.last_cmd == n.last_cmd,
+        result.fx_failures == n.fx_failures,
+        result.fx_incidents == n.fx_incidents,
+
+        result == port_t860_contracts::ended(n),
+        transition_safety::node_step(n, result),
+] proof [reveal(port_t860_contracts::ended);] {
+    let mut m = n;
+    end_operation(&mut m);
+    m
+}
+}
+
+kernel_fn! {
+/// Late stopping replies release only matching ownership, in the original order.
+pub(super) fn reply_stopping_node(n: Node, generation: u64) -> (result: Node) [
+    ensures result == port_t860_contracts::stopping(n, generation),
+        port_t860_contracts::stopping_post(n, result, generation),
+        transition_safety::node_step(n, result),
+        result.next_seq == n.next_seq,
+] proof [reveal(port_t860_contracts::stopping_post);] {
+    let mut node = n;
+    let m = &mut node;
+    release_run(m, generation);
+    release_job(m, generation);
+    node
 }
 }
 
