@@ -2047,15 +2047,9 @@ fn m4_review_webhook_uses_saved_intent() {
     let settings = database.create("m4_review_webhook_intent");
     let fixture = DirectFixture::new();
     fixture.check(Some("success"));
-    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let flag = fired.clone();
-    let adapter = fixture.adapter(&settings).with_write_boundary(move |b| {
-        if b == (direct_merge::WriteBoundary {write:direct_merge::Write::Merge, after:true}) && !flag.swap(true, std::sync::atomic::Ordering::SeqCst) { panic!("stop after GitHub merged, before TL3 receipt"); }
-    });
-    let controller = fixture.open_adapter(&settings, adapter);
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(||fixture.start_controller(&settings, controller))).is_err());
+    { let mut direct = fixture.direct.lock().unwrap(); direct.lost_reply = true; direct.fail_read_after_put = true; }
+    let (mut controller, _) = fixture.start(&settings);
     fixture.check(Some("failure"));
-    let mut controller = fixture.open(&settings);
     deliver(&settings, &fixture.api, "pull_request", &m4_review_closed_event(&fixture));
     drain(&mut controller);
     m4_review_one_merge(&mut controller, &settings);
