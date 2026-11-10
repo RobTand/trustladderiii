@@ -98,7 +98,6 @@ impl Fixture {
                 sha256: String::new(),
             }),
             instance_file: backend::fixture_instance(root.path()),
-
             executable: cli.clone(),
             backend_cli: cli,
             container_mode: ContainerMode::InJob,
@@ -543,7 +542,6 @@ fn x7_activation_survives_broker_identity_changes() {
         arguments: vec![],
         environment: BTreeMap::new(),
         instance_file: backend::fixture_instance(root.path()),
-
         journal_root: root.path().join("journal"),
         bootstrap: backend::HostBootstrap {
             cli,

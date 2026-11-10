@@ -421,7 +421,6 @@ mod tests {
             ]
             .into(),
             instance_file: crate::run_backend::fixture_instance(journal.path()),
-
             journal_root: journal.path().to_owned(),
             bootstrap: HostBootstrap {
                 cli: "/must-not-execute-cli".into(),
@@ -506,7 +505,6 @@ mod tests {
             ]
             .into(),
             instance_file: crate::run_backend::fixture_instance(journal.path()),
-
             journal_root: journal.path().to_owned(),
             bootstrap: HostBootstrap {
                 cli: "/must-not-execute-cli".into(),

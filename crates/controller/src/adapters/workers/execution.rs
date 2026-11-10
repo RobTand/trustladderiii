@@ -302,7 +302,6 @@ mod tests {
         let flux = tl3_config::Flux {
             activation: None,
             instance_file: backend::fixture_instance(root),
-
             executable: "/fixture/flux".into(),
             backend_cli: "/fixture/tl3-run-backend".into(),
             container_mode: tl3_config::ContainerMode::OwnScope,

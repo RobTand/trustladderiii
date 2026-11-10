@@ -71,9 +71,9 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         *(['--pass-flux-uri'] if coordinator_uri is not None else []), *payload,
     ]
     for index, value in enumerate(arguments):
-        if value == '--env':
+        if value == '--env' or value.startswith('--env='):
             import re
-            pair = arguments[index + 1]
+            pair = arguments[index + 1] if value == '--env' else value.removeprefix('--env=')
             if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:+-]+', pair):
                 raise TargetEnvironmentError('invalid_container_environment')
     return arguments

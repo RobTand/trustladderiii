@@ -416,7 +416,10 @@ mod tests {
                 .capture(&["getattr", "broker.starttime"])
                 .err()
                 .unwrap();
-            assert_eq!(error.code, crate::run_backend::ErrorCode::InvalidRequest);
+            assert!(matches!(
+                error.code,
+                crate::run_backend::ErrorCode::InvalidRequest
+            ));
             assert!(!error.message.contains(uri));
         }
     }
@@ -444,7 +447,6 @@ mod tests {
             arguments: vec![],
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
             instance_file: crate::run_backend::fixture_instance(root.path()),
-
             journal_root: root.path().join("journal"),
             bootstrap: HostBootstrap {
                 cli: "/bin/true".into(),

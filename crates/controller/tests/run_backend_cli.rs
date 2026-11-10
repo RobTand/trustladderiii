@@ -1529,6 +1529,7 @@ impl Fixture {
         let intent = SubmissionIntent {
             backend: BackendTag::Flux,
             instance: "fixture-generation".into(),
+            uri: "local:///fixture".into(),
             owner: "fixture-owner".into(),
             correlation: correlation.clone(),
             request_digest: digest(&serde_json::to_vec(&request).unwrap()),
@@ -1615,7 +1616,6 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             arguments: vec![p.to_string_lossy().into_owned()],
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
             instance_file: fixture_instance(p),
-
             journal_root: p.join("journal"),
             bootstrap: HostBootstrap {
                 cli: env!("CARGO_BIN_EXE_tl3-run-backend").into(),

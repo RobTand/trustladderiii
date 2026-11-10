@@ -162,7 +162,6 @@ pub fn select_flux(config: &mut tl3_config::Config, root: &Path) {
     config.flux = Some(tl3_config::Flux {
         activation: None,
         instance_file: crate::run_backend::fixture_instance(root),
-
         executable: "/fixture/flux".into(),
         backend_cli: "/fixture/tl3-run-backend".into(),
         container_mode: tl3_config::ContainerMode::OwnScope,

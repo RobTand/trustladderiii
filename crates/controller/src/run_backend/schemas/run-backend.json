@@ -2825,7 +2825,7 @@
       ]
     },
     "Options": {
-      "description": "Provisioned access only. URI is deliberately separate from instance generation.",
+      "description": "Provisioned tools and runtime instance locator; broker identity is receipt evidence.",
       "type": "object",
       "properties": {
         "arguments": {
