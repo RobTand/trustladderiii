@@ -54,6 +54,12 @@ mod plan_check_witness;
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/advance_family_rules.rs"]
+mod advance_family_rules;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/advance_family_post.rs"]
+mod advance_family_post;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_merge_waiting_witness.rs"]
 mod retirement_merge_waiting_witness;
 #[cfg(verus_keep_ghost)]
