@@ -138,7 +138,9 @@ class Fixtures(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'selector/count differs from exact source'):
                 D['prepare'](self.source, config, D['owned_directory'](self.root / ('checking-invalid-' + str(len(change.get('selector', ''))))))
 
-    def test_all_342_production_selectors_parse(self):
+    # source_head identifies exact verus.bzl bytes before the fixture commit;
+    # source_sha256 binds them even when the checkout HEAD is newer.
+    def test_all_production_selectors_parse(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         self.assertEqual(len(inventory['selections']), inventory['groups'])
         self.assertEqual(inventory['groups'], 515)
@@ -221,7 +223,7 @@ class Fixtures(unittest.TestCase):
             with self.subTest(flags=flags), self.assertRaises(ValueError):
                 D['validate_execution'](bad, row, 'normal')
 
-    def test_all_342_production_selection_flags(self):
+    def test_all_production_selection_flags(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         rows = []
         for selection in inventory['selections']:

@@ -1,5 +1,6 @@
 {
-  "source_head": "0a04c72440cee3d0392541e92524069732d9764b",
+  "source_head": "565f3846de4e3586c945f391c457d9cedaf6fca7",
+  "source_head_note": "source_head identifies a commit containing the exact source_path bytes bound by source_sha256; it precedes the generated fixture commit and need not equal the checkout HEAD.",
   "source_path": "tools/bazel/verus.bzl",
   "source_sha256": "16691eafb222d857155b9f7aaaa8c7debcae0004b7a0201ee683566f00cffa84",
   "groups": 515,
