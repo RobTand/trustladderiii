@@ -762,6 +762,40 @@ kernel_fn! {
 }
 
 kernel_fn! {
+    /// #806: Start's granting arm; each result field is the same value term.
+    fn start_grant_value(n: Node, _next_ticket: u64, context: AdvanceContext, role: Role, out: &mut Outbox)
+        -> (result: Node) [
+        requires advance_pre(n, _next_ticket, old(out).len),
+            !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+                && current_item(n) == Some(Item::Start(role)),
+            context.pool, !n.paused, n.ticket.is_some(),
+        ensures result == (Node {
+            ticket: None, pool: true, run: Some(n.generation), pos: (n.pos + 1) as u8,
+            next_seq: (n.next_seq + 1) as u64,
+            effect: Some(InFlight { seq: n.next_seq, kind: EffectKind::StartRun(role), cancelling: false }),
+            ..n
+        }),
+            final(out).len == old(out).len + 1,
+            final(out).items@ == old(out).items@.update(old(out).len as int,
+                Some(Out::Effect { node: NodeId(context.node as u64), seq: n.next_seq,
+                    kind: EffectKind::StartRun(role), head: None })),
+            advance_post(n, result, _next_ticket, _next_ticket, true),
+            advance_enabled(n, context),
+            advance_family_post::grant_facts(n, result, context),
+            result.holds && !n.holds ==> result.run == n.run,
+    ] proof [reveal(advance_post); reveal(distance);] {
+        let mut m = n;
+        m.ticket = None;
+        m.pool = true;
+        m.run = Some(m.generation);
+        m.pos += 1;
+        emit_node(&mut m, context.node, EffectKind::StartRun(role), out);
+        kernel_proof! { advance_family_post::grant_from_fields(n, m, context); }
+        m
+    }
+}
+
+kernel_fn! {
     /// #806: the original Start transition over a copied node, with one write-back.
     fn advance_start_value(n: Node, next_ticket: u64,
         context: AdvanceContext, out: &mut Outbox, _report: &mut Report, role: Role)
@@ -796,14 +830,8 @@ kernel_fn! {
             return (node, ticket, true);
         }
         if context.pool {
-            let m = &mut node;
-            m.ticket = None;
-            m.pool = true;
-            m.run = Some(m.generation);
-            m.pos += 1;
-            emit_node(&mut node, context.node, EffectKind::StartRun(role), out);
+            node = start_grant_value(n, next_ticket, context, role, out);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            kernel_proof! { advance_family_post::grant_from_fields(n, node, context); }
             return (node, ticket, true);
         }
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
