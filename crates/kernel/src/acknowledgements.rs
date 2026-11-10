@@ -102,32 +102,39 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
         ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
             old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
 ] proof [reveal(distance);] {
-    kernel_snapshot! { ack_before = *w }
+    kernel_snapshot! { ack_node = w.nodes[i] }
+    kernel_snapshot! { ack_question = w.next_question }
     kernel_snapshot! { ack_out = *out }
     w.nodes[i].effect = None;
     if e.cancelling {
-        kernel_proof! { ack_cancel_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out); }
+        kernel_proof! { ack_cancel_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
         return;
     }
     match ack {
-        Ack::Confirmed => confirmed(&mut w.nodes[i], e.kind),
-        Ack::DeliveryAccepted => delivery_accepted(&mut w.nodes[i]),
-        Ack::Retryable => delivery_failed(w, i, e.kind, out),
-        Ack::Permanent => effect_failed(w, i, e.kind, out),
+        Ack::Confirmed => {
+            confirmed(&mut w.nodes[i], e.kind);
+            kernel_proof! { ack_confirmed_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
+        Ack::DeliveryAccepted => {
+            delivery_accepted(&mut w.nodes[i]);
+            kernel_proof! { ack_delivery_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
+        Ack::Retryable => {
+            delivery_failed(w, i, e.kind, out);
+            kernel_proof! { ack_retry_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
+        Ack::Permanent => {
+            effect_failed(w, i, e.kind, out);
+            kernel_proof! { ack_permanent_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
         Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
             stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody);
-        }
-        Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
-    }
-    kernel_proof! {
-        match ack {
-            Ack::Confirmed => ack_confirmed_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-            Ack::DeliveryAccepted => ack_delivery_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-            Ack::Retryable => ack_retry_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-            Ack::Permanent => ack_permanent_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-            Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => ack_review_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-            Ack::BodyPolicyRefused => ack_permanent_post(ack_before@.nodes@[i as int], w.nodes@[i as int], e, ack, ack_before@.next_question, w.next_question, i as int, ack_out@, *out),
-        }
+            kernel_proof! { ack_review_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
+        Ack::BodyPolicyRefused => {
+            effect_failed(w, i, e.kind, out);
+            kernel_proof! { ack_permanent_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
+        },
     }
 }
 }
