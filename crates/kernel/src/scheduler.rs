@@ -142,7 +142,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
             ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
         old(w).nodes@[i as int].holds
-            && !old(w).nodes@[i as int].paused
             && (old(w).nodes@[i as int].phase == Phase::Making
                 || old(w).nodes@[i as int].phase == Phase::Rebasing)
             ==> final(w).nodes@[i as int].holds,
