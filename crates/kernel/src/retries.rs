@@ -552,7 +552,7 @@ fn out_of_room_paid(n: Node) -> (result: ReplyChange) [
     let mut node = n;
     let note: Option<Notice> = None;
     node.credit = spend_v(node.credit, 1);
-    node.plan_retries = 0;
+    node.plan_retries = 1;
     node = set_phase_v(node, Phase::Planning { must_split: true });
     ReplyChange::Done { node, note }
 }
