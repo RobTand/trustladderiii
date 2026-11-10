@@ -350,18 +350,15 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
     let mut m = w.nodes[i];
     m.last_cmd = id;
     w.nodes[i] = m;
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m)); }
+    kernel_snapshot! { mid_world = *w }
+    kernel_proof! {
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
+            Node { last_cmd: id, ..before_rules_world@.nodes@[i as int] }));
+    }
     on_answer_exact(w, i, question, answer, out);
     kernel_proof! {
-        apply_command_safety::nodes_rewrite_frame(before_rules_world@.nodes@, i as int, m,
-            w.nodes@[i as int]);
-        apply_command_safety::answered_parts(before_rules_world@.nodes@[i as int],
-            before_rules_world@.next_question, id, question, answer);
-        apply_command_safety::answered_held_parts(before_rules_world@.nodes@[i as int],
-            before_rules_world@.next_question, id, question, answer, before_rules_world@.dependencies@,
-            NodeId(i as u64));
-        apply_command_safety::answer_world(before_rules_world@, *w, i, id, question, answer,
-            before_out@, *out);
+        apply_command_safety::answer_mid_world(before_rules_world@, mid_world@, *w, i, id, question,
+            answer, before_out@, *out);
     }
 }
 }

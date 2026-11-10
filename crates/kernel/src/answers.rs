@@ -155,12 +155,15 @@ pub(super) fn on_answer_exact(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     if withhold {
         w.withhold_dependency_credit(i);
+        kernel_proof! {
+            let n = w.nodes@[i as int];
+            assert(n == handler_safety::unwithheld(n1, n.credit.withheld));
+        }
     }
     kernel_proof! {
-        reveal(apply_command_safety::held_answer);
-        assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, apply_command_safety::held_answer(
-            before_answer@, before_exact@.next_question, id, answer, before_exact@.dependencies@,
-            NodeId(i as u64))));
+        apply_command_safety::held_answer_is(before_answer@, before_exact@.next_question, id, answer,
+            before_exact@.dependencies@, NodeId(i as u64), w.nodes@[i as int]);
+        assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, w.nodes@[i as int]));
     }
     w.next_question = nq1;
     match note {
