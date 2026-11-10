@@ -93,7 +93,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         w.withhold_dependency_credit(i);
         kernel_proof! {
             answer_rules::owner_after_withhold(mid_world@.nodes@[i as int], w.nodes@[i as int],
-                dependencies::prerequisites_delivered(mid_world@, NodeId(i as u64)));
+                dependencies::prerequisites_delivered(mid_world@, NodeId(i as u64)), before_answer@, id, answer);
             dependencies::prerequisite_definition(mid_world@, NodeId(i as u64));
             dependencies::prerequisite_definition(before_answer_rules@, NodeId(i as u64));
         }
@@ -111,6 +111,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         }
     }
     kernel_proof! {
+        answer_rules::owner_without_withhold(n1, before_answer@, id, answer);
         handler_safety::answer_pair_intro(before_answer@, n1, w.nodes@[i as int], id, answer,
             w.dependencies@, NodeId(i as u64));
     }
@@ -171,12 +172,9 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         result.0.credit.withheld == n.credit.withheld,
         nq <= result.1,
         (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
-        // E2.N4c (rule 6): a waiting owner's rows over the answered node.
-        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n)) ==> (
-            !result.0.planning_started && dependencies::waits(result.0.question) && dependencies::blocked_phase(result.0.phase)
-            && (result.0.phase == Phase::Unplanned ==> !result.0.holds && !result.0.pool && result.0.ticket.is_none() && result.0.run.is_none())
-            && (dependencies::early(result.0.phase) ==> dependencies::zero_credit(result.0.credit)
-                || (handler_safety::answer_withholds(n, id, answer) && result.0.credit.ready)))),
+        // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom).
+        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+            ==> answer_rules::owner_rows(result.0, n, id, answer)),
 ] {
     let result = answer_value(n, nq, id, answer);
     kernel_proof! {

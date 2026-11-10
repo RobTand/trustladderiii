@@ -73,27 +73,57 @@ pub(super) proof fn rules_after_last_cmd(before: World, after: World, a: Node, n
 }
 
 
-/// E2.N4c (CONTRACTS.md v2.41, rule 6): a waiting owner's rows over the exact answered value. With node
-/// rules, a waiting owner's open question fits only an early or stop continuation (question_fits); Continue
-/// into an early phase keeps zero credit or is a withholding answer on ready credit.
-pub(super) proof fn answer_owner_rows(b: Node, nq: u64, id: u64, answer: Answer)
-    ensures ({ let r = apply_answer_values::answered(b, nq, id, answer).0;
-        (handler_safety::node_rules_v(b, nq) && dependencies::owner_waiting_ok(b)) ==> (
-            !r.planning_started && dependencies::waits(r.question) && dependencies::blocked_phase(r.phase)
-            && (r.phase == Phase::Unplanned ==> !r.holds && !r.pool && r.ticket.is_none() && r.run.is_none())
-            && (dependencies::early(r.phase) ==> dependencies::zero_credit(r.credit)
-                || (handler_safety::answer_withholds(b, id, answer) && r.credit.ready))) }),
-{
-    reveal(apply_answer_values::answered);
-    reveal(apply_answer_values::retried_answer);
-    reveal(handler_safety::node_rules_v);
-    reveal(dependencies::zero_credit);
-    reveal(retirement::stopped);
+/// E2.N4c (CONTRACTS.md v2.41): a waiting owner's rows over an answered node (form rule 2: opaque inside
+/// apply; consumers see only the frozen N4c clause).
+#[verifier::opaque]
+pub(super) open spec fn owner_rows(r: Node, b: Node, id: u64, answer: Answer) -> bool {
+    !r.planning_started && dependencies::waits(r.question) && dependencies::blocked_phase(r.phase)
+        && (r.phase == Phase::Unplanned ==> !r.holds && !r.pool && r.ticket.is_none() && r.run.is_none())
+        && (dependencies::early(r.phase) ==> dependencies::zero_credit(r.credit)
+            || (handler_safety::answer_withholds(b, id, answer) && r.credit.ready))
 }
 
-/// E2.N4c (rule 7): the withhold step. The premise is withhold_dependency_credit's post verbatim
-/// (d = prerequisites_delivered of the world it ran on).
-pub(super) proof fn owner_after_withhold(a: Node, f: Node, d: bool)
+/// E2.N4c (rule 6): with node rules, a waiting owner's open question fits only an early or stop continuation
+/// (question_fits), so every answer arm keeps the owner rows over the exact answered value.
+pub(super) proof fn answer_owner_rows(b: Node, nq: u64, id: u64, answer: Answer)
+    ensures (handler_safety::node_rules_v(b, nq) && dependencies::owner_waiting_ok(b))
+        ==> owner_rows(apply_answer_values::answered(b, nq, id, answer).0, b, id, answer),
+{
+    reveal(owner_rows);
+    reveal(apply_answer_values::answered);
+    if handler_safety::node_rules_v(b, nq) && dependencies::owner_waiting_ok(b) {
+        reveal(handler_safety::node_rules_v);
+        reveal(dependencies::zero_credit);
+        let r = apply_answer_values::answered(b, nq, id, answer).0;
+        match b.question {
+            None => { assert(r == b); }
+            Some(q) => {
+                if q.id != id {
+                    assert(r == b);
+                } else {
+                    match b.phase {
+                        Phase::Stopping(_) => {
+                            // Retry / MarkHandled keep the Stopping phase and planning_started.
+                        }
+                        Phase::AwaitingRob => {
+                            assert(question_fits(q));
+                            assert(dependencies::waits(Some(q)));
+                            reveal(retirement::stopped);
+                            if answer == Answer::Continue && apply_answer_values::permits(q.kind, answer) {
+                                assert(q.kind == QKind::AuditDisagreement || q.kind == QKind::EffectFailed);
+                            }
+                        }
+                        _ => { assert(r == b); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// E2.N4c (rule 7), withhold branch: premises = answer_node's atom and withhold_dependency_credit's post
+/// verbatim (d = prerequisites_delivered of the world it ran on).
+pub(super) proof fn owner_after_withhold(a: Node, f: Node, d: bool, b: Node, id: u64, answer: Answer)
     requires f == (Node {
             credit: Credit {
                 withheld: a.credit.withheld
@@ -107,12 +137,19 @@ pub(super) proof fn owner_after_withhold(a: Node, f: Node, d: bool)
             },
             ..a
         }),
-    ensures (!a.planning_started && dependencies::waits(a.question) && dependencies::blocked_phase(a.phase)
-            && (a.phase == Phase::Unplanned ==> !a.holds && !a.pool && a.ticket.is_none() && a.run.is_none())
-            && (dependencies::early(a.phase) ==> dependencies::zero_credit(a.credit) || a.credit.ready))
+    ensures owner_rows(a, b, id, answer) && handler_safety::answer_withholds(b, id, answer)
         ==> d || dependencies::owner_waiting_ok(f),
 {
+    reveal(owner_rows);
     reveal(dependencies::zero_credit);
+}
+
+/// E2.N4c (rule 7), no-withhold branch.
+pub(super) proof fn owner_without_withhold(a: Node, b: Node, id: u64, answer: Answer)
+    ensures owner_rows(a, b, id, answer) && !handler_safety::answer_withholds(b, id, answer)
+        ==> dependencies::owner_waiting_ok(a),
+{
+    reveal(owner_rows);
 }
 
 }
