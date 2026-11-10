@@ -953,7 +953,7 @@ fn ack_body_policy_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outb
         kind == EffectKind::OpenPr ==> result.2 == out,
 ] proof [reveal(ack_body_policy_spec);] {
     if kind == EffectKind::OpenPr {
-        let m = ack_stopped_value(Node { review_stop: Some(ReviewStop::PublicationBody), ..n });
+        let m = ack_stopped_value(Node { review_stop: Some(ReviewStop::ChecksFailed), ..n });
         (m, nq, out)
     } else { ack_permanent_value(n, i, kind, nq, out) }
 }
