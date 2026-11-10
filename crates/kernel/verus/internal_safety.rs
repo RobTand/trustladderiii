@@ -312,7 +312,7 @@ pub(super) proof fn apply_step_preserves_accepted(before: World, after: World, i
 /// C1 for every family that leaves the dependency table alone: the dependency
 /// rules come from the checker's node-update export (N4).
 pub(super) proof fn apply_step_preserves_accepted_full(before: World, after: World, i: int)
-    requires checking::accepted(before), apply_n5_frame(before, after, i), apply_n1_rules(after, i),
+    requires checking::accepted(before), apply_n5_frame(before, after, i),
         apply_n2_no_grants(before.nodes@[i], after.nodes@[i]),
         apply_n3_footprint(after, before.nodes@[i], i),
         apply_n4_dependencies(before, after, i),
