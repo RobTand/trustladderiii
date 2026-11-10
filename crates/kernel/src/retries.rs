@@ -132,7 +132,7 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
         final(m).plan_retries == old(m).plan_retries,
 ] proof [reveal(retirement::stopped);] {
     m.review_stop = Some(step);
-    enter_stopping(m, Outcome::Stopped);
+    enter_stopping(m, Outcome::Stopped); m.attempt = m.attempt.saturating_add(1);
 }
 }
 
