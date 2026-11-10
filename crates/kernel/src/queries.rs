@@ -19,6 +19,7 @@ pub enum Wait {
 }
 
 impl Node {
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify(external_body))]
     pub fn waiting_on(&self) -> Wait {
         if self.waiting_incident {
             Wait::Incident
