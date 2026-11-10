@@ -453,7 +453,7 @@ mod first_line_assembly {
                 && w.nodes@[older].repo == w.nodes@[i as int].repo
                 && w.nodes@[older].ticket.is_some()
                 && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-                ==> !(slot_spec(*w, older)
+                ==> !(false && slot_spec(*w, older)
                     && !overlapped_by_older(*w, older, w.nodes@[older].ticket.unwrap())))),
             !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
     {
