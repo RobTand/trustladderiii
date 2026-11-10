@@ -702,8 +702,20 @@ pub(super) proof fn held_withheld(b: Node, nq: u64, id: u64, question: u64, answ
     handler_safety::step_withheld(a, apply_answer_values::answered(a, nq, question, answer).0);
 }
 
+/// L1 re-stack: answer_pair ignores last_cmd, and a fresh id keeps the guard.
+pub(super) proof fn answer_pair_last_cmd(b: Node, id: u64, n: Node, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::answer_pair(Node { last_cmd: id, ..b }, n, true, question, answer, table, node),
+        id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
+{
+    reveal(handler_safety::answer_pair);
+    reveal(handler_safety::command_step);
+}
+
 /// L1 re-stack (fix 2): the answer_pair row of the held node by L1's own route:
-/// answer_pair_intro over the plain held node n, then answer_pair_rebase to b.
+/// answer_pair_intro over the plain held node n, then the Node-equation-free rebase to b
+/// (design review 11-10: L1's answer_pair_rebase takes a whole-Node equation premise).
 pub(super) proof fn answer_pair_row(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires n == answered_held(b, nq, id, question, answer, table, node),
@@ -718,7 +730,7 @@ pub(super) proof fn answer_pair_row(b: Node, n: Node, nq: u64, id: u64, question
     held_fields(b, nq, id, question, answer, table, node);
     held_withheld(b, nq, id, question, answer, table, node);
     handler_safety::answer_pair_intro(a, x, n, question, answer, table, node);
-    handler_safety::answer_pair_rebase(b, a, n, id > b.last_cmd, question, answer, table, node);
+    answer_pair_last_cmd(b, id, n, question, answer, table, node);
 }
 
 /// Answer: the entry's equality and bound rows, verbatim over (b, n).
