@@ -220,7 +220,7 @@ pub(super) proof fn plan_bounds(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan(n, c.fast, c.reply)),
-        c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
+        c.reply != Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
             reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet),
 
