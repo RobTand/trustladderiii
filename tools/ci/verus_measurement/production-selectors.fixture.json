@@ -1,7 +1,7 @@
 {
-  "source_head": "04433751b016b0173483b99eadb6b8ae75411065",
+  "source_head": "0ab9e6e260f75f1b034062af3592edaff9541605",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "6c6971a19465f2190435a660b968b6460dcd967e786f509ff0024585b2696e77",
+  "source_sha256": "339856b8f7438e683bc17969ae4923a1503e99f100ec4beb60a5803858bc5b16",
   "groups": 809,
   "obligations": 1014,
   "selections": [
@@ -2632,7 +2632,7 @@
     },
     {
       "target": "//crates/kernel:verus_events",
-      "selector": "kernel::events#apply",
+      "selector": "kernel::events#apply_proved",
       "expected": 1
     },
     {
