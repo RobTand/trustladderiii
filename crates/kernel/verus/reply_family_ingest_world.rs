@@ -19,7 +19,7 @@ pub(super) open spec fn final_node(n: Node, reply: Reply, delivered: bool) -> No
 }
 
 pub(super) proof fn ingest_done(n: Node, reply: Reply)
-    ensures reply_family_values::ingest(n, reply) is Done,
+    ensures reply_family_values::ingest(n, reply) is Ask,
 {
     reveal(reply_family_values::ingest);
 }
