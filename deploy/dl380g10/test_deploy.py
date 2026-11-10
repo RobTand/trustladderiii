@@ -407,7 +407,8 @@ class FreshInitTests(unittest.TestCase):
     def test_worker_guard_malformed_and_unreadable_records_refuse(self):
         with self.recorded_worker() as (path, identity):
             for value in ([], {}, dict(identity, pid=True), dict(identity, pid=-1), dict(identity, start="456"),
-                          dict(identity, machine="foreign"), {"cancelled": False}, {"cancelled": True, "pid": 123}):
+                          dict(identity, machine="foreign"), dict(identity, pid=2**31), dict(identity, start=2**64),
+                          {"cancelled": False}, {"cancelled": 1}, {"cancelled": True, "pid": 123}):
                 with self.subTest(value=value):
                     deploy.write_file(path, json.dumps(value).encode())
                     with self.assertRaises(RuntimeError):
@@ -450,7 +451,7 @@ class FreshInitTests(unittest.TestCase):
                     fixture.doCleanups()
 
     def test_worker_guard_cleanup_failure_keeps_postgres_and_preserves_original(self):
-        for failed in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE):
+        for failed in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service"):
             states = {unit: "active" for unit in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")}
             stops = []
 
@@ -467,7 +468,8 @@ class FreshInitTests(unittest.TestCase):
                  patch.object(deploy, "unit_state", side_effect=lambda unit: states[unit]):
                 with self.assertRaisesRegex(RuntimeError, "NOT established"):
                     deploy.freeze_fresh_attempt(self.home)
-                self.assertNotIn("tl3-postgres.service", stops)
+                if failed != "tl3-postgres.service":
+                    self.assertNotIn("tl3-postgres.service", stops)
                 if failed == "tl3d.service":
                     self.assertNotIn(deploy.WORKER_SLICE, stops)
         with self.fresh_attempt(failure=RuntimeError("original stability failure")) as args, \
@@ -475,6 +477,17 @@ class FreshInitTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "original stability failure") as caught:
                 deploy.fresh_init(args)
         self.assertIn("cleanup NOT established", " ".join(caught.exception.__notes__))
+
+    def test_worker_guard_cleanup_verifies_final_state_and_bounds_stops(self):
+        self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})
+        with patch.object(deploy, "require_workers_stopped", side_effect=[None, RuntimeError("late worker")]):
+            with self.assertRaisesRegex(RuntimeError, "final quiescence"):
+                deploy.freeze_fresh_attempt(self.home)
+        self.assertTrue(all(call.kwargs["timeout"] == 150 for call in deploy.run.call_args_list
+                            if call.args[0][:3] == ["systemctl", "--user", "stop"]))
+        self.states["tl3d.service"] = "deactivating"
+        with self.assertRaisesRegex(RuntimeError, "NOT established"):
+            deploy.freeze_fresh_attempt(self.home)
 
     def test_worker_guard_cleanup_does_not_claim_stopped_with_lingering_record(self):
         self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})

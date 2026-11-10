@@ -397,12 +397,14 @@ EVIDENCE_ROOT = Path("/home/rob/tmp/tl3-build/rust-fv/captain/evidence")
 
 def recorded_worker_alive(identity):
     """Check only a recorded PID, failing closed on unreadable identities."""
-    if identity == {"cancelled": True}:
+    if isinstance(identity, dict) and set(identity) == {"cancelled"} and identity["cancelled"] is True:
         return False
     if (not isinstance(identity, dict)
             or any(type(identity.get(key)) is not int or identity[key] <= 0 for key in ("pid", "start"))
             or any(not isinstance(identity.get(key), str) or not identity[key] for key in ("machine", "boot"))):
         raise RuntimeError("malformed TL3 worker identity")
+    if identity["pid"] > 2**31 - 1 or identity["start"] > 2**64 - 1:
+        raise RuntimeError("malformed TL3 worker identity range")
     if Path("/etc/machine-id").read_text().strip() != identity["machine"]:
         raise RuntimeError("TL3 worker identity belongs to another machine")
     if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != identity["boot"]:
@@ -481,6 +483,12 @@ def freeze_fresh_attempt(home):
         errors.append(f"quiescence: {error}")
     if not errors:
         stop("tl3-postgres.service")
+    if not errors:
+        try:
+            require_stopped(*CLIENT_UNITS, "tl3-postgres.service")
+            require_workers_stopped(home)
+        except Exception as error:
+            errors.append(f"final quiescence: {error}")
     if errors:
         raise RuntimeError("frozen state NOT established; " + "; ".join(errors))
 
