@@ -163,7 +163,7 @@ pub(super) proof fn outside_scalar_posts(n: Node, nq: u64, head: HeadId)
 }
 
 pub(super) proof fn outside_node_step(n: Node, nq: u64, head: HeadId)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires true, arithmetic_consistent(n), nq < u64::MAX,
     ensures transition_safety::node_step(n,
         reply_family_values::finish(nq, outside_change(n, head))),
 {
