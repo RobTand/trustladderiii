@@ -80,7 +80,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
         && (n.effect == b.effect)
         && (n.fx_failures == 0)
         && (n.fx_incidents == 0)
-        && (n.run == (if kind == EffectKind::StopRun { None } else { b.run }))
+        && (n.run == b.run)
         && (n.pool == (if kind == EffectKind::StopRun { false } else { b.pool }))
         && (n.job == (if kind == EffectKind::WithdrawJob { None } else { b.job }))
         && (n.pr_open == (if kind == EffectKind::ClosePr { false } else { b.pr_open }))
