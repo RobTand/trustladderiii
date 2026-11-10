@@ -7847,7 +7847,11 @@ fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
     assert_eq!(backend.cleanup_maintenance(now).unwrap().pending.len(), 2);
     let failures = api::durable::maintenance_failures(&journal).unwrap();
     assert_eq!(
-        failures.iter().find(|f| f.key == "b-owner").unwrap().next_attempt_ms,
+        failures
+            .iter()
+            .find(|f| f.key == "b-owner")
+            .unwrap()
+            .next_attempt_ms,
         0
     );
     if check_timer {
@@ -7872,9 +7876,11 @@ fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
         );
     }
     for failure in api::durable::maintenance_failures(&root.path().join("journal")).unwrap() {
-        assert!(failure.message.contains(
-            "independent trusted runtime cleanup entry unavailable"
-        ));
+        assert!(
+            failure
+                .message
+                .contains("independent trusted runtime cleanup entry unavailable")
+        );
     }
 }
 
@@ -8143,7 +8149,9 @@ fn cleanup_maintenance_prior_incident(source: u8) {
             digest(format!("PrismaBuild:maintenance-error:{key}").as_bytes())
         );
         assert!(
-            snapshot.rows.iter()
+            snapshot
+                .rows
+                .iter()
                 .filter(|row| row.table == "incidents" && row.value["open"] == true)
                 .all(|row| row.value["id"] == id || row.value["id"] == diagnostic),
             "identity recovery must not keep an incident for a different owner"
