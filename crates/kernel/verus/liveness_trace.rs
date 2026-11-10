@@ -26,7 +26,7 @@ pub(super) open spec fn initial(w: World, t: u64) -> bool {
 }
 
 pub(super) proof fn young_frame(b: World, n: World, i: int, t: u64)
-    requires b.nodes@[0] == n.nodes@[0], b.nodes@[i] == n.nodes@[i], b.file_sets@ == n.file_sets@,
+    requires b.nodes@[0] == n.nodes@[0], b.file_sets@ == n.file_sets@,
     ensures initial_young(b, i, t) == initial_young(n, i, t),
         reserved(b, i, t) == reserved(n, i, t),
 {
