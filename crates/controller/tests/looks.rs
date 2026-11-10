@@ -1842,6 +1842,9 @@ fn main() {
     if std::env::args().any(|arg| arg == "--cleanup-maintenance") {
         let mut db = support::Database::start();
         cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
+        cleanup_maintenance_busy_owner_does_not_hold_other_incidents(
+            &db.create("cleanup_maintenance_busy_owners"),
+        );
         cleanup_maintenance_adapter_errors_do_not_block_looks(
             &db.create("cleanup_maintenance_errors"),
         );
@@ -2010,6 +2013,9 @@ fn main() {
     let mut db = support::Database::start();
     subscription_error_is_isolated(&db.create("subscription_errors"));
     cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
+    cleanup_maintenance_busy_owner_does_not_hold_other_incidents(
+        &db.create("cleanup_maintenance_busy_owners"),
+    );
     cleanup_maintenance_adapter_errors_do_not_block_looks(&db.create("cleanup_maintenance_errors"));
     assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
@@ -3119,7 +3125,6 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
                 && r.value["signature"]["class"] == "runtime_cleanup"
                 && r.value["open"] == false)
     );
-    cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings);
 }
 
 fn cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings: &tl3_config::Store) {
