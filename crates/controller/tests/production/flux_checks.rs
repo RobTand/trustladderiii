@@ -114,6 +114,7 @@ impl Preparation for Staging {
 #[derive(Default)]
 struct State {
     maintenance_resumes: usize,
+    maintenance_due: Option<u64>,
     submits: usize,
     cancels: usize,
     unknown_submit: bool,
@@ -145,6 +146,9 @@ impl Backend {
     }
 }
 impl RunBackend for Backend {
+    fn next_cleanup_maintenance_ms(&self) -> api::Result<Option<u64>> {
+        Ok(self.state.lock().unwrap().maintenance_due)
+    }
     fn cleanup_maintenance(&self, _: u64) -> api::Result<Vec<Owner>> {
         self.state.lock().unwrap().maintenance_resumes += 1;
         Ok(vec![])
@@ -154,6 +158,7 @@ impl RunBackend for Backend {
         _: u64,
         authorize: &dyn Fn(&Owner) -> api::Result<()>,
     ) -> api::Result<Vec<Owner>> {
+        self.state.lock().unwrap().maintenance_due = None;
         let Some(intent) = self
             .state
             .lock()
@@ -794,5 +799,22 @@ fn flux_checks_maintenance_fences_retained_delivery_epoch_and_isolates_bad_jobs(
     assert!(!restarted.cleanup_maintenance(1_600_000).unwrap().is_empty());
     assert_eq!(backend.state.lock().unwrap().maintenance_resumes, 1);
     drop((restarted, ownership));
+    database.stop();
+}
+
+#[test]
+fn flux_checks_maintenance_watch_failures_back_off_without_backend_work() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership = Ownership::claim(Store::open(&database.create("maintenance_watch_backoff")).unwrap()).unwrap();
+    let (mut adapter, backend, _, _) = setup(root.path(), &mut ownership);
+    adapter.execute(&delivery()).unwrap();
+    drop(adapter.source().unwrap());
+    backend.state.lock().unwrap().maintenance_due = Some(0);
+    assert!(!adapter.cleanup_maintenance(1_000_000).unwrap().is_empty());
+    assert_eq!(adapter.next_cleanup_maintenance_ms().unwrap(), Some(1_300_000));
+    assert!(!adapter.cleanup_maintenance(1_300_000).unwrap().is_empty());
+    assert_eq!(adapter.next_cleanup_maintenance_ms().unwrap(), Some(1_600_000), "a failed watch is retried and backed off even when no backend cleanup is due");
+    drop((adapter, ownership));
     database.stop();
 }
