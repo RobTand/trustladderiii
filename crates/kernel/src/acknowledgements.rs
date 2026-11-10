@@ -659,7 +659,7 @@ proof fn ack_cancel_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: 
 proof fn ack_confirmed_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
     requires !e.cancelling, ack_case_common(b, n, e, i, ob, oa),
         ack == Ack::Confirmed, nqa == nq, oa == ob,
-        n == agenda_spec(resources_spec(Node { effect: None, ..b }, e.kind), e.kind),
+        true,
         n.review_stop == b.review_stop,
     ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
 {
