@@ -7,7 +7,7 @@ verus! {
 pub(super) proof fn free_after_release(b: World, n: World, k: int, t: u64)
     requires context(b, k), context(n, k + 24),
         advance_family_post::ready_unobstructed(b.nodes@[0]), b.nodes@[0].ticket == Some(t),
-        b.nodes@[1].holds, n.nodes@[1].phase is Closed,
+        n.nodes@[1].phase is Closed,
         n.nodes@ == b.nodes@.update(1, n.nodes@[1]),
         n.gates@ == b.gates@, n.file_sets@ == b.file_sets@,
         reserved(b, 2, t), reserved(b, 3, t),
