@@ -339,7 +339,7 @@ pub(super) proof fn ingest_bounds(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::ingest(n, c.reply)),
-        reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply)).footprint != n.footprint,
 {
     reveal(reply_family_values::ingest);
     match c.reply {
