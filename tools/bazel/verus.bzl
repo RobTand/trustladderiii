@@ -766,6 +766,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_dispatch_stop": ("kernel::apply_command_safety#dispatch_stop", 1),
+            "apply_command_safety_dispatch_change_request": ("kernel::apply_command_safety#dispatch_change_request", 1),
+            "apply_command_safety_dispatch_pause": ("kernel::apply_command_safety#dispatch_pause", 1),
+            "apply_command_safety_dispatch_resume": ("kernel::apply_command_safety#dispatch_resume", 1),
+            "apply_command_safety_dispatch_answer": ("kernel::apply_command_safety#dispatch_answer", 1),
             "apply_command_safety_answered_parts": ("kernel::apply_command_safety#answered_parts", 1),
             "apply_command_safety_answer_node_frame": ("kernel::apply_command_safety#answer_node_frame", 1),
             "apply_command_safety_answer_node_resources": ("kernel::apply_command_safety#answer_node_resources", 1),
