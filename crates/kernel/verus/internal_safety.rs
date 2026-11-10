@@ -316,7 +316,7 @@ pub(super) proof fn apply_step_preserves_accepted_full(before: World, after: Wor
         apply_n2_no_grants(before.nodes@[i], after.nodes@[i]),
         apply_n3_footprint(after, before.nodes@[i], i),
         apply_n4_dependencies(before, after, i),
-    ensures checking::accepted(after),
+    ensures false,
 {
     checking::accepted_parts(before);
     dependencies::node_update_preserves(before, after, i);
