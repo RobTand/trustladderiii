@@ -144,35 +144,16 @@ fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
-    kernel_proof! {
-        if retirement::node_rules(*w, w.nodes@[i as int]) {
-            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
-            handler_safety::last_cmd_rules_v(w.nodes@[i as int], w.next_question, id);
-        }
-    }
-
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
     w.nodes[i].last_cmd = id;
     kernel_snapshot! { after_id = w.nodes@[i as int] }
+    kernel_proof! { assert(after_id@ == Node { last_cmd: id, ..before_command_node@ }); }
     enter_stopping(&mut w.nodes[i], Outcome::Stopped);
     kernel_proof! {
-        handler_safety::stop_step(after_id@, Outcome::Stopped);
-        reveal(progress_gate_apply::resume_post);
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
+            retirement::stopped(Node { last_cmd: id, ..before_command_node@ }, Outcome::Stopped)));
+        apply_command_safety::stop_world(before_rules_world@, *w, i, id);
     }
-    kernel_proof! {
-        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
-        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
-    }
-
-    kernel_proof! {
-        handler_safety::stopped_no_grants(after_id@, Outcome::Stopped);
-        if retirement::node_rules(before_rules_world@, before_command_node@) {
-            handler_safety::stopped_rules_v(after_id@, Outcome::Stopped, before_rules_world@.next_question);
-            handler_safety::rules_world_update(before_rules_world@, *w, before_command_node@, w.nodes@[i as int]);
-        }
-    }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }
 
@@ -228,38 +209,16 @@ fn change_request_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
-    kernel_proof! {
-        if retirement::node_rules(*w, w.nodes@[i as int]) {
-            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
-            handler_safety::last_cmd_rules_v(w.nodes@[i as int], w.next_question, id);
-        }
-    }
-
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
     w.nodes[i].last_cmd = id;
     kernel_snapshot! { after_id = w.nodes@[i as int] }
-    kernel_proof! {
-        assert(distance(after_id@) == distance(before_command_node@)) by { reveal(distance); }
-    }
+    kernel_proof! { assert(after_id@ == Node { last_cmd: id, ..before_command_node@ }); }
     enter_stopping(&mut w.nodes[i], Outcome::Replaced);
     kernel_proof! {
-        handler_safety::stop_step(after_id@, Outcome::Replaced);
-        reveal(progress_gate_apply::resume_post);
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
+            retirement::stopped(Node { last_cmd: id, ..before_command_node@ }, Outcome::Replaced)));
+        apply_command_safety::change_request_world(before_rules_world@, *w, i, id);
     }
-    kernel_proof! {
-        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
-        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
-    }
-
-    kernel_proof! {
-        handler_safety::stopped_no_grants(after_id@, Outcome::Replaced);
-        if retirement::node_rules(before_rules_world@, before_command_node@) {
-            handler_safety::stopped_rules_v(after_id@, Outcome::Replaced, before_rules_world@.next_question);
-            handler_safety::rules_world_update(before_rules_world@, *w, before_command_node@, w.nodes@[i as int]);
-        }
-    }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }
 
@@ -314,9 +273,8 @@ fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
-kernel_snapshot! { before_rules_world = *w }
+    kernel_snapshot! { before_rules_world = *w }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
-    kernel_proof! { apply_command_safety::pause_facts(*w, w.nodes@[i as int], id); }
     w.nodes[i].last_cmd = id;
     kernel_snapshot! { after_id = w.nodes@[i as int] }
     kernel_proof! { assert(after_id@ == Node { last_cmd: id, ..before_command_node@ }); }
@@ -325,12 +283,9 @@ kernel_snapshot! { before_rules_world = *w }
         m.paused = true;
     }
     kernel_proof! {
-        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
-        if retirement::node_rules(before_rules_world@, before_command_node@) {
-            handler_safety::rules_world_update(before_rules_world@, *w,
-                before_command_node@, w.nodes@[i as int]);
-        }
-        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int]));
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
+            apply_command_safety::pause_node(before_command_node@, id)));
+        apply_command_safety::pause_world(before_rules_world@, *w, i, id);
     }
 }
 }

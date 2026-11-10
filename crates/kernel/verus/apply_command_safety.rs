@@ -131,4 +131,248 @@ pub(super) proof fn nodes_rewrite_frame(s: Seq<Node>, i: int, a: Node, x: Node)
     assert(s.update(i, a).update(i, x) =~= s.update(i, x));
 }
 
+
+/// Stop world bridge.
+/// Opus 1110: stop_command's ensures verbatim over (before, after) from the exact node-table
+/// equation, so the entry's query holds no node row derivation under its mutable borrow.
+pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
+    requires i < before.nodes@.len(),
+        node_headroom(before.nodes@[i as int]),
+        id > before.nodes@[i as int].last_cmd,
+        after.nodes@ == before.nodes@.update(i as int,
+            retirement::stopped(Node { last_cmd: id, ..before.nodes@[i as int] }, Outcome::Stopped)),
+        after.next_ticket == before.next_ticket,
+        after.next_question == before.next_question,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Stop))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::Stop) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Stop)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+    let b = before.nodes@[i as int];
+    let a = Node { last_cmd: id, ..b };
+    let v = retirement::stopped(a, Outcome::Stopped);
+    assert(after.nodes@[i as int] == v);
+    allocation_stopping_lemmas::stopping_frame(a, v, Outcome::Stopped);
+    handler_safety::stop_step(a, Outcome::Stopped);
+    handler_safety::last_cmd_step(b, a, v);
+    handler_safety::step_identity(b, v);
+    handler_safety::stopped_no_grants(a, Outcome::Stopped);
+    reveal(progress_gate_apply::resume_post);
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::stopped_rules_v(a, Outcome::Stopped, before.next_question);
+        handler_safety::rules_world_update(before, after, b, v);
+    }
+}
+
+/// ChangeRequest world bridge.
+/// Opus 1110: change_request_command's ensures verbatim over (before, after) from the exact node-table
+/// equation, so the entry's query holds no node row derivation under its mutable borrow.
+pub(super) proof fn change_request_world(before: World, after: World, i: usize, id: u64)
+    requires i < before.nodes@.len(),
+        node_headroom(before.nodes@[i as int]),
+        id > before.nodes@[i as int].last_cmd,
+        after.nodes@ == before.nodes@.update(i as int,
+            retirement::stopped(Node { last_cmd: id, ..before.nodes@[i as int] }, Outcome::Replaced)),
+        after.next_ticket == before.next_ticket,
+        after.next_question == before.next_question,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::ChangeRequest))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::ChangeRequest) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::ChangeRequest)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+    let b = before.nodes@[i as int];
+    let a = Node { last_cmd: id, ..b };
+    let v = retirement::stopped(a, Outcome::Replaced);
+    assert(after.nodes@[i as int] == v);
+    allocation_stopping_lemmas::stopping_frame(a, v, Outcome::Replaced);
+    handler_safety::stop_step(a, Outcome::Replaced);
+    handler_safety::last_cmd_step(b, a, v);
+    handler_safety::step_identity(b, v);
+    handler_safety::stopped_no_grants(a, Outcome::Replaced);
+    reveal(progress_gate_apply::resume_post);
+    if node_checked(before, b) && command_progress_input(b, Command::ChangeRequest) {
+        allocation_stopping_lemmas::stopping_progress(a, v, Outcome::Replaced);
+        handler_safety::distance_last_cmd(b, id);
+    }
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::stopped_rules_v(a, Outcome::Replaced, before.next_question);
+        handler_safety::rules_world_update(before, after, b, v);
+    }
+}
+
+/// Pause: the exact node pause_command's unchanged statements leave at index i.
+pub(super) open spec fn pause_node(b: Node, id: u64) -> Node {
+    if b.phase is Stopping || b.phase is Closed {
+        Node { last_cmd: id, ..b }
+    } else {
+        Node { paused: true, ..Node { last_cmd: id, ..b } }
+    }
+}
+
+/// Pause world bridge (opus 1110): pause_command's ensures verbatim over (before, after)
+/// from the exact node-table equation; pause_facts supplies the opaque node atoms.
+pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
+    requires i < before.nodes@.len(),
+        id > before.nodes@[i as int].last_cmd,
+        after.nodes@ == before.nodes@.update(i as int, pause_node(before.nodes@[i as int], id)),
+        after.next_ticket == before.next_ticket,
+        after.next_question == before.next_question,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Pause))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::Pause) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Pause)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+    let b = before.nodes@[i as int];
+    let a = Node { last_cmd: id, ..b };
+    let p = Node { paused: true, ..a };
+    pause_facts(before, b, id);
+    assert(after.nodes@[i as int] == pause_node(b, id));
+    if b.phase is Stopping || b.phase is Closed {
+        assert(after.nodes@[i as int] == a);
+        handler_safety::step_identity(b, a);
+        if retirement::node_rules(before, b) {
+            handler_safety::rules_world_update(before, after, b, a);
+        }
+    } else {
+        assert(after.nodes@[i as int] == p);
+        handler_safety::step_identity(b, p);
+        if retirement::node_rules(before, b) {
+            handler_safety::rules_world_update(before, after, b, p);
+        }
+    }
+}
+
 }
