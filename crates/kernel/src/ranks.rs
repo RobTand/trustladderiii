@@ -102,6 +102,24 @@ pub closed spec fn pending_rank(n: Node) -> nat {
     } }
 }
 
+pub(super) proof fn pending_rank_definition(n: Node)
+    ensures pending_rank(n) == (
+    if n.phase is Closed { 0 }
+    else if n.waiting_incident { if n.ticket.is_some() { 1 } else { 0 } }
+    else if n.effect.is_some() { 0 }
+    else if pause_due(n) { 3 }
+    else { match current_item(n) {
+        Some(Item::Start(_) | Item::Slot) => match (n.paused, n.ticket) {
+            (false, None) => 2,
+            (true, Some(_)) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    } }
+),
+{
+}
+
 pub(super) open spec fn base_distance(n: Node) -> nat {
     let rank = match n.phase {
         Phase::AwaitingRob => match n.question {
