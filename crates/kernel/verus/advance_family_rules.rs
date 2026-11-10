@@ -113,4 +113,16 @@ pub(super) proof fn holds_from_frame(b: Node, a: Node)
     reveal(advance_family_post::holds_frame);
 }
 
+
+/// F2/R30: expose the literal Ready grant's phase and local frames.
+pub(super) proof fn slot_resume_from_grant(b: Node, a: Node, c: AdvanceContext, changed: bool)
+    requires advance_family_post::ready_unobstructed(b), changed,
+        advance_family_post::slot_grant(b, a, c, changed),
+    ensures a.phase == resumed_phase(match b.phase { Phase::Ready(r) => r, _ => Resume::Making }),
+        a.pos == 0, !a.paused,
+{
+    reveal(advance_family_post::slot_grant);
+}
+
+
 }

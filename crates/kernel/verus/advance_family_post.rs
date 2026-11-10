@@ -252,6 +252,7 @@ pub(super) open spec fn slot_grant(n: Node, a: Node, c: AdvanceContext, changed:
         && a.repo == n.repo && a.footprint == n.footprint
         && a.pool == n.pool && a.run == n.run)
     && (!c.slot ==> a == n)
+    && (c.slot ==> a.pos == 0 && a.paused == n.paused)
 }
 
 /// R10: plain rows of the proven Ready-waiter grant contract.
