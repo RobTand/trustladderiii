@@ -340,9 +340,9 @@ fn apply_new_adoption(w: &mut World, repo: RepoId, head: HeadId, priority: Prior
             node.proposed = Some(head);
             node.priority = priority;
             w.nodes.push(node);
+            kernel_proof! { assert(w.nodes@ == before_apply@.nodes@.push(node)); assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int] == node); }
         }
         kernel_proof! {
-            if repo.0 < before_apply@.gates@.len() { assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int].proposed == Some(head)); assert(!w.nodes@[before_apply@.nodes@.len() as int].adopted); }
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewAdoption { repo, head, priority }), before_apply_out@, *_out);
         }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewAdoption { repo, head, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewAdoption { repo, head, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
@@ -597,6 +597,7 @@ fn apply_reply(w: &mut World, node: NodeId, generation: u64, reply: Reply,
                     transition_safety::Transition::Apply((Event::Reply { node, generation, reply })), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         node.0 < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), node.0 as int),
         node.0 >= old(w).nodes@.len() ==> final(w).nodes@ == old(w).nodes@,
         node.0 < old(w).nodes@.len() ==> report::forwards(old(report).entries@, final(report).entries@,
@@ -734,6 +735,7 @@ fn apply_ack(w: &mut World, node: NodeId, seq: u64, ack: Ack,
                     transition_safety::Transition::Apply((Event::Ack { node, seq, ack })), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         node.0 < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), node.0 as int),
         node.0 >= old(w).nodes@.len() ==> final(w).nodes@ == old(w).nodes@,
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
@@ -868,6 +870,7 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
                     transition_safety::Transition::Apply((Event::Fact { node, fact })), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         node.0 < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), node.0 as int),
         node.0 >= old(w).nodes@.len() ==> final(w).nodes@ == old(w).nodes@,
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -1000,6 +1003,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                     transition_safety::Transition::Apply((Event::Command { node, id, command })), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        final(w).nodes@.len() == old(w).nodes@.len(),
         node.0 < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), node.0 as int),
         node.0 >= old(w).nodes@.len() ==> final(w).nodes@ == old(w).nodes@,
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
