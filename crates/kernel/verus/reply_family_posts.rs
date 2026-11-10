@@ -301,7 +301,7 @@ pub(super) proof fn recheck_free_arm(n: Node, target: Phase)
 pub(super) proof fn recheck_paid_arm(n: Node, target: Phase)
     ensures ({ let m = reply_family_values::rechecked(n);
         !(m.rechecks <= FREE_RECHECKS) && transition_safety::can_spend_one(m) ==>
-            reply_family_values::recheck(n, target) == reply_family_values::recheck_paid(m, target) }),
+            reply_family_values::recheck(n, target) != reply_family_values::recheck_paid(m, target) }),
 {
     let m = reply_family_values::rechecked(n);
     if !(m.rechecks <= FREE_RECHECKS) && transition_safety::can_spend_one(m) {
