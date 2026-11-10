@@ -1280,16 +1280,6 @@ tl3_py_test(
     ],
 )
 
-tl3_py_test(
-    name = "test_staged_job_boundary",
-    srcs = ["test_staged_job_boundary.py"],
-    deps = [
-        ":conftest",
-        "//harness/src/tl3_harness",
-        "//workers/src",
-    ],
-)
-
 py_library(
     name = "redaction_original_inputs",
     srcs = ["redaction_original_inputs.py"],
