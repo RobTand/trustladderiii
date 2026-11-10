@@ -362,6 +362,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        // R_T out-of-range stutter (MASTER-CURRENT item 6): ONE opaque clause; consumers use
+        // event_frames_reveal::out_of_range_stutter_rows.
+        event_frames::out_of_range_stutter(*old(w), *final(w), *old(out), *final(out), event),
     transition_safety::apply_exports(*old(w), *final(w), event, *old(out), *final(out)),
     // E10 (CONTRACTS.md v2.31; TRUSTED-FROZEN, owner debt): the Ack arm forwards on_ack's opaque post.
     (match event {
