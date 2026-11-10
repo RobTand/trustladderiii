@@ -1,10 +1,25 @@
 {
-  "source_head": "72c5112e59af48b51b66133fb7717cbdb2ad4fc2",
+  "source_head": "8bcbc5d624bee0b47da82324abb869bc3c4d047e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "d9fbe4913b6704dd30c63991663d4ee8d88f711ea8d6bd23d76647602b74683b",
-  "groups": 576,
-  "obligations": 774,
+  "source_sha256": "9000c12ef117f2170d0b5f76829691bac96c0d2e0a763d5021d10a2e6a772099",
+  "groups": 579,
+  "obligations": 777,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_stop_world",
+      "selector": "kernel::apply_command_safety#stop_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_change_request_world",
+      "selector": "kernel::apply_command_safety#change_request_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_pause_world",
+      "selector": "kernel::apply_command_safety#pause_world",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_answers_on_answer_exact",
       "selector": "kernel::answers#on_answer_exact",
