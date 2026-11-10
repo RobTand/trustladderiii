@@ -47,7 +47,7 @@ pub(super) proof fn advance_bounds(b: Node, n: Node, t0: u64, t1: u64, moved: bo
 pub(super) proof fn advance_accepts(b: World, n: World, i: int)
     requires checking::accepted(b), scheduling_safe(b), b.nodes@.len() == 4,
         b.gates@.len() == 1, 0 <= i < 4,
-        advance_family_post::step_rows(b, n, i),
+        true,
         n.nodes@ == b.nodes@.update(i, n.nodes@[i]),
         n.gates@ == b.gates@, n.file_sets@ == b.file_sets@,
         n.dependencies@ == b.dependencies@, n.pool_capacity == b.pool_capacity,
