@@ -142,6 +142,73 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
 }
 
 kernel_fn! {
+/// Question continuation rows / #771: go_on's node work as a value function
+/// (K5): the node comes in by value and the continued node is returned, so no
+/// mutable reference chain enters this query. Emits nothing; the replanned
+/// note is go_on's.
+#[allow(dead_code)]
+pub(super) fn continue_node_mainc(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures (n.phase == Phase::AwaitingRob && n.question == Some(q) && !n.paused
+            && !n.waiting_incident && n.effect.is_none()
+            ==> distance(result) < distance(n)),
+        result.repo == n.repo, result.footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(result)),
+        result.generation as int <= n.generation as int + 1,
+        result.next_seq == n.next_seq,
+        result.credit.start == n.credit.start, result.credit.earned == n.credit.earned,
+        result.credit.added as int <= n.credit.added as int + 255,
+        result.credit.spent as int <= n.credit.spent as int + 1,
+        result.last_cmd == n.last_cmd,
+        result.question.is_none(),
+        result.proposed == n.proposed, result.adopted == n.adopted,
+        result.review_stop == n.review_stop, result.attempt == n.attempt,
+        result.replanned == n.replanned,
+        result.credit.merge_credited == n.credit.merge_credited,
+        result.credit.withheld == n.credit.withheld,
+] proof [reveal(distance);] {
+    let mut m = n;
+    m.credit.fund_and_pay(deposit, q.cost);
+    m.question = None;
+    match q.cont {
+        Cont::Ingesting => m = set_phase_v(m, Phase::Ingesting),
+        Cont::Auditing => m = set_phase_v(m, Phase::Auditing),
+        Cont::Unplanned => m = set_phase_v(m, Phase::Unplanned),
+        Cont::Planning { must_split } => {
+            m.plan_retries = 0;
+            m = set_phase_v(m, Phase::Planning { must_split });
+        }
+        Cont::Ready(r) => m = set_phase_v(m, Phase::Ready(r)),
+        Cont::Stop(o) => {
+            kernel_snapshot! { before_stop = m }
+            m = enter_stopping_v(m, o);
+            kernel_proof! {
+                assert(m.proposed == before_stop@.proposed && m.adopted == before_stop@.adopted
+                    && m.attempt == before_stop@.attempt && m.replanned == before_stop@.replanned)
+                    by { reveal(retirement::stopped); }
+            }
+        }
+        Cont::Nowhere => {
+            kernel_snapshot! { before_nowhere = m }
+            m = enter_stopping_v(m, Outcome::Stopped);
+            kernel_proof! {
+                assert(m.proposed == before_nowhere@.proposed && m.adopted == before_nowhere@.adopted
+                    && m.attempt == before_nowhere@.attempt && m.replanned == before_nowhere@.replanned)
+                    by { reveal(retirement::stopped); }
+            }
+        }
+    }
+    m
+}
+}
+
+kernel_fn! {
 /// K5 value form of set_phase: the same contract over the returned node, with the
 /// single borrow kept out of the callers' queries.
 pub(super) fn set_phase_v(n: Node, phase: Phase) -> (result: Node) [
