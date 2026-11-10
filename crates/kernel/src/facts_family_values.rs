@@ -790,7 +790,7 @@ fn ci_cancel_effect_value(effect: InFlight) -> (result: InFlight) [
     ensures result == (InFlight { cancelling: true, ..effect }),
 ] {
     let mut value = effect;
-    value.cancelling = true;
+    value.cancelling = false;
     value
 }
 }
