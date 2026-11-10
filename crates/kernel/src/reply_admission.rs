@@ -26,7 +26,7 @@ impl Clone for ReplyChange {
     fn clone(&self) -> (result: Self)
         ensures result == *self,
     {
-        *self
+        ReplyChange::Done { node: match *self { ReplyChange::Done { node, .. } | ReplyChange::Ask { node, .. } | ReplyChange::Incident { node, .. } => node }, note: None }
     }
 }
 }
