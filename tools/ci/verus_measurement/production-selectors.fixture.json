@@ -1,10 +1,20 @@
 {
-  "source_head": "2d2bf157cd224a8077f661dff20bf678d5327709",
+  "source_head": "ffd2ff765e01011296f9513347f366666b06b324",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "15104151beb3fc1c0955010dfde3f7cce3ac850b4c5c2cea85fdaea2032005b6",
-  "groups": 893,
-  "obligations": 1101,
+  "source_sha256": "dbdd042666d70cdbb8c3cc65dd3415d547dea1802d10eddf89eb1405de725783",
+  "groups": 895,
+  "obligations": 1103,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_rules_after_last_cmd",
+      "selector": "kernel::apply_command_safety#rules_after_last_cmd",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_rules_incident",
+      "selector": "kernel::apply_command_safety#rules_incident",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_liveness_witness",
       "selector": "kernel::liveness_witness",
