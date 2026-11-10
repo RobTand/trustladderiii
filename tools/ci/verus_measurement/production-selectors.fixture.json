@@ -1,10 +1,25 @@
 {
-  "source_head": "b0e5e81371ff4c1c51bdf5dca227ad2ef554bbd4",
+  "source_head": "0c0b6528e2a1f41037c3b977a840df6240baa9e8",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4392d4f4436ec40e04236cb3ea2b7262441c97351726aba6f47db7b172c7c11d",
-  "groups": 927,
-  "obligations": 1135,
+  "source_sha256": "2fe63131ead583fff43b0e617d4ac93f20f8f144251bcf87e3246ae9b0f9612b",
+  "groups": 930,
+  "obligations": 1138,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_relation_work_made_rules",
+      "selector": "kernel::reply_relation_work#made_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_relation_work_checked_rules",
+      "selector": "kernel::reply_relation_work#checked_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_relation_work_approved_rules",
+      "selector": "kernel::reply_relation_work#approved_rules",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
       "selector": "kernel::event_frames#out_of_range_stutter_intro",
