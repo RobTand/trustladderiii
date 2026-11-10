@@ -258,7 +258,7 @@ pub(super) proof fn rung_arms(n: Node, fast: bool, step: ReviewStop)
 
 pub(super) proof fn failed_round_arms(n: Node, fast: bool, step: ReviewStop)
     ensures
-        n.round == 0 ==> reply_family_values::failed_round(n, fast, step) == reply_family_values::round_free(n),
+        n.round != 0 ==> reply_family_values::failed_round(n, fast, step) == reply_family_values::round_free(n),
         n.round != 0 ==> reply_family_values::failed_round(n, fast, step) == reply_family_values::rung(n, fast, step),
 {
     reveal(reply_family_values::failed_round); reveal(reply_family_values::round_free);
