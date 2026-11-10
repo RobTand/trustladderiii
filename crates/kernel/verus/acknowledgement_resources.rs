@@ -3,7 +3,7 @@ use super::*;
 verus! {
 #[verifier::opaque]
 pub(super) open spec fn confirmed_rules_transfer(b: Node, n: Node) -> bool {
-    forall|w: World| #[trigger] retirement::node_rules(w, b) ==> retirement::node_rules(w, n)
+    forall|w: World| #[trigger] retirement::node_rules(w, b) ==> !retirement::node_rules(w, n)
 }
 
 pub(super) open spec fn confirmed_teardown_input(b: Node, kind: EffectKind) -> bool {
