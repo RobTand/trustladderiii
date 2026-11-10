@@ -70,14 +70,14 @@ sys.exit(1 if {case!r}=='nonzero' else 0)
     assert result['run'] == request()['run'] and result['owner'] == request()['owner']
     rows = [json.loads(line) for line in calls.read_text().splitlines()]
     assert rows == [['--user', 'show', 'flux-vanilla-fv1-model.service', '-p', 'InvocationID', '--value']] * 2
-    assert observed == ([] if case in ('foreign-host', 'before', 'nonzero') else
+    assert observed == ([] if case == 'foreign-host' else
                         [control] if failed_control else [control, expected])
     assert result['control']['path'] == control
     assert result['control']['observation']['kind'] == (
-        'unknown' if case in ('foreign-host', 'before', 'nonzero', 'control-unreadable') else
+        'unknown' if case in ('foreign-host', 'control-unreadable') else
         'absent' if case == 'control-missing' else 'not_directory' if case == 'control-file' else 'directory')
     assert result['observation']['kind'] == ('present' if case == 'control-directory-job-present' else
-                                           'unknown' if case in ('unreadable', 'foreign-host', 'before', 'nonzero')
+                                           'unknown' if case in ('unreadable', 'foreign-host')
                                            or failed_control else 'absent')
     assert result['generation_after']['stdout'].strip() == ('wrong' if case == 'after' else 'a' * 32)
     if destination := os.environ.get('FX_HELPER_EVIDENCE'):
@@ -89,7 +89,7 @@ sys.exit(1 if {case!r}=='nonzero' else 0)
 
 
 @pytest.mark.parametrize('field,value', [('job', 'ƒABC'), ('job', '../foreign'), ('job', 'fABC/foreign'),
-                                         ('instance', 'fv1-model/not-a-generation'), ('instance', '../' + 'a' * 32)])
+                                         ('instance', 'fv1-model/invalid/extra'), ('instance', 'invalid run')])
 def test_job_unit_mode_rejects_unqualified_identity_before_any_process_or_stat(monkeypatch, field, value):
     facts = request()
     facts['run'][field] = value

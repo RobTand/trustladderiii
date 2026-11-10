@@ -172,7 +172,7 @@
         "generator-artifact/stale-input"
       ]
     },
-    "generator\\ budget\\ requires\\ 1–16\\ CPUs,\\ 1–64\\ GiB\\ and\\ generator_timeout_s\\ in\\ 1–600": {
+    "generator\\ budget\\ requires\\ 1–10\\ CPUs,\\ 1–24\\ GiB\\ and\\ generator_timeout_s\\ in\\ 1–600": {
       "sources": [
         "generator.budget"
       ],
@@ -365,10 +365,10 @@
     ]
   },
   "bounds": {
-    "generator.budget: 1 <= cpus <= 16": {
+    "generator.budget: 1 <= cpus <= 10": {
       "values": [
         1,
-        16
+        10
       ],
       "cases": [
         "generator-artifact/budget-cpus-below",
@@ -377,10 +377,10 @@
         "generator-artifact/budget-cpus-above"
       ]
     },
-    "generator.budget: 1 <= mem_gb <= 64": {
+    "generator.budget: 1 <= mem_gb <= 24": {
       "values": [
         1,
-        64
+        24
       ],
       "cases": [
         "generator-artifact/budget-mem_gb-below",

@@ -201,7 +201,7 @@ def cases(kind):
         for name, size in [('path-bytes-at', 3072), ('path-bytes-above', 3073),
                            ('component-bytes-at', 255), ('component-bytes-above', 256)]:
             yield name, {'operation': 'path', 'size': size, 'component': name.startswith('component')}
-        for field, maximum in [('cpus', 16), ('mem_gb', 64), ('timeout_s', 600)]:
+        for field, maximum in [('cpus', 10), ('mem_gb', 24), ('timeout_s', 600)]:
             for name, value in [('below', 0), ('min', 1), ('at', maximum), ('above', maximum + 1)]:
                 yield 'budget-' + field + '-' + name, {'operation': 'budget', 'value': {field: value}}
         for name, a in variants(artifact, [
@@ -646,11 +646,11 @@ def bound_sites():
 
 # Each entry is reviewed against the source expression. A new guard needs an
 # explicit witness assignment; generation cannot silently whitelist it.
-BOUND_CASES = {'generator.budget: 1 <= cpus <= 16': ['generator-artifact/budget-cpus-below',
+BOUND_CASES = {'generator.budget: 1 <= cpus <= 10': ['generator-artifact/budget-cpus-below',
                                        'generator-artifact/budget-cpus-min',
                                        'generator-artifact/budget-cpus-at',
                                        'generator-artifact/budget-cpus-above'],
- 'generator.budget: 1 <= mem_gb <= 64': ['generator-artifact/budget-mem_gb-below',
+ 'generator.budget: 1 <= mem_gb <= 24': ['generator-artifact/budget-mem_gb-below',
                                          'generator-artifact/budget-mem_gb-min',
                                          'generator-artifact/budget-mem_gb-at',
                                          'generator-artifact/budget-mem_gb-above'],
