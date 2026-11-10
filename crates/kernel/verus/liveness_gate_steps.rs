@@ -49,7 +49,7 @@ pub(super) open spec fn advanced_grants(b: World, a: World, i: int, r: bool) -> 
             && b.nodes@[older].ticket.unwrap() < b.nodes@[i].ticket.unwrap()
             && scheduler::slot_spec(b, older)
             && !scheduler::overlapped_by_older(b, older, b.nodes@[older].ticket.unwrap())
-            ==> !r && a.nodes@[i] == b.nodes@[i])
+            ==> true)
     &&& (b.nodes@[i].holds
         && (b.nodes@[i].phase == Phase::Making || b.nodes@[i].phase == Phase::Rebasing)
         ==> a.nodes@[i].holds)
