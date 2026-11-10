@@ -312,7 +312,7 @@ pub(super) fn priority_fact_arm(n: Node, i: usize, priority: Priority)
     let mut notes = Outbox::new();
     let out = &mut notes;
     if !value.phase.is_closed() {
-        value.priority = priority;
+        value.priority = n.priority;
     }
     kernel_proof! {
         assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::Priority(priority))));
