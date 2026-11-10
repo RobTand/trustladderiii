@@ -274,6 +274,15 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
     (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
         ==> final(w).nodes@[i as int].phase == resumed_phase(match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
             && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
+    // G22-F1b / G20 REQ R29 (v2.20, owner advance): compose's premise form. Any new slot for a Ready node with a
+    // ticket is disjoint from every older same-repository Ready waiter.
+    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds)
+        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+            && old(w).nodes@[older].phase is Ready
+            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+            && old(w).nodes@[older].ticket.is_some()
+            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
 ] {
     advance_proved(w, i, out, report)
 }

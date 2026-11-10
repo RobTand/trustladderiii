@@ -117,6 +117,9 @@ mod apply_command_safety;
 #[path = "../verus/advance_family_frames.rs"]
 mod advance_family_frames;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/dependency_owner_exports.rs"]
+mod dependency_owner_exports;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }

@@ -202,6 +202,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
             && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].effect == old(w).nodes@[i as int].effect
             && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+    // E2.N4 (v2.20, framing, owner apply): checker-update rows for R28 (apply_n4_dependencies' last conjunct).
+    ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+        ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int]),
+    (command is Pause) ==> dependencies::same_endpoint(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+    ((command is Answer) && dependencies::owner_waiting_ok(old(w).nodes@[i as int])) ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int]),
 ] {
     on_command_proved(w, i, id, command, out)
 }
