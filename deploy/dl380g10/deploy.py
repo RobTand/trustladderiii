@@ -464,35 +464,48 @@ def require_workers_stopped(home):
 
 
 def freeze_fresh_attempt(home):
-    """Prevent admission, stop owned workers and clients, then stop Postgres."""
+    """Prevent admission, stop clients and owned workers, then stop Postgres."""
     errors = []
+
+    def verify(unit):
+        try:
+            allowed = ("inactive", "failed") if unit.endswith(".service") else ("inactive",)
+            if unit_state(unit) not in allowed:
+                raise RuntimeError(f"{unit} must be stopped ({', '.join(allowed)})")
+            return True
+        except Exception as error:
+            errors.append(f"{unit}: {error}")
+            return False
 
     def stop(unit):
         try:
             run(["systemctl", "--user", "stop", unit], timeout=150)
-            require_stopped(unit)
         except Exception as error:
             errors.append(f"{unit}: {error}")
+        # A failed stop response need not mean the unit is still running.
+        return verify(unit)
 
-    stop("tl3d.service")
-    # Never tear down workers or their database while admission might continue.
-    if not errors:
-        stop(WORKER_SLICE)
+    def quiescent(phase):
+        clients_stopped = [verify(unit) for unit in CLIENT_UNITS]
+        try:
+            require_workers_stopped(home)
+            workers_stopped = True
+        except Exception as error:
+            errors.append(f"{phase}: {error}")
+            workers_stopped = False
+        return all(clients_stopped) and workers_stopped
+
+    admission_stopped = stop("tl3d.service")
     for unit in reversed(DEPENDENT_UNITS):
         stop(unit)
-    try:
-        require_stopped(*CLIENT_UNITS)
-        require_workers_stopped(home)
-    except Exception as error:
-        errors.append(f"quiescence: {error}")
-    if not errors:
+    # Never tear down workers while admission might continue.
+    if admission_stopped:
+        stop(WORKER_SLICE)
+    if quiescent("quiescence"):
         stop("tl3-postgres.service")
-    if not errors:
-        try:
-            require_stopped(*CLIENT_UNITS, "tl3-postgres.service")
-            require_workers_stopped(home)
-        except Exception as error:
-            errors.append(f"final quiescence: {error}")
+    # Verify every boundary even when an earlier step reported an error.
+    quiescent("final quiescence")
+    verify("tl3-postgres.service")
     if errors:
         raise RuntimeError("frozen state NOT established; " + "; ".join(errors))
 

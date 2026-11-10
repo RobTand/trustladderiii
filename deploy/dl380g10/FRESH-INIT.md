@@ -178,16 +178,21 @@ must contain exactly `{"cancelled": true}`. These checks do not use process
 listings or scan `/proc`. The existing Flux binding refusal remains mandatory,
 even when an identity record is stale.
 
-If any start or later startup check fails, cleanup first stops tl3d and proves it
-inactive to prevent new admission. It then stops `tl3-workers.slice`, stops the
-dependents in reverse order, and verifies inactive clients and workers. Only
-then does it stop and verify PostgreSQL. Each stop has a 150-second subprocess
-deadline, and each systemd state query has a 15-second deadline. This includes
-partial starts that activated a unit before returning an error. The original
-exception is raised with a cleanup note. A cleanup error reports
-`frozen state NOT established`, retains all evidence and leaves PostgreSQL up
-when clients or workers might still need it. No previous release or state is
-restored.
+If any start or later startup check fails, cleanup first stops tl3d, then the
+dependents in reverse order, then `tl3-workers.slice`. The slice stop requires
+proof that tl3d can no longer admit work. After an explicit stop, a service may
+be `inactive` or `failed`; cleanup retains failed state without `reset-failed`.
+The worker slice must be exactly `inactive`, and recorded workers must be dead.
+Cleanup verifies every client and the workers before stopping PostgreSQL, then
+repeats the checks and verifies PostgreSQL. Each stop has a 150-second
+subprocess deadline, and each systemd state query has a 15-second deadline.
+This includes partial starts that activated a unit before returning an error.
+An error never skips another safe stop: current quiescence observations decide
+whether stopping workers or PostgreSQL is safe. Every cleanup error is retained
+and reports `frozen state NOT established`, even if later observations show all
+units stopped. The original exception is raised with a cleanup note. Evidence
+stays intact, and PostgreSQL stays up while clients or workers might need it.
+No previous release or state is restored.
 
 A verified frozen state is an observation under systemd and the recorded TL3
 identities. It assumes no independent operator or external launcher starts work
@@ -201,7 +206,8 @@ or cgroup behavior.
 All subprocesses have deadlines. A failure leaves the diagnostic backup intact
 and does not restart an earlier binary or import old state. Stop dispatch and
 diagnose before choosing another qualified build. A refusal or interruption after
-stopping services leaves them down, possibly with emptied file journals. The
+stopping services leaves them down, possibly with emptied file journals. A worker
+found by the second preflight leaves tl3d and PostgreSQL stopped. The
 one-use capability cannot be replayed. Re-run the complete fresh-init flow with
 a NEW backup destination and current qualified inputs; retain the original
 backup and partial-attempt evidence. Never resume an isolated DROP step. Full board/stream, prompt,
