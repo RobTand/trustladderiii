@@ -281,7 +281,7 @@ pub(super) open spec fn start_unobstructed(n: Node) -> bool {
 
 #[verifier::opaque]
 pub(super) open spec fn pool_grant(n: Node, a: Node, c: AdvanceContext, changed: bool) -> bool {
-    changed == c.pool
+    changed == !c.pool
         && (c.pool ==> a.pool && a.ticket.is_none() && a.run == Some(n.generation))
         && (!c.pool ==> a == n)
 }
