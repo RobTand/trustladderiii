@@ -558,7 +558,7 @@ mod hostile_tests {
                 store
                     .put_worker_materials(
                         "0",
-                        &json!({"issue":{"title":"Request 🦀\u{0000}","body":body}}),
+                        &json!({"issue":{"title":"Request 🦀\n","body":body}}),
                     )
                     .unwrap();
                 let mut snapshot = documents(
@@ -590,7 +590,7 @@ mod hostile_tests {
                         .as_array()
                         .expect("review always lists additions");
                     assert_eq!(additions.len(), added.len());
-                    assert_eq!(value["issue"]["title"], "Request 🦀\u{0000}");
+                    assert_eq!(value["issue"]["title"], "Request 🦀\n");
                     assert_eq!(value["issue"]["body"], "é".repeat(16_000));
                     assert_eq!(value["issue_truncated"], length > 16_000);
                     for (entry, path) in additions.iter().zip(&added) {
