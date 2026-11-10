@@ -6863,14 +6863,7 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
     let mut controller = tl3_controller::Controller::open_with_clock(
         tl3_store::Store::open(&database.create("maintenance_corrupt_owner")).unwrap(),
         registry,
-        tl3_controller::Bootstrap {
-            repos: vec![],
-            rob: 42,
-            slots: 1,
-            pool: 1,
-            fail_fast: false,
-            operations: None,
-        },
+        maintenance_controller_bootstrap(),
         Clock(due),
     )
     .unwrap();
@@ -6964,14 +6957,7 @@ fn cleanup_timer_owner_error_isolation(fault: TimerOwnerFault) {
     let mut controller = tl3_controller::Controller::open_with_clock(
         tl3_store::Store::open(&database.create("maintenance_timer_owner_error")).unwrap(),
         registry,
-        tl3_controller::Bootstrap {
-            repos: vec![],
-            rob: 42,
-            slots: 1,
-            pool: 1,
-            fail_fast: false,
-            operations: None,
-        },
+        maintenance_controller_bootstrap(),
         Clock(clock.clone()),
     )
     .unwrap();
@@ -7878,14 +7864,7 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
     let mut controller = tl3_controller::Controller::open(
         tl3_store::Store::open(&database.create("maintenance_identity_lost")).unwrap(),
         registry,
-        tl3_controller::Bootstrap {
-            repos: vec![],
-            rob: 42,
-            slots: 1,
-            pool: 1,
-            fail_fast: false,
-            operations: None,
-        },
+        maintenance_controller_bootstrap(),
     )
     .unwrap();
     let id = format!(
@@ -7915,4 +7894,32 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
     );
     drop(controller);
     database.stop();
+}
+
+
+fn maintenance_controller_bootstrap() -> tl3_controller::Bootstrap {
+    tl3_controller::Bootstrap {
+        repos: vec![],
+        rob: 42,
+        slots: 1,
+        pool: 1,
+        fail_fast: false,
+        operations: None,
+    }
+}
+
+#[test]
+fn cleanup_maintenance_controller_bootstrap_has_valid_world() {
+    assert_eq!(
+        tl3_kernel::World::new(&[], 1).check(),
+        Err(tl3_kernel::Broken::Config),
+        "empty repositories create empty gates, rejected as Broken::Config"
+    );
+    let bootstrap = maintenance_controller_bootstrap();
+    let world = tl3_kernel::World::new(
+        &vec![bootstrap.slots; bootstrap.repos.len()],
+        bootstrap.pool,
+    );
+    assert_eq!(world.check(), Ok(()), "maintenance fixture bootstrap must pass World::check");
+    assert!(world.is_settled());
 }
