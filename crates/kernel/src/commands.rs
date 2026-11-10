@@ -346,19 +346,33 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
-    kernel_snapshot! { before_out = *out }
     let mut m = w.nodes[i];
     m.last_cmd = id;
     w.nodes[i] = m;
-    kernel_snapshot! { mid_world = *w }
     kernel_proof! {
-        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int,
-            Node { last_cmd: id, ..before_rules_world@.nodes@[i as int] }));
+        if node_checked(before_rules_world@, before_rules_world@.nodes@[i as int]) {
+            footprint::valid_under_table_growth(before_rules_world@, *w, w.nodes@[i as int].footprint);
+            assert(node_checked(*w, w.nodes@[i as int]));
+            if command_progress_input(before_rules_world@.nodes@[i as int], Command::Answer { question, answer }) {
+                assert(answer_progress_input(w.nodes@[i as int], question, answer));
+                handler_safety::distance_last_cmd(before_rules_world@.nodes@[i as int], id);
+            }
+        }
+        if retirement::node_rules(before_rules_world@, before_rules_world@.nodes@[i as int]) {
+            handler_safety::rules_to_v(before_rules_world@, before_rules_world@.nodes@[i as int]);
+            handler_safety::last_cmd_rules_v(before_rules_world@.nodes@[i as int],
+                before_rules_world@.next_question, id);
+            handler_safety::rules_world_update(before_rules_world@, *w,
+                before_rules_world@.nodes@[i as int], w.nodes@[i as int]);
+        }
     }
     on_answer(w, i, question, answer, out);
     kernel_proof! {
-        apply_command_safety::answer_world_f(before_rules_world@, mid_world@, *w, i, id, question,
-            answer, before_out@, *out);
+        apply_command_safety::other_resume_post(before_rules_world@.nodes@[i as int], w.nodes@[i as int],
+            id, Command::Answer { question, answer });
+        apply_command_safety::answer_pair_last_cmd(before_rules_world@.nodes@[i as int], id,
+            w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64));
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int]));
     }
 }
 }
