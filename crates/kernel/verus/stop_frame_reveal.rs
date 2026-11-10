@@ -37,4 +37,14 @@ pub(super) proof fn stop_post_rows(b: Node, n: Node, id: u64)
     reveal(stop_frames::stop_post);
 }
 
+
+/// E2.N4a / E2.N4b consumer reveal: the frozen rows behind stop_frames' owner-waiting and endpoint atoms.
+pub(super) proof fn n4_frames_reveal(b: Node, n: Node)
+    ensures stop_frames::owner_waiting_kept(b, n) ==> (dependencies::owner_waiting_ok(b) ==> dependencies::owner_waiting_ok(n)),
+        stop_frames::endpoint_kept(b, n) ==> dependencies::same_endpoint(b, n),
+{
+    reveal(stop_frames::owner_waiting_kept);
+    reveal(stop_frames::endpoint_kept);
+}
+
 }

@@ -80,4 +80,40 @@ pub(super) proof fn stop_post_intro(b: Node, n: Node, id: u64)
     reveal(stop_post);
 }
 
+
+/// E2.N4a (CONTRACTS.md v2.20, R28 framing, form rule 2): a waiting owner stays a waiting owner.
+#[verifier::opaque]
+pub(super) open spec fn owner_waiting_kept(b: Node, n: Node) -> bool {
+    dependencies::owner_waiting_ok(b) ==> dependencies::owner_waiting_ok(n)
+}
+
+/// E2.N4b (CONTRACTS.md v2.20, R28 framing, form rule 2): the dependency endpoint is unchanged.
+#[verifier::opaque]
+pub(super) open spec fn endpoint_kept(b: Node, n: Node) -> bool {
+    dependencies::same_endpoint(b, n)
+}
+
+/// E2.N4a intro over the stop bridges' written-node term (Stop: Stopped, ChangeRequest: Replaced).
+pub(super) proof fn stop_owner_waiting_frame(b: Node, id: u64, o: Outcome)
+    ensures owner_waiting_kept(b, retirement::stopped(Node { last_cmd: id, ..b }, o)),
+{
+    reveal(owner_waiting_kept);
+    reveal(retirement::stopped);
+}
+
+/// E2.N4b intro over pause_world's written-node term.
+pub(super) proof fn pause_endpoint_frame(b: Node, id: u64)
+    ensures endpoint_kept(b, apply_command_safety::pause_node(b, id)),
+{
+    reveal(endpoint_kept);
+}
+
+/// E2.N4a / E2.N4b on on_command's repeated-command path (the node is unchanged).
+pub(super) proof fn n4_frames_refl(b: Node)
+    ensures owner_waiting_kept(b, b), endpoint_kept(b, b),
+{
+    reveal(owner_waiting_kept);
+    reveal(endpoint_kept);
+}
+
 }
