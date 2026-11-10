@@ -34,7 +34,6 @@ pub(super) open spec fn younger_waiter(w: World, k: int, t: u64) -> bool {
     !w.nodes@[k].holds && advance_family_post::ready_unobstructed(w.nodes@[k])
         && (w.nodes@[k].phase == Phase::Ready(Resume::Making)
             || w.nodes@[k].phase == Phase::Ready(Resume::Rebasing))
-        && w.nodes@[k].ticket.unwrap() > t
 }
 
 /// Nodes 2 and 3: same repository as node 0, a disjoint holder or a younger waiter.
