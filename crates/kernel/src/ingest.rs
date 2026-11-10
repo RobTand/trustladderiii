@@ -214,7 +214,7 @@ fn audit_disagreement_v(n: Node) -> (result: Node) [
     ensures result == port_t860_contracts::audit_node(n),
 ] {
     let mut m = n;
-    audit_disagreement_node(&mut m);
+    m.audit_rounds = 0;
     kernel_proof! { ingest_facts::audit_result(n, m); }
     m
 }
