@@ -896,7 +896,7 @@ fn ack_retry_incident_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: O
         ack_retry_restart_value(n, i, nq, out)
     } else { ack_retry_plain_incident_value(n, i, nq, out) };
     kernel_proof! { ack_retry_incident_bridge(n, i as int, kind, nq, out); }
-    result
+    (Node { head: None, ..result.0 }, result.1, result.2)
 }
 }
 
