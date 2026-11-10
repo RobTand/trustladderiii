@@ -50,19 +50,7 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).ticket == old(m).ticket || final(m).ticket.is_none(),
         final(m).credit.withheld == old(m).credit.withheld,
 ] {
-    kernel_snapshot! { before_handled = *m }
-    if let Some(Item::Teardown(kind)) = m.current() {
-        mark_handled_resources(m, kind);
-        m.pos += 1;
-    }
-    kernel_proof! {
-        let before = before_handled@;
-        if before.effect.is_none() && before.question.is_none()
-            && !before.waiting_incident && before.phase is Stopping
-            && matches!(current_item(before), Some(Item::Teardown(_))) {
-            cleanup_lemmas::teardown_progress(before_handled@, *m);
-        }
-    }
+    *m = handled_node_value(*m);
 }
 }
 
@@ -94,6 +82,80 @@ fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
         final(m).replanned == old(m).replanned,
 ] {
+    *m = handled_resources_value(*m, kind);
+}
+}
+
+kernel_fn! {
+fn handled_node_value(n: Node) -> (result: Node) [
+    ensures result == handler_safety::handled_node(n),
+        (n.effect.is_none() && n.question.is_none() && !n.waiting_incident
+            && n.phase is Stopping && matches!(current_item(n), Some(Item::Teardown(_)))
+            ==> distance(result) + 2 <= distance(n)),
+        result.repo == n.repo, result.footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(result)),
+        result.generation == n.generation,
+        result.next_seq == n.next_seq, result.credit == n.credit,
+        result.question == n.question,
+        result.phase == n.phase,
+        result.last_cmd == n.last_cmd,
+        result.proposed == n.proposed, result.adopted == n.adopted,
+        result.review_stop == n.review_stop, result.attempt == n.attempt,
+        result.replanned == n.replanned,
+
+        (result.holds ==> n.holds),
+        (result.pool ==> n.pool),
+        result.ticket == n.ticket || result.ticket.is_none(),
+        result.credit.withheld == n.credit.withheld,
+] {
+    let mut m = n;
+
+    kernel_snapshot! { before_handled = m }
+    if let Some(Item::Teardown(kind)) = m.current() {
+        m = handled_resources_value(m, kind);
+        m.pos += 1;
+    }
+    kernel_proof! {
+        let before = before_handled@;
+        if before.effect.is_none() && before.question.is_none()
+            && !before.waiting_incident && before.phase is Stopping
+            && matches!(current_item(before), Some(Item::Teardown(_))) {
+            cleanup_lemmas::teardown_progress(before_handled@, m);
+        }
+    }
+
+    m
+}
+}
+
+kernel_fn! {
+fn handled_resources_value(n: Node, kind: EffectKind) -> (result: Node) [
+    ensures result == handler_safety::handled_resources_node(n, kind),
+        result.phase == n.phase,
+        result.repo == n.repo,
+        result.footprint == n.footprint,
+        result.generation == n.generation,
+        result.next_seq == n.next_seq,
+        result.effect == n.effect,
+        result.ticket == n.ticket,
+        result.holds == n.holds,
+        result.paused == n.paused,
+        result.last_cmd == n.last_cmd,
+        result.question == n.question,
+        result.waiting_incident == n.waiting_incident,
+        result.credit == n.credit,
+        result.pos == n.pos,
+        result.run == if kind == EffectKind::StopRun { None } else { n.run },
+        result.pool == if kind == EffectKind::StopRun { false } else { n.pool },
+        result.job == if kind == EffectKind::WithdrawJob { None } else { n.job },
+        result.pr_open == if kind == EffectKind::ClosePr { false } else { n.pr_open },
+        result.worktree == if kind == EffectKind::RemoveWorktree { false } else { n.worktree },
+        result.proposed == n.proposed, result.adopted == n.adopted,
+        result.review_stop == n.review_stop, result.attempt == n.attempt,
+        result.replanned == n.replanned,
+] {
+    let mut m = n;
+
     match kind {
         EffectKind::StopRun => {
             m.run = None;
@@ -104,5 +166,7 @@ fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
+
+    m
 }
 }
