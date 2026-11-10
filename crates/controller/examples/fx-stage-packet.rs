@@ -402,7 +402,9 @@ mod tests {
         assert_eq!(FixtureKind::parse("success").unwrap(), FixtureKind::Success);
         assert_eq!(FixtureKind::parse("cancel").unwrap(), FixtureKind::Cancel);
         assert_eq!(
-            FixtureKind::parse("arbitrary-command").unwrap_err().to_string(),
+            FixtureKind::parse("arbitrary-command")
+                .unwrap_err()
+                .to_string(),
             "fixture kind must be success or cancel"
         );
         let mut arguments = vec![std::ffi::OsString::from("input"); 5];

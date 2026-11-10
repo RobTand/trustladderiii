@@ -851,10 +851,7 @@ mod staged_transport_tests {
             git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(),
             inputs.head
         );
-        assert_eq!(
-            git(&inputs.repo, &["status", "--porcelain"]).unwrap(),
-            ""
-        );
+        assert_eq!(git(&inputs.repo, &["status", "--porcelain"]).unwrap(), "");
     }
 
     #[test]
@@ -866,7 +863,11 @@ mod staged_transport_tests {
         fs::set_permissions(&refuse, fs::Permissions::from_mode(0o700)).unwrap();
         git(
             &inputs.repo,
-            &["config", "remote.origin.receivepack", refuse.to_str().unwrap()],
+            &[
+                "config",
+                "remote.origin.receivepack",
+                refuse.to_str().unwrap(),
+            ],
         )
         .unwrap();
         assert_eq!(
@@ -904,7 +905,11 @@ mod staged_transport_tests {
         assert_ne!(wrong, inputs.head);
         let digest = overlay_digest(&overlay).unwrap();
         let branch = format!("refs/heads/fx-x3-overlay/{}", &digest[..16]);
-        git(&inputs.repo, &["push", "origin", &format!("{wrong}:{branch}")]).unwrap();
+        git(
+            &inputs.repo,
+            &["push", "origin", &format!("{wrong}:{branch}")],
+        )
+        .unwrap();
         assert_eq!(
             build_argv(&inputs, Some(&overlay)).unwrap_err().to_string(),
             "overlay commit blobs or modes differ from private derivation"
@@ -917,7 +922,12 @@ mod staged_transport_tests {
                 .unwrap(),
             wrong
         );
-        assert!(!inputs.out.join("qualified-production/overlay-commit.json").exists());
+        assert!(
+            !inputs
+                .out
+                .join("qualified-production/overlay-commit.json")
+                .exists()
+        );
     }
 
     fn retained_fixture(root: &Path) -> (Inputs, Build) {
