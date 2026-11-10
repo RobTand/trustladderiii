@@ -80,6 +80,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                     && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
+        old(w).next_ticket <= final(w).next_ticket,
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
