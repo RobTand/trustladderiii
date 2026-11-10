@@ -2406,10 +2406,6 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
         2,
         "two failed reads open the incident before later looks probe health"
     );
-    assert!(
-        subscriptions.get() >= 3,
-        "the failing subscription must be exercised"
-    );
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
 }
 

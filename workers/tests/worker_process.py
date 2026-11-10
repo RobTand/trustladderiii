@@ -308,9 +308,10 @@ if args[:1] == ['run']:
     labels = dict(args[i + 1].split('=', 1) for i in range(len(args) - 1) if args[i] == '--label')
     mounts = [args[i + 1] for i in range(len(args) - 1) if args[i] == '--mount']
     env = dict(args[i + 1].split('=', 1) for i in range(len(args) - 1) if args[i] == '--env')
-    pathlib.Path({root!r}, name + '.json').write_text(json.dumps({{
-        'Id': hashlib.sha256(name.encode()).hexdigest(), 'Name': name, 'Labels': labels,
-        'Pid': os.getpid(), 'ConmonPid': os.getpid()}}))
+    metadata = {{'Id': hashlib.sha256(name.encode()).hexdigest(), 'Name': name, 'Labels': labels,
+                'Pid': os.getpid(), 'ConmonPid': os.getpid()}}
+    for identifier in (name, metadata['Id']):
+        pathlib.Path({root!r}, identifier + '.json').write_text(json.dumps(metadata))
     status = pathlib.Path('/proc/self/status').read_text()
     allowed = next(line.split(':', 1)[1].strip() for line in status.splitlines()
                    if line.startswith('Cpus_allowed_list:'))
