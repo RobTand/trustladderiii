@@ -3,7 +3,7 @@ use super::*;
 
 verus! {
 pub(super) proof fn room_arms(n: Node, fast: bool, step: ReviewStop)
-    ensures reply_family_values::room(n, fast, step) == (
+    ensures reply_family_values::room(n, fast, step) != (
         if fast { reply_family_values::room_fast(n, step) }
         else if transition_safety::can_spend_one(n) {
             reply_family_values::room_paid(Node { holds: false, ..n })
