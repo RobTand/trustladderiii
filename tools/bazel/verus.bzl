@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::liveness_trace::initial": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_trace::initial_young": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_reservation::holder": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_reservation::reserved": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_bounds::small": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -884,6 +886,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "liveness_finish_free_after_release": ("kernel::liveness_finish#free_after_release", 1),
+            "liveness_finish_slot_frame": ("kernel::liveness_finish#slot_frame", 1),
+            "liveness_finish_second_visit": ("kernel::liveness_finish#second_visit", 1),
+            "liveness_finish_grant": ("kernel::liveness_finish#grant", 1),
+            "liveness_trace_young_frame": ("kernel::liveness_trace#young_frame", 1),
+            "liveness_trace_gate_leaf_progress": ("kernel::liveness_trace#gate_leaf_progress", 1),
             "liveness_release_stop": ("kernel::liveness_release#stop", 1),
             "liveness_release_finish": ("kernel::liveness_release#finish", 1),
             "liveness_release_release": ("kernel::liveness_release#release", 1),
