@@ -945,7 +945,7 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
             }
         }
     kernel_proof! {
-        fact_relation_exports::fact_rows_intro(before_apply@, *w, node, fact, before_apply_out@, *out);
+        // Seed: omit the opaque export introduction.
     }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Fact { node, fact })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Fact { node, fact }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
