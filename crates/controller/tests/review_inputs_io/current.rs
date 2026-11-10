@@ -1,4 +1,5 @@
 use super::*;
+use super::criteria_current::criteria;
 pub(super) fn inputs(
     delivery: &Delivery,
     store: &mut Store,
@@ -134,26 +135,50 @@ pub(super) fn inputs(
             inputs["scope_diff"] = json!(scope_diff);
         }
     }
-    // #393: review judges a forcing against the issue's own symptom, not only the
-    // planner's description of it. The issue is the text ingest read, bounded.
-    let forced = report["results"].as_array().is_some_and(|results| {
-        results.iter().any(|r| {
-            selection::forced(
-                r.get("forcing").is_some(),
-                r.get("proof").is_some(),
-                r.get("declared_symptom").is_some(),
-            )
-        })
-    });
-    if forced
-        && let Some(issue) = store
-            .worker_materials(&node)?
-            .and_then(|materials| materials.get("issue").cloned())
+    if let Some(issue) = store
+        .worker_materials(&node)?
+        .and_then(|materials| materials.get("issue").cloned())
+        .filter(|issue| issue["title"].is_string() && issue["body"].is_string())
     {
+        let title = issue["title"].as_str().unwrap_or_default();
+        let body = issue["body"].as_str().unwrap_or_default();
         inputs["issue"] = json!({
-            "title": issue["title"].as_str().unwrap_or_default().chars().take(bounds::prefix_len(issue["title"].as_str().unwrap_or_default().chars().count(), 1_000)).collect::<String>(),
-            "body": issue["body"].as_str().unwrap_or_default().chars().take(bounds::prefix_len(issue["body"].as_str().unwrap_or_default().chars().count(), 16_000)).collect::<String>(),
+            "title": title.chars().take(bounds::prefix_len(title.chars().count(), 1_000)).collect::<String>(),
+            "body": body.chars().take(bounds::prefix_len(body.chars().count(), 16_000)).collect::<String>(),
         });
+        inputs["issue_truncated"] =
+            json!(title.chars().count() > 1_000 || body.chars().count() > 16_000);
+    }
+    if let Some(plan) = store.worker_document(&node, "plans")? {
+        let planned = tl3_contracts::footprint::Footprint::new(serde_json::from_value(
+            plan["files"].clone(),
+        )?)
+        .map_err(Error::Invalid)?;
+        let requests = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "footprint_addition_requests" && row.id == node)
+            .and_then(|row| row.value.as_array());
+        inputs["footprint_additions"] = json!(
+            delivery
+                .paths
+                .iter()
+                .filter(|path| !planned.contains(path))
+                .map(|path| {
+                    let mut added = json!({"path":path});
+                    if let Some(reason) = requests
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                        .find(|entry| entry["path"].as_str() == Some(path.as_str()))
+                        .and_then(|entry| entry.get("why"))
+                    {
+                        added["why"] = reason.clone();
+                    }
+                    added
+                })
+                .collect::<Vec<_>>()
+        );
     }
     if let Some(mut fixes) = store.worker_document(&node, "review_fixes")?
         && fixes["head_sha"] == head
@@ -195,10 +220,84 @@ pub(super) fn inputs(
     {
         inputs["generation_evidence"] = receipt.clone();
     }
+    fit_issue(&mut inputs, crate::run_backend::durable::MAX_BYTES)?;
     super::protocol::validate_inputs("reviewer", &inputs)?;
     // Keep schema diagnostics at their existing boundary before the typed wire.
     // A schema/type disagreement is an error, never a controller panic.
     let typed: tl3_contracts::roles::reviewer_input::ReviewerInput =
         serde_json::from_value(inputs)?;
     Ok(serde_json::to_value(&typed)?)
+}
+
+pub(crate) fn remember_addition_requests(
+    snapshot: &tl3_store::Snapshot,
+    node: &str,
+    reply: &Value,
+) -> Result<Value> {
+    let mut requests = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "footprint_addition_requests" && row.id == node)
+        .and_then(|row| row.value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for file in reply["files"]
+        .as_array()
+        .ok_or(Error::Invalid("needs_files requires files"))?
+    {
+        let path = tl3_contracts::footprint::Footprint::new(vec![
+            file["path"]
+                .as_str()
+                .ok_or(Error::Invalid("needs_files requires a path"))?
+                .into(),
+        ])
+        .map_err(Error::Invalid)?;
+        let path = &path[0];
+        if requests
+            .iter()
+            .any(|entry| entry["path"].as_str() == Some(path.as_str()))
+        {
+            continue;
+        }
+        requests.push(json!({"path":path, "why":file["why"]}));
+    }
+    Ok(json!(requests))
+}
+
+pub(super) fn fit_issue(inputs: &mut Value, max_bytes: usize) -> Result<()> {
+    if serde_json::to_vec(inputs)?.len() <= max_bytes {
+        return Ok(());
+    }
+    if !inputs["issue"].is_object() {
+        return Err(Error::Invalid(
+            "review input exceeds the input bound without issue text",
+        ));
+    }
+    inputs["issue_truncated"] = json!(true);
+    for field in ["body", "title"] {
+        let text = inputs["issue"][field]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        inputs["issue"][field] = json!("");
+        if serde_json::to_vec(inputs)?.len() > max_bytes {
+            continue;
+        }
+        let mut low = 0;
+        let mut high = text.chars().count();
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            inputs["issue"][field] = json!(text.chars().take(middle).collect::<String>());
+            if serde_json::to_vec(inputs)?.len() <= max_bytes {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        inputs["issue"][field] = json!(text.chars().take(low).collect::<String>());
+        return Ok(());
+    }
+    Err(Error::Invalid(
+        "review input exceeds the input bound without issue text",
+    ))
 }

@@ -855,8 +855,16 @@ fn reviewer_request_fits_issue_after_serializing_envelope() {
     let before = f.controller.snapshot().unwrap();
     let mut commit = Commit::new("review-envelope-documents", json!(null), &before);
     commit.rows = vec![
-        tl3_store::RowChange::Put { table:"plans".into(), id:"0".into(), value:json!({"files":["README.md"]}) },
-        tl3_store::RowChange::Put { table:"check_reports".into(), id:format!("0:{}",f.repo.head), value:json!({"base_sha":f.repo.base,"results":[]}) },
+        tl3_store::RowChange::Put {
+            table: "plans".into(),
+            id: "0".into(),
+            value: json!({"files":["README.md"]}),
+        },
+        tl3_store::RowChange::Put {
+            table: "check_reports".into(),
+            id: format!("0:{}", f.repo.head),
+            value: json!({"base_sha":f.repo.base,"results":[]}),
+        },
     ];
     f.controller.store.commit(&commit).unwrap();
     let snapshot = f.controller.snapshot().unwrap();

@@ -280,7 +280,10 @@ pub(crate) fn remember_addition_requests(
         ])
         .map_err(Error::Invalid)?;
         let path = &path[0];
-        if requests.iter().any(|entry| entry["path"].as_str() == Some(path.as_str())) {
+        if requests
+            .iter()
+            .any(|entry| entry["path"].as_str() == Some(path.as_str()))
+        {
             continue;
         }
         requests.push(json!({"path":path, "why":file["why"]}));
@@ -747,7 +750,11 @@ mod hostile_tests {
         assert!(value.get("footprint_additions").is_none());
         let before = store.load().unwrap();
         let mut commit = tl3_store::Commit::new("malformed-review-plan", json!(null), &before);
-        commit.rows.push(tl3_store::RowChange::Put { table:"plans".into(), id:"0".into(), value:json!({"kind":"split"}) });
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "plans".into(),
+            id: "0".into(),
+            value: json!({"kind":"split"}),
+        });
         store.commit(&commit).unwrap();
         assert!(
             matches!(

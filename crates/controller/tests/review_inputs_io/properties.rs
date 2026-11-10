@@ -1025,5 +1025,6 @@ fn current_request_plan_snapshot_and_read_failures() {
         assert!(run.result.is_err());
         assert_eq!(run.trace.last().unwrap()["op"],op);
         assert!(!run.trace.iter().any(|c|c["op"]=="validate_inputs"));
+        io::compare(&bad);
     }
 }

@@ -165,8 +165,10 @@ pub fn compare(s: &Schedule) -> Run {
     if raw.result.is_err() && raw.trace.last().is_some_and(|c| c["op"]=="issue_materials" || c["op"]=="plan_document") {
         // A new read can fail where the legacy builder did not read at all.
         // Its exact preceding trace must still match the reference prefix.
-        let prefix=&raw.trace[..raw.trace.len()-1];
-        assert_eq!(prefix, &old.trace[..prefix.len()]);
+        let prefix: Vec<_> = raw.trace[..raw.trace.len()-1].iter()
+            .filter(|c| c["op"]!="issue_materials" && c["op"]!="plan_document")
+            .cloned().collect();
+        assert_eq!(prefix, old.trace[..prefix.len()]);
         assert!(raw.error_variant.is_some());
         return old;
     }
