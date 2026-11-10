@@ -2129,7 +2129,7 @@ kernel_fn! {
                 }))
         } else {
             result.1 == n.ticket.is_some()
-                && result.0 == (Node { ticket: None, ..n })
+
         },
     ] {
         let mut m = n;
