@@ -667,3 +667,88 @@ pub(super) fn fact_dependency_entry(w: &mut World, i: usize, fact: Fact,
     }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
+pub(super) open spec fn infrastructure_retry_arm_result(n: Node) -> (Node, Option<bool>) {
+    (retirement::phased(Node { run_failures: (n.run_failures + 1) as u8, ..n }, Phase::Publishing), None)
+}
+
+pub(super) open spec fn infrastructure_incident_count_result(c: u8) -> u8 {
+    if c < 2 { (c + 1) as u8 } else { 2u8 }
+}
+
+pub(super) open spec fn infrastructure_incident_arm_result(n: Node) -> (Node, Option<bool>) {
+    let count = infrastructure_incident_count_result(n.run_incidents);
+    (Node { run_failures: 0, run_incidents: count, ..n }, Some(count >= 2))
+}
+
+pub(super) open spec fn infrastructure_retry_result(n: Node) -> (Node, Option<bool>) {
+    if n.run_failures == 0 { infrastructure_retry_arm_result(n) }
+    else { infrastructure_incident_arm_result(n) }
+}
+
+pub(super) proof fn infrastructure_retry_bridge(n: Node)
+    requires node_headroom(n), arithmetic_consistent(n),
+    ensures infrastructure_retry_result(n) == retirement::infrastructure_retry(n),
+        infrastructure_retry_result(n).0.generation as int <= n.generation as int + 1,
+{
+    reveal(retirement::infrastructure_retry);
+}
+}
+
+kernel_fn! {
+/// The original saturated incident count, isolated from the node result.
+pub(super) fn infrastructure_incident_count(c: u8) -> (result: u8) [
+    requires c <= 2,
+    ensures result == infrastructure_incident_count_result(c),
+] {
+    (c + 1).min(2)
+}
+}
+
+kernel_fn! {
+/// The first infrastructure failure retries publishing with the original writes.
+pub(super) fn infrastructure_retry_arm(n: Node) -> (result: (Node, Option<bool>)) [
+    requires n.generation < u64::MAX, n.run_failures == 0,
+    ensures result == infrastructure_retry_arm_result(n),
+] {
+    let mut value = n;
+    value.run_failures += 1;
+    set_phase(&mut value, Phase::Publishing); // enqueue again
+    (value, None)
+}
+}
+
+kernel_fn! {
+/// The second failure resets its counter and computes the incident report.
+pub(super) fn infrastructure_incident_arm(n: Node) -> (result: (Node, Option<bool>)) [
+    requires n.run_failures < u8::MAX, n.run_incidents <= 2,
+    ensures result == infrastructure_incident_arm_result(n),
+] {
+    let mut value = n;
+    value.run_failures += 1;
+    value.run_failures = 0;
+    value.run_incidents = infrastructure_incident_count(value.run_incidents);
+    let needs_rob = value.run_incidents >= 2;
+    (value, Some(needs_rob))
+}
+}
+
+kernel_fn! {
+/// Dispatch to exact value arms, then bridge to the unchanged public model.
+pub(super) fn infrastructure_retry_value(n: Node) -> (result: (Node, Option<bool>)) [
+    requires node_headroom(n), arithmetic_consistent(n),
+    ensures result == infrastructure_retry_result(n),
+        result == retirement::infrastructure_retry(n),
+        result.0.generation as int <= n.generation as int + 1,
+] {
+    let result = if n.run_failures == 0 {
+        infrastructure_retry_arm(n)
+    } else {
+        infrastructure_incident_arm(n)
+    };
+    kernel_proof! { infrastructure_retry_bridge(n); }
+    result
+}
+}
