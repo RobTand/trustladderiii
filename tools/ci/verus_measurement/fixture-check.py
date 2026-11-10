@@ -141,7 +141,7 @@ class Fixtures(unittest.TestCase):
     def test_all_342_production_selectors_parse(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         self.assertEqual(len(inventory['selections']), inventory['groups'])
-        self.assertEqual(inventory['groups'], 536)
+        self.assertEqual(inventory['groups'], 649)
         self.assertEqual(sum(row['expected'] for row in inventory['selections']), inventory['obligations'])
         rows = []
         for selection in inventory['selections']:
@@ -237,7 +237,7 @@ class Fixtures(unittest.TestCase):
             'source_head': inventory['source_head'], 'runner_sha256': D['digest'](self.original),
             'production_builder_source_guard': True, 'executions': 'synthetic, not Verus runs',
             'rows': rows, 'validation_passes': sum(row['validation'] == 'PASS' for row in rows)}))
-        self.assertEqual(len(rows), 536)
+        self.assertEqual(len(rows), 649)
         self.assertEqual({row['kind'] for row in rows}, {'root', 'module', 'function'})
         self.assertEqual([row for row in rows if row['validation'] != 'PASS'], [])
 

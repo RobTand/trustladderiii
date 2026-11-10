@@ -51,7 +51,21 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 Some(q) => q.id != id,
                 None => true,
             })),
+
+        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
+        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
+        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
+        old(w).next_question <= final(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
+    kernel_snapshot! { before_answer_rules = *w }
+    kernel_proof! {
+        if retirement::node_rules(*w, w.nodes@[i as int]) {
+            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
+        }
+    }
+
     kernel_proof! {
         if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
     }
@@ -80,6 +94,9 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 // An answer that left the node AwaitingRob withholds nothing.
                 handler_safety::unwithheld_same(before_answer@);
             }
+            if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
+                apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
+            }
         }
     }
     kernel_proof! {
@@ -90,6 +107,13 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     match note {
         Some(x) => notice(out, i, x),
         None => {}
+    }
+
+    kernel_proof! {
+        if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
+            handler_safety::rules_world_update(before_answer_rules@, *w,
+                before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
+        }
     }
 }
 }
@@ -129,87 +153,25 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             Some(q) => q.id != id,
             None => true,
         })),
-] proof [reveal(distance);] {
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
-    let Some(q) = m.question else {
-        kernel_proof! { handler_safety::same_step(n); }
-        return (m, nq, note);
-    };
-    if q.id != id {
-        kernel_proof! { handler_safety::same_step(n); }
-        return (m, nq, note); // an answer to a question that is no longer open
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        nq <= result.1,
+        (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
+] {
+    let result = answer_value(n, nq, id, answer);
+    kernel_proof! {
+        apply_answer_safety::answer_frame(n, nq, id, answer);
+        apply_answer_safety::answer_resources(n, nq, id, answer);
+        apply_answer_safety::answer_question_order(n, nq, id, answer);
+        apply_answer_safety::answer_rules(n, nq, id, answer);
+        apply_answer_safety::answer_step(n, nq, id, answer);
+        apply_answer_safety::answer_progress(n, nq, id, answer);
+        apply_answer_safety::answer_consumed(n, nq, id, answer);
     }
-    match m.phase {
-        Phase::Stopping(_) => match answer {
-            Answer::Retry => {
-                m.question = None;
-                kernel_proof! { handler_safety::field_step(n, m); }
-            }
-            Answer::MarkHandled => {
-                m.question = None;
-                mark_handled(&mut m);
-                kernel_proof! { handler_safety::field_step(n, m); }
-            }
-            _ => { kernel_proof! { handler_safety::same_step(n); } }
-        },
-        Phase::AwaitingRob => {
-            if answer == Answer::Unclear {
-                // One clarifying question. After that the question just stays open.
-                if !q.clarified {
-                    let (m1, nq1, x) = clarify_node(m, nq, q);
-                    m = m1;
-                    nq = nq1;
-                    note = Some(x);
-                }
-                kernel_proof! { if q.clarified { handler_safety::same_step(n); } }
-                return (m, nq, note);
-            }
-            if !allowed(q.kind, answer) {
-                kernel_proof! { handler_safety::same_step(n); }
-                return (m, nq, note);
-            }
-            match answer {
-                Answer::Continue => {
-                    let (m1, x) = go_on(m, q, 0);
-                    m = m1;
-                    note = x;
-                }
-                Answer::TryAgain => {
-                    let (m1, x) = retry_answer_node(m, q);
-                    m = m1;
-                    note = x;
-                }
-                Answer::AddCredit(k) => {
-                    let (m1, x) = go_on(m, q, k);
-                    m = m1;
-                    note = x;
-                }
-                Answer::ChangeRequest => {
-                    kernel_snapshot! { before_replace = m }
-                    m = enter_stopping_v(m, Outcome::Replaced);
-                    kernel_proof! {
-                        assert(m.proposed == before_replace@.proposed && m.adopted == before_replace@.adopted)
-                            by { reveal(retirement::stopped); }
-                        handler_safety::stop_step(before_replace@, Outcome::Replaced);
-                    }
-                }
-                Answer::Stop => {
-                    kernel_snapshot! { before_stop = m }
-                    m = enter_stopping_v(m, Outcome::Stopped);
-                    kernel_proof! {
-                        assert(m.proposed == before_stop@.proposed && m.adopted == before_stop@.adopted)
-                            by { reveal(retirement::stopped); }
-                        handler_safety::stop_step(before_stop@, Outcome::Stopped);
-                    }
-                }
-                _ => { kernel_proof! { handler_safety::same_step(n); } }
-            }
-        }
-        _ => { kernel_proof! { handler_safety::same_step(n); } }
-    }
-    (m, nq, note)
+    result
 }
 }
 
@@ -233,6 +195,13 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
         result.2 == (Notice::Ask { question: nq }),
         n.phase == Phase::AwaitingRob && n.question == Some(q) && !q.clarified
             ==> handler_safety::command_step(n, result.0),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        (handler_safety::node_rules_v(n, nq) && n.phase == Phase::AwaitingRob && n.question == Some(q)
+            ==> handler_safety::node_rules_v(result.0, result.1)),
 ] {
     let mut m = n;
     let next = nq;
@@ -246,6 +215,12 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
             handler_safety::clarify_step(n, q, next);
         }
     }
+    kernel_proof! {
+        if handler_safety::node_rules_v(n, nq) && n.phase == Phase::AwaitingRob && n.question == Some(q) {
+            handler_safety::clarified_rules_v(n, nq, q);
+        }
+    }
+
     (m, next + 1, Notice::Ask { question: next })
 }
 }
@@ -254,6 +229,7 @@ kernel_fn! {
 /// TryAgain rows / #771: restart the first attempt, then continue with at least
 /// one credit, as a value function (K5); the continuation is continue_node, then
 /// go_on's replanned note (never due here: replanned was just cleared).
+#[allow(dead_code)] // lint (B1 S1): callers moved to the value-form helpers; kept for its verified proof group
 fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
@@ -283,16 +259,50 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         }),
         n.phase == Phase::AwaitingRob ==> handler_safety::command_step(n, result.0),
         result.1.is_none(),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        (handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet ==> handler_safety::node_rules_v(result.0, u64::MAX)),
+] {
+    let r = retry_answer_exact(n, q);
+    kernel_proof! {
+        apply_answer_safety::retry_frame(n, q);
+        apply_answer_safety::retry_progress(n, q);
+        apply_answer_safety::retry_resources(n, q);
+        apply_answer_safety::retry_step(n, q);
+        if handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob
+            && n.question == Some(q) && q.kind == QKind::CantMeet {
+            apply_answer_safety::retried_answer_rules(n, q, u64::MAX);
+        }
+    }
+    r
+}
+}
+
+kernel_fn! {
+#[allow(clippy::collapsible_match, clippy::single_match)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
+fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> (if q.cost > 1 { q.cost } else { 1u8 }) == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::retried_answer(n, q),
 ] {
     let mut m = n;
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
     m.replanned = false;
-    m = continue_node(
+
+    m = continue_exact(
         m,
         Question {
-            cost: q.cost.max(1),
+            cost: retry_cost(q.cost),
             ..q
         },
         0,
@@ -306,11 +316,259 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         }
         _ => {}
     }
-    kernel_proof! {
-        if n.phase == Phase::AwaitingRob {
-            handler_safety::continue_step(n, m);
+
+    kernel_proof! { reveal(apply_answer_values::retried_answer); reveal(apply_answer_values::continued_answer); }
+    (m, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
+pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n),
+        arithmetic_consistent(n),
+        nq < u64::MAX,
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+    let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
+    let Some(q) = m.question else {
+        kernel_proof! { reveal(apply_answer_values::answered); }
+        return (m, nq, note);
+    };
+    if q.id != id {
+        kernel_proof! { reveal(apply_answer_values::answered); }
+        return (m, nq, note); // an answer to a question that is no longer open
+    }
+    match m.phase {
+        Phase::Stopping(_) => cleanup_answer_v(m, nq, id, answer),
+        Phase::AwaitingRob => awaiting_answer_v(m, nq, id, answer, q),
+        _ => {
+            kernel_proof! { reveal(apply_answer_values::answered); }
+            (m, nq, note)
         }
     }
-    (m, note)
+}
+}
+
+kernel_fn! {
+/// The unchanged TryAgain cost floor `q.cost.max(1)`, as a value with an exact post.
+fn retry_cost(c: u8) -> (result: u8) [
+    ensures result == (if c > 1 { c } else { 1u8 }),
+] {
+    c.max(1)
+}
+}
+
+kernel_fn! {
+/// MarkHandled on a cleanup question: the unchanged two statements as one value
+/// step, so the dispatcher sees one equation and not mark_handled's borrow.
+fn cleanup_handled_v(n: Node) -> (result: Node) [
+    ensures result == handler_safety::handled_node(Node { question: None, ..n }),
+] {
+    let mut m = n;
+    m.question = None;
+    mark_handled(&mut m);
+    m
+}
+}
+
+kernel_fn! {
+/// Cleanup-question answers (answer_value's Stopping arm, unchanged statements).
+#[allow(unused_variables)] // lint (B1 S1): parameters read only by the Verus contract
+fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires n.phase is Stopping,
+        match n.question { Some(q) => q.id == id, None => false },
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+    let mut m = n;
+    let note: Option<Notice> = None;
+    match answer {
+        Answer::Retry => {
+            m.question = None;
+        }
+        Answer::MarkHandled => {
+            m = cleanup_handled_v(m);
+        }
+        _ => {}
+    }
+    kernel_proof! { reveal(apply_answer_values::answered); }
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+/// Rob's answers to an open question (answer_value's AwaitingRob arm, unchanged
+/// statements, with the arm's own early returns).
+fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n),
+        arithmetic_consistent(n),
+        nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+    kernel_proof! { apply_answer_safety::awaiting_arms_bridge(n, nq, id, answer, q); }
+    if answer == Answer::Unclear {
+        return awaiting_unclear_v(n, nq, id, q);
+    }
+    if !allowed(q.kind, answer) {
+        kernel_proof! { assert(!apply_answer_values::permits(q.kind, answer)); }
+        return awaiting_denied_v(n, nq, id, q);
+    }
+    kernel_proof! { assert(apply_answer_values::permits(q.kind, answer)); }
+    match answer {
+        Answer::Continue => awaiting_continue_v(n, nq, id, q),
+        Answer::TryAgain => awaiting_retry_v(n, nq, id, q),
+        Answer::AddCredit(k) => awaiting_credit_v(n, nq, id, q, k),
+        Answer::ChangeRequest => awaiting_replace_v(n, nq, id, q),
+        Answer::Stop => awaiting_stop_v(n, nq, id, q),
+        _ => awaiting_other_v(n, nq, id, q),
+    }
+}
+}
+
+kernel_fn! {
+#[allow(unused_variables)] // lint (B1 S1): parameters read only by the Verus contract
+fn awaiting_unclear_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == (apply_answer_values::unclear_answer(n, nq, q)),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    if !q.clarified {
+        let (m1, nq1, x) = clarify_node(m, nq, q);
+        m = m1;
+        nq = nq1;
+        note = Some(x);
+    }
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_denied_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((n, nq, None)),
+] {
+    let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
+
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        apply_answer_values::permits(q.kind, Answer::Continue),
+    ensures result == ({ let r = apply_answer_values::continued_answer(n, q, 0); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = go_on_exact(m, q, 0);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        apply_answer_values::permits(q.kind, Answer::TryAgain),
+    ensures result == ({ let r = apply_answer_values::retried_answer(n, q); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = retry_answer_exact(m, q);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+        apply_answer_values::permits(q.kind, Answer::AddCredit(k)),
+    ensures result == ({ let r = apply_answer_values::continued_answer(n, q, k); (r.0, nq, r.1) }),
+] {
+    let mut m = n;
+    let nq = nq;
+    let mut note: Option<Notice> = None;
+    let (m1, x) = go_on_exact(m, q, k);
+    m = m1;
+    note = x;
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_replace_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((retirement::stopped(n, Outcome::Replaced), nq, None)),
+] {
+    let mut m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
+    m = stopped_v(m, Outcome::Replaced);
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_stop_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((retirement::stopped(n, Outcome::Stopped), nq, None)),
+] {
+    let mut m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
+    m = stopped_v(m, Outcome::Stopped);
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
+fn awaiting_other_v(n: Node, nq: u64, id: u64, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == ((n, nq, None)),
+] {
+    let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
+
+    (m, nq, note)
 }
 }
