@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::reply_family_values::plan_leaf": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_dispatch::other_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::work_made": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::work_checked": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::work_approved": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -800,6 +802,22 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_dispatch_plan_leaf_v": ("kernel::work_replies#plan_leaf_v", 1),
+            "reply_dispatch_finish_ingest_v": ("kernel::ingest#finish_ingest_v", 1),
+            "reply_dispatch_audit_disagreement_v": ("kernel::ingest#audit_disagreement_v", 1),
+            "reply_dispatch_plan_bounds": ("kernel::reply_family_dispatch#plan_bounds", 1),
+            "reply_dispatch_plan_progress": ("kernel::reply_family_dispatch#plan_progress", 1),
+            "reply_dispatch_plan_completion": ("kernel::reply_family_dispatch#plan_completion", 1),
+            "reply_dispatch_plan_value_posts": ("kernel::reply_family_dispatch#plan_value_posts", 1),
+            "reply_dispatch_ingest_bounds": ("kernel::reply_family_dispatch#ingest_bounds", 1),
+            "reply_dispatch_ingest_progress": ("kernel::reply_family_dispatch#ingest_progress", 1),
+            "reply_dispatch_ingest_completion": ("kernel::reply_family_dispatch#ingest_completion", 1),
+            "reply_dispatch_ingest_value_posts": ("kernel::reply_family_dispatch#ingest_value_posts", 1),
+            "reply_dispatch_plan_check_bounds": ("kernel::reply_family_dispatch#plan_check_bounds", 1),
+            "reply_dispatch_plan_check_progress": ("kernel::reply_family_dispatch#plan_check_progress", 1),
+            "reply_dispatch_plan_check_completion": ("kernel::reply_family_dispatch#plan_check_completion", 1),
+            "reply_dispatch_plan_check_value_posts": ("kernel::reply_family_dispatch#plan_check_value_posts", 1),
+            "reply_dispatch_world_lift": ("kernel::reply_family_dispatch#reply_lift", 1),
             "reply_dispatch_work_made_v": ("kernel::work_replies#work_made_v", 1),
             "reply_dispatch_work_checked_v": ("kernel::work_replies#work_checked_v", 1),
             "reply_dispatch_work_approved_v": ("kernel::work_replies#work_approved_v", 1),
