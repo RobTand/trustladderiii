@@ -1886,7 +1886,8 @@ fn m4_live_external_parent_case(parent_matches: bool) {
         inner: adapters::flux_checks::Fake::new(fixture.root.path()), base: checked_base.clone(),
         moved_base: None, api: fixture.api.state.clone(),
     });
-    let controller = Controller::open_with_clock(Store::open(&settings).unwrap(), registry, bootstrap(), fixture.clock.clone()).unwrap();
+    let mut controller = Controller::open_with_clock(Store::open(&settings).unwrap(), registry, bootstrap(), fixture.clock.clone()).unwrap();
+    controller.register_github_translator("delivery", direct_merge::Translator::new(fixture.api.clients()).unwrap().with_wakes(fixture.wakes.clone()));
     let (mut controller, _) = fixture.start_controller(&settings, controller);
     drain(&mut controller);
     {
