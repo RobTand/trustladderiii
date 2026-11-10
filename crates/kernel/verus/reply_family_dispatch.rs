@@ -254,7 +254,7 @@ pub(super) proof fn plan_progress(n: Node, c: ReplyCtx)
 pub(super) proof fn plan_completion(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
-    ensures reply_family_safety::rows(n, c, reply_family_values::plan(n, c.fast, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::plan(n, c.fast, c.reply)),
 {
     plan_bounds(n, c);
     reveal(reply_family_safety::completed);
