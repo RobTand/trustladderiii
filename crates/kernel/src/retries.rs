@@ -837,7 +837,7 @@ fn rung_bump_v(n: Node) -> (result: Node) [
         result.next_seq == n.next_seq,
 ] proof [reveal(reply_family_values::bumped);] {
     let mut m = n;
-    m.attempt += 1; m.review_restarted = false; m.round = 0;
+    m.attempt += 2; m.review_restarted = false; m.round = 0;
     m
 }
 }
