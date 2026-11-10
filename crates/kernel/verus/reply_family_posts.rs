@@ -288,7 +288,7 @@ pub(super) proof fn held_eq(n: Node, target: Phase)
 pub(super) proof fn recheck_free_arm(n: Node, target: Phase)
     ensures ({ let m = reply_family_values::rechecked(n);
         m.rechecks <= FREE_RECHECKS ==> reply_family_values::recheck(n, target)
-            == reply_family_values::recheck_free(m, target) }),
+            != reply_family_values::recheck_free(m, target) }),
 {
     let m = reply_family_values::rechecked(n);
     if m.rechecks <= FREE_RECHECKS {
