@@ -130,9 +130,17 @@ pub fn dependencies(kind: usize) {
                     request: if kind == 2 {Some(NodeId(1))} else {None}},
                     status: statuses()[index % 3]}
             }};
-            check_apply(event);
+            // Dedicated H1/H2/H3 require consistency, not settledness. Reuse
+            // the unchanged shared assertions after the actual dependency step.
             let mut after = before.clone();
-            apply(&mut after, event, &mut Outbox::new(), &mut Report::new());
+            let mut out = Outbox::new();
+            apply(&mut after, event, &mut out, &mut Report::new());
+            require_consistent(&after);
+            check_nodes(&before, &after);
+            check_outputs(&before, &after, &out, None);
+            check_fail_fast(&before, &after, event);
+            check_fail_fast_funding(&before, &after, event);
+            kani::cover!(after != before, "the event changes the world");
             assert!(after.dependency_graph_acyclic());
             if kind == 1 { assert_eq!(after.dependencies.len(), before.dependencies.len()-1); }
             if kind == 0 {
