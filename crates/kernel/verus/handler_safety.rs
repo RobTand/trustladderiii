@@ -739,7 +739,7 @@ pub(super) proof fn clarified_rules_v(n: Node, nq: u64, q: Question)
     requires node_rules_v(n, nq), n.phase == Phase::AwaitingRob, n.question == Some(q),
         nq < u64::MAX,
     ensures node_rules_v(Node { question: Some(Question { id: nq, clarified: true, ..q }), ..n },
-        nq + 1),
+        (nq + 1) as u64),
 {
     reveal(node_rules_v);
 }
