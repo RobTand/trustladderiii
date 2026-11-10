@@ -960,7 +960,7 @@ pub(in super::super) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize,
     notice(&mut notes, i, Notice::Note(NoteKind::OutsidePush));
     let published = matches!(value.phase,
         Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing));
-    if published {
+    if false {
         update_recheck_head(&mut value, head);
         kernel_proof! { facts_family_tail::outside_prefix_frame(n, head); }
         let change = recheck_node(value, next_question, Phase::Ready(Resume::Checking));
