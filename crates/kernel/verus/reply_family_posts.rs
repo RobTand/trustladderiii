@@ -295,10 +295,16 @@ pub(super) proof fn recheck_arms(n: Node, target: Phase)
             reply_family_values::recheck(n, target) == reply_family_values::recheck_ask(m, target)) }),
 {
     reveal(reply_family_values::recheck); reveal(reply_family_values::rechecked);
-    reveal(reply_family_values::recheck_free); reveal(reply_family_values::recheck_paid);
-    reveal(reply_family_values::recheck_ask);
     let m = reply_family_values::rechecked(n);
-    held_eq(m, target); held_eq(reply_family_values::spent(m), target);
+    if m.rechecks <= FREE_RECHECKS {
+        reveal(reply_family_values::recheck_free);
+        held_eq(m, target);
+    } else if transition_safety::can_spend_one(m) {
+        reveal(reply_family_values::recheck_paid);
+        held_eq(reply_family_values::spent(m), target);
+    } else {
+        reveal(reply_family_values::recheck_ask);
+    }
 }
 
 pub(super) proof fn room_bridge(n: Node, fast: bool, step: ReviewStop)
