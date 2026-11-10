@@ -154,10 +154,15 @@ pub fn admitted_preview(inputs: &Inputs) -> Result<Value> {
         artifacts.push(identity(&path)?);
     }
     fs::copy(&log, upload.join("preview-build.log"))?;
-    fs::copy(root.join("runtime-build.json"), upload.join("runtime-build.json"))?;
-    Ok(json!({"base_head":inputs.head,"overlay_tree":record["tree"],"command_exit":0,
+    fs::copy(
+        root.join("runtime-build.json"),
+        upload.join("runtime-build.json"),
+    )?;
+    Ok(
+        json!({"base_head":inputs.head,"overlay_tree":record["tree"],"command_exit":0,
         "invocation_id":null,"own_verdict":null,"collection":"outer_buildbuddy_action_required",
-        "log":identity(&log)?,"artifacts":artifacts}))
+        "log":identity(&log)?,"artifacts":artifacts}),
+    )
 }
 
 pub fn build(

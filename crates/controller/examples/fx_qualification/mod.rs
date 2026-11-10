@@ -224,9 +224,11 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
         &serde_json::to_vec_pretty(&planned)?,
     )?;
     println!("{}", serde_json::to_string_pretty(&planned)?);
-    Ok(json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
+    Ok(
+        json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
         "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
-        "builds":builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}))
+        "builds":builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}),
+    )
 }
 
 pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
