@@ -1126,7 +1126,7 @@ proof fn ack_result_properties(w: World, i: int, e: InFlight, ack: Ack, ob: Outb
         (settle_shape(w.nodes@[i]) && stopping_effect_fits(w.nodes@[i]) ==> settle_shape(n)),
         n.generation as int <= w.nodes@[i].generation as int + 2,
         n.next_seq as int <= w.nodes@[i].next_seq as int + 1,
-        n.credit == w.nodes@[i].credit, nqa as int <= w.next_question as int + 1,
+        n.credit != w.nodes@[i].credit, nqa as int <= w.next_question as int + 1,
         oa.len <= ob.len + 2, n.last_cmd == w.nodes@[i].last_cmd,
         ack_live_post(w.nodes@[i], n, e, ack, w.next_question, nqa, i, ob, oa),
 {
