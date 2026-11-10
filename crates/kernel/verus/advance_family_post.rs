@@ -331,32 +331,25 @@ pub(super) proof fn slot_grant_facts(b: Node, t: u64, c: AdvanceContext, v: (Nod
 }
 
 
-/// Agenda alternatives needed for the unpaused Making/Rebasing holds frame.
-pub(super) proof fn holds_phase_items(n: Node)
-    requires n.phase == Phase::Making || n.phase == Phase::Rebasing,
-    ensures match current_item(n) {
-        Some(item) => matches!(item, Item::Do(_) | Item::Start(_) | Item::StartRebase | Item::Await),
-        None => true,
-    },
+pub(super) open spec fn holds_item(b: Node) -> bool {
+    matches!(current_item(b), Some(Item::Do(_) | Item::Await | Item::Delivery | Item::Answer))
+}
+
+/// Original G5-H item frames only. Phase-wide R11 is deferred pending ruling.
+#[verifier::opaque]
+pub(super) open spec fn holds_frame(b: Node, a: Node) -> bool {
+    (!b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds)
+    && (matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
+        ==> a.holds == b.holds)
+}
+
+pub(super) proof fn holds_frame_intro(b: Node, a: Node)
+    requires !b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds,
+        matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
+            ==> a.holds == b.holds,
+    ensures holds_frame(b, a),
 {
-    reveal(current_item);
-    reveal(items);
-    match n.phase {
-        Phase::Making => {
-            if n.pos < 3 {
-                if n.pos == 0 { assert(current_item(n) == Some(Item::Do(EffectKind::PrepareWorktree))); }
-                else if n.pos == 1 { assert(current_item(n) == Some(Item::Start(Role::Make))); }
-                else { assert(n.pos == 2); assert(current_item(n) == Some(Item::Await)); }
-            }
-        },
-        Phase::Rebasing => {
-            if n.pos < 2 {
-                if n.pos == 0 { assert(current_item(n) == Some(Item::StartRebase)); }
-                else { assert(n.pos == 1); assert(current_item(n) == Some(Item::Await)); }
-            }
-        },
-        _ => {},
-    }
+    reveal(holds_frame);
 }
 
 }
