@@ -121,9 +121,9 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && !old(w).nodes@[i as int].paused && old(w).nodes@[i as int].ticket.is_some()
                 && final(w).nodes@[i as int].ticket.is_none(),
         !old(w).nodes@[i as int].paused
-            && matches!(current_item(old(w).nodes@[i as int]), Some(Item::Do(_)))
+            && (match current_item(old(w).nodes@[i as int]) { Some(Item::Do(_)) => true, _ => false })
             ==> final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
-        matches!(current_item(old(w).nodes@[i as int]), Some(Item::Await | Item::Delivery | Item::Answer))
+        (match current_item(old(w).nodes@[i as int]) { Some(Item::Await | Item::Delivery | Item::Answer) => true, _ => false })
             ==> final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
         !old(w).nodes@[i as int].paused
             && (old(w).nodes@[i as int].phase == Phase::Making || old(w).nodes@[i as int].phase == Phase::Rebasing)
