@@ -1135,13 +1135,19 @@ fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
             {
                 path_start -= 3;
             }
+            let field_label = ts.get(i + 1) == Some(&Token::Punct(':'))
+                && ts.get(i + 2) != Some(&Token::Punct(':'));
+            let field_read = i > 0
+                && ts[i - 1] == Token::Punct('.')
+                && (i < 2 || ts[i - 2] != Token::Punct('.'))
+                && ts.get(i + 1) != Some(&Token::Punct('('));
             match ts[i].name() {
                 Some("assume")
                     if !kani_shadowed
                         && ts[path_start].name() == Some("kani")
                         && path_start < i => {}
-                Some("assume") => hits.push((i, "assume")),
-                Some("admit") => hits.push((i, "admit")),
+                Some("assume") if !field_label && !field_read => hits.push((i, "assume")),
+                Some("admit") if !field_label && !field_read => hits.push((i, "admit")),
                 Some("assume_specification") => hits.push((i, "assume_specification")),
                 Some("external_body" | "external")
                     if ts[path_start].name() == Some("verifier")
@@ -1284,6 +1290,7 @@ fn trusted_marker_detection_covers_attributes_calls_and_aliases() {
         "builtin::assume(false)",
         "assume_specification [f] () {}",
         "use builtin::assume as trust;",
+        "use builtin::{admit as trust};",
         "r#assume(false)",
     ] {
         assert!(!trusted_markers(marker).is_empty(), "missed {marker}");
@@ -1315,6 +1322,8 @@ kani::assume(false);
     assert!(
         !trusted_markers("#![allow(dead_code)] #[cfg(kani)] fn f() {} assume(false);").is_empty()
     );
+    assert!(trusted_markers("struct Context { admit: bool } let c = Context { admit: true }; c.admit = false; !c.admit;").is_empty());
+    assert!(!trusted_markers("c.admit();").is_empty());
 }
 
 #[test]
