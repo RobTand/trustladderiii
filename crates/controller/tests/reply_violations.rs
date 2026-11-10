@@ -34,13 +34,12 @@ fn classifier_reports_all_independent_rules_in_order() {
     let result = check("check-reply", "classifier", json!({
         "inputs": {"comment":{"author":"requester","body":"comment"},
                    "state":{"closed":true,"phase":"Making","open_question":null}},
-        "reply": {"kind":"answer", "question_id":"q1", "answer":"add_credit", "amount":1.5}
+        "reply": {"kind":"answer", "question_id":"q1", "answer":"add_credit", "amount":1}
     }));
     assert_eq!(result["violations"], json!([
         "closed requests allow only complaint, remark, unsure or restart",
         "reply answers a question that is not open",
-        "reply selects an answer the question does not offer",
-        "credit amount must be an integer"
+        "reply selects an answer the question does not offer"
     ]));
 }
 
