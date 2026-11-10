@@ -101,41 +101,12 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
             old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
-] proof [reveal(distance);] {
-    kernel_snapshot! { ack_node = w.nodes@[i as int] }
-    kernel_snapshot! { ack_question = w.next_question }
-    kernel_snapshot! { ack_out = *out }
-    w.nodes[i].effect = None;
-    if e.cancelling {
-        kernel_proof! { ack_cancel_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        return;
-    }
-    match ack {
-        Ack::Confirmed => {
-            confirmed(&mut w.nodes[i], e.kind);
-            kernel_proof! { ack_confirmed_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-        Ack::DeliveryAccepted => {
-            delivery_accepted(&mut w.nodes[i]);
-            kernel_proof! { ack_delivery_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-        Ack::Retryable => {
-            delivery_failed(w, i, e.kind, out);
-            kernel_proof! { ack_retry_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-        Ack::Permanent => {
-            effect_failed(w, i, e.kind, out);
-            kernel_proof! { ack_permanent_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-        Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
-            stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody);
-            kernel_proof! { ack_review_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-        Ack::BodyPolicyRefused => {
-            effect_failed(w, i, e.kind, out);
-            kernel_proof! { ack_permanent_post(ack_node@, w.nodes@[i as int], e, ack, ack_question@, w.next_question, i as int, ack_out@, *out); }
-        },
-    }
+] {
+    let (node, next_question, output) = ack_value(w.nodes[i], i, e, ack, w.next_question, *out);
+    kernel_proof! { ack_result_properties(*w, i as int, e, ack, *out, node, next_question, output); }
+    w.nodes[i] = node;
+    w.next_question = next_question;
+    *out = output;
 }
 }
 
@@ -764,4 +735,323 @@ pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u6
         }
     }
 }
+}
+
+
+kernel_fn! {
+fn ack_phase_value(n: Node, phase: Phase) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == retirement::phased(n, phase),
+] {
+    Node { generation: n.generation + 1, phase, pos: 0, ticket: None,
+        effect: match n.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }, ..n }
+}
+}
+
+kernel_fn! {
+fn ack_abandon_value(n: Node) -> (result: Node) [
+    ensures result == ack_abandon_spec(n),
+] {
+    Node { run: None, job: None, pool: false,
+        effect: match n.effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling || e.kind.starts_operation(), ..e }),
+            None => None,
+        }, ..n }
+}
+}
+
+kernel_fn! {
+fn ack_append_value(out: Outbox, item: Out) -> (result: Outbox) [
+    requires out.len < OUTBOX,
+    ensures result.len == out.len + 1,
+        result.items@ == out.items@.update(out.len as int, Some(item)),
+] {
+    let mut output = out;
+    output.push(item);
+    output
+}
+}
+
+kernel_fn! {
+fn ack_resources_value(n: Node, kind: EffectKind) -> (result: Node) [
+    ensures result == resources_spec(n, kind),
+] {
+    Node { fx_failures: 0, fx_incidents: 0,
+        run: if kind == EffectKind::StopRun { None } else { n.run },
+        pool: if kind == EffectKind::StopRun { false } else { n.pool },
+        job: if kind == EffectKind::WithdrawJob { None } else { n.job },
+        pr_open: if kind == EffectKind::ClosePr { false } else { n.pr_open },
+        worktree: if kind == EffectKind::RemoveWorktree { false } else { n.worktree }, ..n }
+}
+}
+
+kernel_fn! {
+fn ack_emit_value(n: Node, i: usize, kind: EffectKind, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.next_seq < u64::MAX, out.len < OUTBOX,
+    ensures ack_view(result) == ack_emit_spec(n, i as int, kind, out),
+] {
+    let seq = n.next_seq;
+    let m = Node { next_seq: seq + 1,
+        effect: Some(InFlight { seq, kind, cancelling: false }),
+        worktree: n.worktree || kind == EffectKind::PrepareWorktree,
+        pr_open: n.pr_open || kind == EffectKind::OpenPr,
+        had_pr: n.had_pr || kind == EffectKind::OpenPr, ..n };
+    let head = match kind {
+        EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr | EffectKind::Enqueue => m.head,
+        _ => None,
+    };
+    let output = ack_append_value(out, Out::Effect { node: NodeId(i as u64), seq, kind, head });
+    (m, 0, output)
+}
+}
+
+kernel_fn! {
+fn ack_stopped_value(n: Node) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == retirement::stopped(n, Outcome::Stopped),
+] {
+    kernel_proof! { allocation_stopping_lemmas::stopped_cases(n, Outcome::Stopped); }
+    match n.phase {
+        Phase::Closed(_) | Phase::Stopping(_) => n,
+        _ => ack_phase_value(Node { question: None, waiting_incident: false,
+            incident_needs_rob: false, ..n }, Phase::Stopping(Outcome::Stopped)),
+    }
+}
+}
+
+kernel_fn! {
+fn ack_cancel_value(n: Node, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    ensures ack_view(result) == ack_cancel_spec(n, nq, out), result.2 == out,
+] { (n, nq, out) }
+}
+
+kernel_fn! {
+fn ack_confirmed_value(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation < u64::MAX,
+    ensures ack_view(result) == ack_confirmed_spec(n, kind, nq, out), result.2 == out,
+] {
+    let m = ack_resources_value(n, kind);
+    let m = confirmed_agenda_value(m, kind);
+    (m, nq, out)
+}
+}
+
+kernel_fn! {
+fn ack_delivery_value(n: Node, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation < u64::MAX,
+    ensures ack_view(result) == ack_delivery_spec(n, nq, out), result.2 == out,
+] {
+    let m = Node { fx_failures: 0, fx_incidents: 0, holds: false, run: None,
+        job: None, pool: false, question: None, ..n };
+    let m = ack_phase_value(m, Phase::AwaitingDelivery);
+    (m, nq, out)
+}
+}
+
+kernel_fn! {
+fn ack_retry_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation as int + 2 <= u64::MAX as int, n.next_seq < u64::MAX,
+        n.fx_failures <= 1, n.fx_incidents <= 2, out.len < OUTBOX,
+    ensures ack_view(result) == ack_retry_spec(n, i as int, kind, nq, out),
+] {
+    let m = Node { fx_failures: n.fx_failures + 1, ..n };
+    if m.fx_failures < 2 {
+        let (m, _, output) = ack_emit_value(m, i, kind, out);
+        return (m, nq, output);
+    }
+    let m = Node { fx_failures: 0, fx_incidents: (m.fx_incidents + 1).min(2), ..m };
+    let needs_rob = m.fx_incidents >= 2;
+    let m = if kind.starts_operation() {
+        let m = ack_abandon_value(m);
+        Node { pos: operation_start(m.phase), generation: m.generation + 1, ..m }
+    } else { m };
+    let (m, _) = incident_value(m, i, needs_rob);
+    let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
+    (m, nq, output)
+}
+}
+
+kernel_fn! {
+fn ack_permanent_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation < u64::MAX, nq < u64::MAX, out.len + 2 <= OUTBOX,
+    ensures ack_view(result) == ack_permanent_spec(n, i as int, kind, nq, out),
+] {
+    let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } });
+    if n.phase.is_stopping() {
+        let id = nq;
+        let next_question = nq + 1;
+        let m = Node { question: Some(Question { id, kind: QKind::CleanupFailed,
+            cont: Cont::Nowhere, cost: 0, clarified: false }), ..n };
+        let output = ack_append_value(output, Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: id } });
+        return (m, next_question, output);
+    }
+    let m = if kind.starts_operation() { ack_abandon_value(n) } else { n };
+    let cont = match m.phase {
+        Phase::Ingesting => Cont::Ingesting,
+        Phase::Auditing => Cont::Auditing,
+        Phase::Planning { must_split } => Cont::Planning { must_split },
+        phase => match phase.resume() { Some(r) => Cont::Ready(r), None => Cont::Unplanned },
+    };
+    let id = nq;
+    let next_question = nq + 1;
+    let m = Node { holds: false, question: Some(Question { id, kind: QKind::EffectFailed,
+        cont, cost: 0, clarified: false }), ..m };
+    let m = ack_phase_value(m, Phase::AwaitingRob);
+    let output = ack_append_value(output, Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: id } });
+    (m, next_question, output)
+}
+}
+
+kernel_fn! {
+fn ack_body_policy_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation < u64::MAX, nq < u64::MAX, out.len + 2 <= OUTBOX,
+    ensures ack_view(result) == ack_body_policy_spec(n, i as int, kind, nq, out),
+        kind == EffectKind::OpenPr ==> result.2 == out,
+] {
+    if kind == EffectKind::OpenPr {
+        let m = ack_stopped_value(Node { review_stop: Some(ReviewStop::PublicationBody), ..n });
+        (m, nq, out)
+    } else { ack_permanent_value(n, i, kind, nq, out) }
+}
+}
+
+kernel_fn! {
+fn ack_value(n: Node, i: usize, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX, out.len + 2 <= OUTBOX,
+    ensures ack_view(result) == ack_value_spec(n, i as int, e, ack, nq, out),
+        ack_quiet(e, ack) ==> result.2 == out,
+] {
+    let mut n = n;
+    n.effect = None;
+    if e.cancelling { return ack_cancel_value(n, nq, out); }
+    match ack {
+        Ack::Confirmed => ack_confirmed_value(n, e.kind, nq, out),
+        Ack::DeliveryAccepted => ack_delivery_value(n, nq, out),
+        Ack::Retryable => ack_retry_value(n, i, e.kind, nq, out),
+        Ack::Permanent => ack_permanent_value(n, i, e.kind, nq, out),
+        Ack::BodyPolicyRefused => ack_body_policy_value(n, i, e.kind, nq, out),
+    }
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+
+open spec fn ack_view(r: (Node, u64, Outbox)) -> (Node, u64, Seq<Option<Out>>, int) {
+    (r.0, r.1, r.2.items@, r.2.len as int)
+}
+open spec fn ack_abandon_spec(n: Node) -> Node {
+    Node { run: None, job: None, pool: false,
+        effect: match n.effect { Some(e) => Some(InFlight { cancelling: e.cancelling
+            || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }), None => None }, ..n }
+}
+open spec fn ack_cancel_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    (n, nq, out.items@, out.len as int)
+}
+open spec fn ack_confirmed_spec(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    (agenda_spec(resources_spec(n, kind), kind), nq, out.items@, out.len as int)
+}
+open spec fn ack_delivery_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    (retirement::phased(Node { fx_failures: 0, fx_incidents: 0, holds: false,
+        run: None, job: None, pool: false, question: None, ..n }, Phase::AwaitingDelivery), nq, out.items@, out.len as int)
+}
+open spec fn ack_emit_spec(n: Node, i: int, kind: EffectKind, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    (Node { next_seq: (n.next_seq + 1) as u64, effect: Some(InFlight { seq: n.next_seq, kind, cancelling: false }),
+        worktree: n.worktree || kind == EffectKind::PrepareWorktree,
+        pr_open: n.pr_open || kind == EffectKind::OpenPr, had_pr: n.had_pr || kind == EffectKind::OpenPr, ..n }, 0u64,
+        out.items@.update(out.len as int, Some(Out::Effect { node: NodeId(i as u64), seq: n.next_seq,
+            kind, head: effect_head(kind, n.head) })), out.len as int + 1)
+}
+open spec fn ack_retry_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    if n.fx_failures == 0 {
+        let r = ack_emit_spec(Node { fx_failures: 1, ..n }, i, kind, out);
+        (r.0, nq, r.2, r.3)
+    } else {
+        let m = Node { fx_failures: 0, fx_incidents: if n.fx_incidents < 2 { (n.fx_incidents + 1) as u8 } else { 2u8 }, ..n };
+        let m = if matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase) {
+            let m = ack_abandon_spec(m);
+            Node { pos: if m.phase == Phase::Making { 1u8 } else { 0u8 }, generation: (m.generation + 1) as u64, ..m }
+        } else { m };
+        (retirement::incident(m, m.fx_incidents >= 2), nq,
+            out.items@.update(out.len as int, Some(Out::Notice { node: NodeId(i as u64),
+                notice: Notice::Incident { needs_rob: m.fx_incidents >= 2 } })), out.len as int + 1)
+    }
+}
+open spec fn ack_permanent_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    (failed_spec(n, kind, nq), (nq + 1) as u64,
+        out.items@.update(out.len as int, Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } }))
+            .update(out.len as int + 1, Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: nq } })), out.len as int + 2)
+}
+open spec fn ack_body_policy_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    if kind == EffectKind::OpenPr {
+        (retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), ..n }, Outcome::Stopped), nq, out.items@, out.len as int)
+    } else { ack_permanent_spec(n, i, kind, nq, out) }
+}
+open spec fn ack_quiet(e: InFlight, ack: Ack) -> bool {
+    e.cancelling || ack == Ack::Confirmed || ack == Ack::DeliveryAccepted
+        || (ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr)
+}
+open spec fn ack_value_spec(b: Node, i: int, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    let n = Node { effect: None, ..b };
+    if e.cancelling { ack_cancel_spec(n, nq, out) } else { match ack {
+        Ack::Confirmed => ack_confirmed_spec(n, e.kind, nq, out),
+        Ack::DeliveryAccepted => ack_delivery_spec(n, nq, out),
+        Ack::Retryable => ack_retry_spec(n, i, e.kind, nq, out),
+        Ack::Permanent => ack_permanent_spec(n, i, e.kind, nq, out),
+        Ack::BodyPolicyRefused => ack_body_policy_spec(n, i, e.kind, nq, out),
+    } }
+}
+
+proof fn ack_result_properties(w: World, i: int, e: InFlight, ack: Ack, ob: Outbox,
+    n: Node, nqa: u64, oa: Outbox)
+    requires 0 <= i < w.nodes@.len(), ob.len + 2 <= OUTBOX,
+        node_headroom(w.nodes@[i]), arithmetic_consistent(w.nodes@[i]), w.next_question < u64::MAX,
+        w.nodes@[i].effect == Some(e),
+        ack == Ack::DeliveryAccepted ==> e.kind == EffectKind::Enqueue,
+        !e.cancelling && e.kind == EffectKind::Enqueue ==> ack != Ack::Confirmed
+            && (ack == Ack::DeliveryAccepted ==> w.nodes@[i].phase == Phase::Publishing
+                && current_item(w.nodes@[i]) == Some(Item::Do(EffectKind::Enqueue))),
+        ack_view((n, nqa, oa)) == ack_value_spec(w.nodes@[i], i, e, ack, w.next_question, ob),
+        ack_quiet(e, ack) ==> oa == ob,
+    ensures (node_checked(w, w.nodes@[i])
+            && (!w.nodes@[i].paused || w.nodes@[i].phase is Stopping)
+            && (if e.kind == EffectKind::Enqueue { ack == Ack::DeliveryAccepted } else { ack == Ack::Confirmed })
+            ==> distance(n) < distance(w.nodes@[i])),
+        n.repo == w.nodes@[i].repo, n.footprint == w.nodes@[i].footprint,
+        (settle_shape(w.nodes@[i]) && stopping_effect_fits(w.nodes@[i]) ==> settle_shape(n)),
+        n.generation as int <= w.nodes@[i].generation as int + 2,
+        n.next_seq as int <= w.nodes@[i].next_seq as int + 1,
+        n.credit == w.nodes@[i].credit, nqa as int <= w.next_question as int + 1,
+        oa.len <= ob.len + 2, n.last_cmd == w.nodes@[i].last_cmd,
+        ack_live_post(w.nodes@[i], n, e, ack, w.next_question, nqa, i, ob, oa),
+{
+    let b = w.nodes@[i];
+    let c = Node { effect: None, ..b };
+    reveal(distance);
+    if e.cancelling {
+        ack_cancel_post(b, n, e, ack, w.next_question, nqa, i, ob, oa);
+    } else {
+        match ack {
+            Ack::Confirmed => {
+                let r = resources_spec(c, e.kind);
+                agenda_result_properties(r, n, e.kind);
+                cleanup_lemmas::resource_distance(c, r);
+                ack_confirmed_post(b, n, e, ack, w.next_question, nqa, i, ob, oa);
+            },
+            Ack::DeliveryAccepted => { ack_delivery_post(b, n, e, ack, w.next_question, nqa, i, ob, oa); },
+            Ack::Retryable => {
+                reveal(retirement::incident);
+                ack_retry_post(b, n, e, ack, w.next_question, nqa, i, ob, oa);
+            },
+            Ack::Permanent => { ack_permanent_post(b, n, e, ack, w.next_question, nqa, i, ob, oa); },
+            Ack::BodyPolicyRefused => {
+                if e.kind == EffectKind::OpenPr {
+                    allocation_stopping_lemmas::stopping_frame(Node { review_stop: Some(ReviewStop::PublicationBody), ..c }, n, Outcome::Stopped);
+                    ack_review_post(b, n, e, ack, w.next_question, nqa, i, ob, oa);
+                } else { ack_permanent_post(b, n, e, ack, w.next_question, nqa, i, ob, oa); }
+            },
+        }
+    }
+}
+
 }
