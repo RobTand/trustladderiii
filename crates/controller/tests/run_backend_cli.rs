@@ -6775,3 +6775,29 @@ fn cleanup_maintenance_restart_recovers_durable_attempt_and_serializes_owner() {
             .is_none()
     );
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("isolated-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let corrupt = f.options.journal_root.join("corrupt-owner");
+    fs::create_dir(&corrupt).unwrap();
+    fs::write(corrupt.join("state.json"), b"{truncated").unwrap();
+    f.cleanup_facts(&owned, true);
+    let backend = maintenance_backend(&f);
+    let failures = backend.cleanup_maintenance(due).unwrap();
+    assert!(!failures.is_empty(), "corrupt owner must be reported for an incident");
+    assert!(cleanup_debts(&f).is_empty(), "healthy owner must still be maintained");
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due), "bad owner must back off instead of keeping the timer overdue");
+    let errors = f.options.journal_root.join("maintenance-errors");
+    assert!(errors.read_dir().unwrap().next().is_some(), "owner errors must survive restart");
+    let restarted = maintenance_backend(&f);
+    assert!(restarted.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due));
+}
