@@ -735,3 +735,135 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     drop((adapter, ownership));
     database.stop();
 }
+
+fn with_checks_adapter(case: impl FnOnce(&mut Adapter, &Arc<Backend>, &Options)) {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("flux_retired_pb_contract")).unwrap()).unwrap();
+    let (mut adapter, backend, _attached, options) = setup(root.path(), &mut ownership);
+    case(&mut adapter, &backend, &options);
+    drop((adapter, ownership));
+    database.stop();
+}
+
+fn withdrawal(generation: Option<u64>) -> Delivery {
+    let mut d = delivery();
+    d.key = "effect:0:6".into();
+    d.job_generation = generation;
+    d.output = Output::Effect {
+        node: NodeId(0),
+        seq: 6,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    d
+}
+
+#[test]
+fn flux_checks_unbound_withdrawal_starts_no_work() {
+    with_checks_adapter(|adapter, backend, _| {
+        assert!(adapter.execute(&withdrawal(Some(4))).is_ok());
+        let state = backend.state.lock().unwrap();
+        assert_eq!((state.submits, state.cancels), (0, 0));
+    });
+}
+
+#[test]
+fn flux_checks_stale_epoch_is_refused_before_submit() {
+    with_checks_adapter(|adapter, backend, _| {
+        let mut newest = delivery();
+        newest.epoch = 2;
+        adapter.execute(&newest).unwrap();
+        let mut stale = delivery();
+        stale.key = "effect:0:7".into();
+        assert!(adapter.execute(&stale).is_err());
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_bound_plan_is_never_replaced() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        let before = fs::read(&path).unwrap();
+        let mut changed = d.clone();
+        changed.checks.as_mut().unwrap().base_sha =
+            tl3_worktrees::CommitId::new("e".repeat(40)).unwrap();
+        assert!(adapter.execute(&changed).is_err());
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_unknown_submission_never_confirms() {
+    with_checks_adapter(|adapter, backend, _| {
+        backend.state.lock().unwrap().unknown_submit = true;
+        let d = delivery();
+        assert!(adapter.execute(&d).is_err());
+        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert!(adapter.execute(&d).is_err());
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_malformed_journal_is_never_absent() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        fs::write(&path, b"{truncated").unwrap();
+        assert!(adapter.reconcile(&d).is_err());
+        assert!(adapter.execute(&d).is_err());
+        assert_eq!(backend.state.lock().unwrap().submits, 0);
+        assert_eq!(fs::read(path).unwrap(), b"{truncated");
+    });
+}
+
+#[test]
+fn flux_checks_failed_terminal_never_passes() {
+    use tl3_controller::executor::{Look, Observation};
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        backend.terminal(Ending::Failed);
+        let Look::Found(completion) = adapter.look(&d).unwrap() else {
+            panic!("failed terminal must produce a durable infrastructure completion");
+        };
+        assert!(completion.observations.iter().any(|observation| matches!(
+            observation, Observation::Checks { report: false, pass: false, .. }
+        )));
+        assert!(!completion.observations.iter().any(|observation| matches!(
+            observation, Observation::Checks { pass: true, .. }
+        )));
+    });
+}
+
+#[test]
+fn flux_checks_success_without_report_never_passes() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        backend.terminal(Ending::Passed);
+        assert!(adapter.look(&d).is_err(), "the fixture has no verified report");
+        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_withdrawal_targets_only_the_exact_generation() {
+    with_checks_adapter(|adapter, backend, _| {
+        adapter.execute(&delivery()).unwrap();
+        assert!(adapter.execute(&withdrawal(Some(3))).is_ok());
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
+        assert!(adapter.execute(&withdrawal(None)).is_err());
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
+        assert!(adapter.execute(&withdrawal(Some(4))).is_err());
+        assert!(backend.state.lock().unwrap().cancels > 0);
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
