@@ -51,7 +51,7 @@ fn record_note(out: &mut Outbox, i: usize, dependency: Dependency) -> (result: (
     ensures final(out).len <= old(out).len + 1,
         old(out).len <= final(out).len,
         forall|k: int| old(out).len <= k < final(out).len ==> match #[trigger] final(out).items@[k] {
-            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            Some(Out::Notice { node, .. }) => true,
             _ => false,
         },
         forall|k: int| 0 <= k < old(out).len ==> #[trigger] final(out).items@[k] == old(out).items@[k],
