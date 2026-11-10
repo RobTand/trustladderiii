@@ -288,6 +288,25 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && final(w).nodes@[i as int].ticket.is_none(),
         advance_family_post::holds_item(old(w).nodes@[i as int])
             ==> advance_family_post::holds_frame(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+            ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+                && old(w).nodes@[older].phase is Ready
+                && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+                && old(w).nodes@[older].ticket.is_some()
+                && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+                ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint,
+                    old(w).nodes@[i as int].footprint),
+        (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+            ==> final(w).nodes@[i as int].phase == resumed_phase(
+                match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
+                && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
+    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds)
+        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+            && old(w).nodes@[older].phase is Ready
+            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+            && old(w).nodes@[older].ticket.is_some()
+            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
     checking::accepted(*old(w)) ==> advance_family_post::step_rows(*old(w), *final(w), i as int),
     transition_safety::transition_safety(*old(w), *final(w),
         transition_safety::Transition::Advance { node: i, moved: result },
@@ -300,13 +319,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         && old(w).nodes@[i as int].ticket.is_some()
         && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity && oldest_waiter(*old(w), i as int)
         ==> result && final(w).nodes@[i as int].pool && final(w).nodes@[i as int].ticket.is_none(),
-    !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
-        ==> !old(w).nodes@[i as int].paused && slot_spec(*old(w), i as int)
-            && final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo
-            && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
-            && final(w).nodes@[i as int].ticket.is_none()
-            && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
-            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
     // E5.6 REQ R11 (v2.22, lead ruling, owner advance; advance G5-REST-PLAN.md section 3): a slot holder that is
     // making its change or rebasing keeps the slot unless it is paused.
     old(w).nodes@[i as int].holds
@@ -341,29 +353,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
             && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
             && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
-    // G22-F1 REQ R29 (v2.12, owner advance): a successful Ready grant is disjoint from every older
-    // same-repository Ready waiter (forwards first_in_line's older-overlap post).
-    (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
-        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
-            && old(w).nodes@[older].phase is Ready
-            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
-            && old(w).nodes@[older].ticket.is_some()
-            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
-            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
-    // G22-F2 REQ R30 (phase) + framing (pos, paused) (v2.12, owner advance): a Ready grant resumes the
-    // waited-for step at its start, unpaused.
-    (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
-        ==> final(w).nodes@[i as int].phase == resumed_phase(match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
-            && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
-    // G22-F1b / G20 REQ R29 (v2.20, owner advance): compose's premise form. Any new slot for a Ready node with a
-    // ticket is disjoint from every older same-repository Ready waiter.
-    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds)
-        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
-            && old(w).nodes@[older].phase is Ready
-            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
-            && old(w).nodes@[older].ticket.is_some()
-            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
-            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
     // E5.8 / G20 framing (v2.32, owner advance; TRUSTED-FROZEN): a new slot goes only to a Ready node with a
     // ticket. Node-level source PROVEN: ranks::advance_node ensures grant_facts (ranks.rs:1345).
     !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
