@@ -1,10 +1,60 @@
 {
-  "source_head": "78c7ecece1761ced10b6274377c1fedecec50e91",
+  "source_head": "d65a7913d4ef12ab30cbffe32d15daf645186402",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "483f926e9acd09aeb15ca5dff64b5e2935a89a3a67c84cd04d2e58c3060ad0a3",
-  "groups": 818,
-  "obligations": 1023,
+  "source_sha256": "cf192616a6dce5e904577a2a34bba81875287d7b9418bf7d8b14a974b21677a0",
+  "groups": 828,
+  "obligations": 1034,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_special_safety_pool_assembly",
+      "selector": "kernel::special_safety::pool_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_command_projection",
+      "selector": "kernel::special_safety::command_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_resume_assembly",
+      "selector": "kernel::special_safety::resume_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_advance_rank",
+      "selector": "kernel::special_safety::advance_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_pause_projection",
+      "selector": "kernel::special_safety::pause_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_pause_assembly",
+      "selector": "kernel::special_safety::pause_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_stop_assembly",
+      "selector": "kernel::special_safety::stop_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_change_assembly",
+      "selector": "kernel::special_safety::change_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_projection",
+      "selector": "kernel::special_safety::gate_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_assembly",
+      "selector": "kernel::special_safety::gate_assembly",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_apply_command_safety_command_step_last_cmd",
       "selector": "kernel::apply_command_safety#command_step_last_cmd",
@@ -1853,7 +1903,7 @@
     {
       "target": "//crates/kernel:verus_special_safety",
       "selector": "kernel::special_safety",
-      "expected": 3
+      "expected": 4
     },
     {
       "target": "//crates/kernel:verus_transition_composition",
