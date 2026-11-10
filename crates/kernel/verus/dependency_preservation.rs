@@ -1097,6 +1097,7 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
         !result.1 ==> result.0.nodes@ == world.nodes@ && result.0.next_ticket == world.next_ticket,
         result.0.dependencies@ == world.dependencies@,
         result.0.nodes@.len() == world.nodes@.len(),
+        checking::accepted(result.0),
 {
     let ghost before = world;
     proof {
@@ -1109,7 +1110,38 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
     let moved = advance(&mut world, i, &mut out, &mut Report::new());
     proof {
         reveal(advance_post);
-        if !moved { assert(world.nodes@ =~= before.nodes@); }
+        if !moved {
+            assert(world.nodes@ =~= before.nodes@);
+            checking::accepted_frame(before, world);
+        } else {
+            checking::accepted_definition(before);
+            assert(retirement::node_rules(world, world.nodes@[i as int])) by {
+                footprint::node_rules_grow(before, world, before.nodes@[i as int]);
+                reveal(retirement::node_rules);
+                reveal(retirement::phased);
+            }
+            assert forall|j: int| 0 <= j < world.nodes@.len()
+                implies retirement::node_rules(world, #[trigger] world.nodes@[j]) by {
+                if j != i {
+                    assert(world.nodes@[j] == before.nodes@[j]);
+                    footprint::node_rules_grow(before, world, before.nodes@[j]);
+                }
+            }
+            assert forall|j: int| 0 <= j < before.nodes@.len()
+                implies (#[trigger] world.nodes@[j]).holds == before.nodes@[j].holds
+                    && world.nodes@[j].repo == before.nodes@[j].repo
+                    && world.nodes@[j].pool == before.nodes@[j].pool
+                    && world.nodes@[j].footprint == before.nodes@[j].footprint
+                    && world.nodes@[j].ticket == before.nodes@[j].ticket by {
+                if j != i { assert(world.nodes@[j] == before.nodes@[j]); }
+            }
+            frame_holders(before, world);
+            frame_pairs(before, world);
+            pool_frame(before.nodes@, world.nodes@, before.nodes@.len());
+            prerequisite_definition(before, NodeId(i as u64));
+            node_update_preserves(before, world, i as int);
+            checking::accepted_definition(world);
+        }
     }
     (world, moved)
 }
@@ -1350,6 +1382,7 @@ fn waiting_cover() -> (result: (World, bool, Outbox, i128))
 fn delivered_cover() -> (result: (World, bool, i128))
     ensures result.1, result.0.nodes@[0].planning_started, result.2 == 4,
         result.0.nodes@[0].phase == (Phase::Planning { must_split: false }),
+        checking::accepted(result.0),
 {
     let world = dependency_retirement::waiting_world();
     fixture_accepted(&world);
