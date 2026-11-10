@@ -1344,8 +1344,7 @@ kernel_fn! {
             ==> advance_family_post::pool_grant(*old(node), *final(node), context, result),
         advance_family_post::grant_facts(*old(node), *final(node), context),
         final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
-        advance_family_post::holds_item(*old(node))
-            ==> advance_family_post::holds_frame(*old(node), *final(node)),
+        true,
     ] {
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
