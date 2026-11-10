@@ -69,6 +69,12 @@ mod retirement_witness;
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/advance_family_post.rs"]
+mod advance_family_post;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/advance_family_rules.rs"]
+mod advance_family_rules;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_safety.rs"]
 mod apply_safety;
 #[cfg(verus_keep_ghost)]

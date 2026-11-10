@@ -443,6 +443,12 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::issued": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::slot": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_rules::world_data_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_rules::node_facts": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_rules::local_outputs": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -743,6 +749,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "advance_family_rules_slot": ("kernel::advance_family_rules#rules_slot", 1),
+            "allocation_incident_value": ("kernel::allocation#incident_value", 1),
             "events_apply_new_request": ("kernel::events#apply_new_request", 1),
             "events_apply_reply": ("kernel::events#apply_reply", 1),
             "events_apply_ack": ("kernel::events#apply_ack", 1),
