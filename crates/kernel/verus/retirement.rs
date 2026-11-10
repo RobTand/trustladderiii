@@ -236,87 +236,12 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
         fact_node(n, fact).ticket.is_none() || fact_node(n, fact).ticket == n.ticket,
         fact_node(n, fact).repo == n.repo, fact_node(n, fact).footprint == n.footprint,
 {
-    reveal(node_rules);
-    // Each row's exact result is derived locally; node_rules then unfolds
-    // once against that concrete node. fact_node and stopped stay opaque here.
+    reveal(node_rules); reveal(fact_node); reveal(stopped);
     match fact {
-        Fact::IncidentCleared { by_rob } => {
-            if n.waiting_incident && (by_rob || !n.incident_needs_rob) {
-                assert(fact_node(n, fact) == Node { waiting_incident: false,
-                    incident_needs_rob: false, ..n }) by { reveal(fact_node); }
-            } else {
-                assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-            }
-        },
-        Fact::CiFailed { infra: true } => {
-            if n.run_failures == 0 {
-                assert(fact_node(n, fact) == phased(Node { run_failures: 1, ..n }, Phase::Publishing))
-                    by { reveal(fact_node); }
-            } else {
-                let count = if n.run_incidents < 2 { (n.run_incidents + 1) as u8 } else { 2u8 };
-                assert(fact_node(n, fact) == phased(Node { run_failures: 0, run_incidents: count,
-                    waiting_incident: true, incident_needs_rob: count >= 2,
-                    holds: false, ..n }, Phase::Ready(Resume::Publishing))) by { reveal(fact_node); }
-            }
-        },
-        Fact::Priority(priority) => {
-            if n.phase is Closed {
-                assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-            } else {
-                assert(fact_node(n, fact) == Node { priority, ..n }) by { reveal(fact_node); }
-            }
-        },
-        Fact::PrClosedByPerson => {
-            if !n.pr_open {
-                assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-            } else if n.phase is Stopping || n.phase is Closed {
-                assert(fact_node(n, fact) == Node { pr_open: false, ..n }) by { reveal(fact_node); }
-            } else {
-                assert(fact_node(n, fact) == phased(Node { question: None, waiting_incident: false,
-                    incident_needs_rob: false, pr_open: false, ..n }, Phase::Stopping(Outcome::Stopped)))
-                    by { reveal(fact_node); reveal(stopped); }
-            }
-        },
-        Fact::Conflict => {
-            if n.phase == Phase::AwaitingDelivery {
-                assert(fact_node(n, fact) == phased(n, Phase::Ready(Resume::Rebasing)))
-                    by { reveal(fact_node); }
-            } else if n.phase == Phase::Publishing {
-                assert(fact_node(n, fact) == phased(n, Phase::Rebasing)) by { reveal(fact_node); }
-            } else {
-                assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-            }
-        },
-        Fact::PrMerged { head, .. } => {
-            if !n.had_pr || n.merged.is_some() {
-                assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-            } else {
-                match n.phase {
-                    Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced) => {
-                        assert(fact_node(n, fact) == Node { merged: Some(head),
-                            phase: Phase::Closed(Outcome::Merged),
-                            credit: Credit { merge_credited: true,
-                                earned: if n.credit.merge_credited { n.credit.earned }
-                                    else { (n.credit.earned + 1) as u64 },
-                                ..n.credit }, ..n }) by { reveal(fact_node); }
-                    },
-                    Phase::Closed(_) => {
-                        assert(fact_node(n, fact) == n) by { reveal(fact_node); }
-                    },
-                    Phase::Stopping(_) => {
-                        assert(fact_node(n, fact) == Node { phase: Phase::Stopping(Outcome::Merged),
-                            merged: Some(head), pr_open: false, ..n })
-                            by { reveal(fact_node); reveal(stopped); }
-                    },
-                    _ => {
-                        assert(fact_node(n, fact) == phased(Node { question: None,
-                            waiting_incident: false, incident_needs_rob: false,
-                            merged: Some(head), pr_open: false, ..n }, Phase::Stopping(Outcome::Merged)))
-                            by { reveal(fact_node); reveal(stopped); }
-                    },
-                }
-            }
-        },
+        Fact::IncidentCleared { .. } => {},
+        Fact::CiFailed { infra: true } => {},
+        Fact::PrMerged { .. } => {},
+        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict => {},
         _ => {},
     }
 }
