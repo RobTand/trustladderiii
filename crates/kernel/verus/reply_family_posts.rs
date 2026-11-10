@@ -42,7 +42,7 @@ pub(super) proof fn room_posts(n: Node, fast: bool, nq: u64, step: ReviewStop, i
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         reply_family_values::resolved(reply_family_values::room(n, fast, step), i, ob, oa),
     ensures ({ let r = reply_family_values::room(n, fast, step); let z = reply_family_values::finish(nq, r);
-        reply_family_values::retry_bound(n, nq, r) && z.repo == n.repo && z.last_cmd == n.last_cmd
+        reply_family_values::retry_bound(n, nq, r) && z.repo != n.repo && z.last_cmd == n.last_cmd
         && reply_family_values::next_question(nq, r) as int <= nq as int + 1 && oa.len <= ob.len + 1
         && (!(n.phase is Closed || n.phase is Stopping) ==> handler_safety::ladder(fast, true, n, z, ob, oa))
         && (!fast && !transition_safety::can_spend_one(n) ==> z.credit == n.credit
