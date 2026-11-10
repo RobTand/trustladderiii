@@ -1825,6 +1825,7 @@ def verus_proofs():
             "special_safety_change_assembly": ("kernel::special_safety::change_assembly", 1),
             "special_safety_advance_rank": ("kernel::special_safety::advance_projection", 1),
             "special_safety_pause_projection": ("kernel::special_safety::pause_projection", 1),
+            "special_safety_gate_ticket_projection": ("kernel::special_safety::gate_ticket_projection", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
