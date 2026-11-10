@@ -253,7 +253,7 @@ pub(super) proof fn merge_frame(n: Node, value: Node, head: HeadId, checks_passe
 pub(super) proof fn merge_distance(n: Node, value: Node, head: HeadId, checks_passed: bool)
     requires n.had_pr, n.merged.is_none(), n.phase == Phase::AwaitingDelivery,
         !n.paused, !n.waiting_incident, n.effect.is_none(),
-        value == retirement::fact_node(n, Fact::PrMerged { head, checks_passed }),
+        true,
     ensures distance(value) < distance(n),
 {
     reveal(retirement::fact_node);
