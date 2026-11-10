@@ -35,7 +35,7 @@ pub(super) fn first_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(t
         old(w).nodes@[i as int].repo == old(w).nodes@[0].repo,
         (advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
             && old(w).nodes@[i as int].phase == Phase::Ready(Resume::Making)
-            && old(w).nodes@[i as int].ticket.unwrap() > t)
+            )
         || (holder(old(w).nodes@[i as int]) && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
             && !old(w).nodes@[i as int].waiting_incident
             && footprint::disjoint(*old(w), old(w).nodes@[i as int].footprint, old(w).nodes@[0].footprint)),
