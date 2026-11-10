@@ -718,6 +718,33 @@ mod hostile_tests {
     }
 
     #[test]
+    fn absent_plan_omits_additions_but_malformed_plan_errors() {
+        let f = Repo::new();
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("review_missing_plan")).unwrap();
+        store.put_worker_materials("0", &json!({"issue":{"title":"T","body":"B"}})).unwrap();
+        let mut snapshot = documents(&mut store, &[
+            ("goals",json!([{"description":"Update readme","verification":"review"}])),
+            ("check_reports", json!({"base_sha":f.base,"results":[]})),
+        ]);
+        snapshot.rows.iter_mut().find(|r| r.table == "check_reports").unwrap().id = format!("0:{}",f.head);
+        let value = inputs(&f.delivery(), &mut store, &snapshot, None).unwrap();
+        assert!(value.get("footprint_additions").is_none());
+        documents(&mut store, &[("plans",json!({"kind":"split"}))]);
+        assert!(matches!(inputs(&f.delivery(), &mut store, &snapshot, None), Err(Error::Json(_))), "a stored plan without files must fail instead of claiming no additions");
+    }
+
+    #[test]
+    fn repeated_path_keeps_first_recorded_reason() {
+        let mut db = Database::start();
+        let mut store = Store::open(&db.create("review_first_reason")).unwrap();
+        let first = remember_addition_requests(&store.load().unwrap(), "0", &json!({"files":[{"path":"./extra.py","why":"First request"}]})).unwrap();
+        let snapshot = documents(&mut store, &[("footprint_addition_requests",first.clone())]);
+        let repeated = remember_addition_requests(&snapshot,"0",&json!({"files":[{"path":"extra.py","why":"Later request"}]})).unwrap();
+        assert_eq!(repeated,first,"re-requesting a path must not replace its first recorded reason");
+    }
+
+    #[test]
     fn issue_budget_preserves_diff_and_reports_truncation() {
         let mut value = json!({"diff":"x".repeat(200),"checks":["keep"],
             "issue":{"title":"Request 🦀", "body":"é\n".repeat(1_000)}, "issue_truncated":false});

@@ -817,3 +817,43 @@ fn postmortem_reads_canonical_planner_feedback() {
         json!(["Need a smaller request"])
     );
 }
+
+#[test]
+fn needs_files_reply_records_reasons_through_controller() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Making, 1);
+    f.worker("maker", json!({"kind":"needs_files", "fits":true,
+        "files":[{"path":"./extra.py", "why":"Exercise the public behavior"}]}));
+    let snapshot = f.controller.snapshot().unwrap();
+    let row = snapshot.rows.iter().find(|r| r.table == "footprint_addition_requests" && r.id == "0")
+        .expect("accepted needs_files must persist its reasons through lib.rs");
+    assert_eq!(row.value, json!([{"path":"extra.py", "why":"Exercise the public behavior"}]));
+    let world = f.controller.world().unwrap();
+    assert_eq!(world.files(world.nodes[0].footprint).unwrap().count(), 2);
+}
+
+#[test]
+fn reviewer_request_fits_issue_after_serializing_envelope() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Reviewing, 1);
+    f.controller.store.put_worker_materials("0", &json!({"issue":{"title":"Request", "body":"é".repeat(16_000)}})).unwrap();
+    let mut snapshot = crate::git_tests::documents(&mut f.controller.store, &[
+        ("plans", json!({"files":["README.md"]})),
+        ("check_reports", json!({"base_sha":f.repo.base,"results":[]})),
+    ]);
+    snapshot.rows.iter_mut().find(|r| r.table == "check_reports").unwrap().id = format!("0:{}", f.repo.head);
+    let delivery = f.repo.delivery();
+    let ordinary = f.supervisor.build_request(&delivery,"reviewer", &mut f.controller.store,&snapshot).unwrap();
+    let max = crate::run_backend::durable::MAX_BYTES;
+    let key_len = ordinary["key_file"].as_str().unwrap().len();
+    // An oversized serialized envelope exercises the caller's final fit, after inputs().
+    f.supervisor.models.key_file = std::path::PathBuf::from("k".repeat(max - serde_json::to_vec(&ordinary).unwrap().len() + key_len + 1000));
+    let request = f.supervisor.build_request(&delivery,"reviewer", &mut f.controller.store,&snapshot).unwrap();
+    assert!(serde_json::to_vec(&request).unwrap().len() <= max, "the final request including its envelope must fit");
+    assert_eq!(request["inputs"]["issue_truncated"], true);
+    assert!(request["inputs"]["issue"]["body"].as_str().unwrap().chars().count() < 16_000);
+    assert_eq!(request["inputs"]["diff"], ordinary["inputs"]["diff"]);
+    assert_eq!(request["inputs"]["checks"], ordinary["inputs"]["checks"]);
+    f.supervisor.models.key_file = std::path::PathBuf::from("k".repeat(max));
+    assert!(matches!(f.supervisor.build_request(&delivery,"reviewer", &mut f.controller.store,&snapshot), Err(Error::Invalid("review input exceeds the input bound without issue text"))));
+}
