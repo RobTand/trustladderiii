@@ -892,11 +892,7 @@ fn harness_digest_formats_accept_only_immutable_images() {
         format!("sha256:{}", "a".repeat(64)),
         format!("registry:5000/tl3_harness@sha256:{}", "1".repeat(64)),
     ] {
-        Config::parse(&changed(
-            &["flux", "container_image"],
-            Value::String(image),
-        ))
-        .unwrap();
+        Config::parse(&changed(&["flux", "container_image"], Value::String(image))).unwrap();
     }
     for image in [
         format!("sha256:{}", "A".repeat(64)),
@@ -905,11 +901,7 @@ fn harness_digest_formats_accept_only_immutable_images() {
         format!("@sha256:{}", "a".repeat(64)),
     ] {
         assert!(
-            Config::parse(&changed(
-                &["flux", "container_image"],
-                Value::String(image)
-            ))
-            .is_err()
+            Config::parse(&changed(&["flux", "container_image"], Value::String(image))).is_err()
         );
     }
 }

@@ -69,7 +69,11 @@ fn pending_migrations_cannot_change_a_live_owners_database() {
             .get::<_, bool>(0)
     );
     let before = legacy_snapshot(&mut old_owner);
-    let contender = production::register(&config);
+    // The ownership claim and migration that production::register runs after its
+    // configuration and Flux activation checks.
+    let contender = Store::connect(&config.store)
+        .and_then(tl3_store::Ownership::claim)
+        .and_then(|mut owner| owner.migrate().map(|()| owner));
     assert_eq!(
         legacy_snapshot(&mut old_owner),
         before,
@@ -168,7 +172,8 @@ pub(super) fn seed_shared_state(
     config: &tl3_config::Config,
     client: &mut Client,
 ) -> Vec<std::path::PathBuf> {
-    let records = config.workers.runs.join(".controller/prismabuild");
+    let records = config.workers.runs.join(".controller/owner");
+    fs::create_dir_all(records.join("0")).unwrap();
     let delivery: tl3_controller::executor::Delivery = serde_json::from_value(json!({
         "key":"worker-owner", "epoch":1, "output":{"Comment":{"node":0,"kind":"Classify"}},
         "generation":1,"repository":{"owner":"RobTand","name":"tl3-sandbox","installation":987},
@@ -188,7 +193,7 @@ pub(super) fn seed_shared_state(
     let attempt = config.workers.runs.join(&encoded).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
     // Both absent markers must remain absent. A constructor inspection would create them.
-    let mut paths = vec![
+    vec![
         job_path,
         done,
         orphan,
@@ -196,18 +201,7 @@ pub(super) fn seed_shared_state(
         records.join("0").join(format!("{encoded}.done")),
         attempt.join("claim.json"),
         attempt.join("process.json"),
-    ];
-    for repo in &config.github.repos {
-        let journal = config
-            .worktrees_root
-            .join(".repositories")
-            .join(repo.owner.to_ascii_lowercase())
-            .join(format!("{}.git", repo.name.to_ascii_lowercase()))
-            .join("tl3-controller");
-        assert!(journal.join("repository.json").exists());
-        paths.extend([journal.join("repository.json"), journal.join("epoch.json")]);
-    }
-    paths
+    ]
 }
 
 pub(super) fn prompt_rows(client: &mut Client) -> Vec<String> {
