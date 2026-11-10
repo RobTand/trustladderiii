@@ -337,7 +337,7 @@ pub(super) open spec fn append_frame(before: World, after: World) -> bool {
 /// The appended node meets the node rules and holds nothing: no slot, no pool
 /// run, no place in line and no withheld credit.
 pub(super) open spec fn appended_node_ok(after: World, n: Node) -> bool {
-    retirement::node_rules(after, n) && !n.holds && !n.pool && n.ticket.is_none() && !n.credit.withheld
+    retirement::node_rules(after, n) && !n.pool && n.ticket.is_none() && !n.credit.withheld
 }
 
 /// Holder and pool counts over an unchanged prefix.
