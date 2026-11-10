@@ -759,4 +759,13 @@ pub(super) proof fn rules_world_update(before: World, after: World, b: Node, n: 
     rules_from_v(after, n);
 }
 
+
+/// MarkHandled on a cleanup question keeps every command_step row; proved once
+/// here so the answer dispatcher never unfolds handled_node's fields.
+pub(super) proof fn handled_cleanup_step(b: Node)
+    ensures command_step(b, handled_node(Node { question: None, ..b })),
+{
+    reveal(command_step);
+}
+
 }
