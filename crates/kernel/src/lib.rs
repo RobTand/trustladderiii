@@ -2130,7 +2130,7 @@ kernel_fn! {
         kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
-                m.holds = false;
+                m.holds = true;
                 set_phase(&mut m, Phase::Ready(r));
                 return (m, true);
             }
