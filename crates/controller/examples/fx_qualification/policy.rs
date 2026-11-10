@@ -22,16 +22,75 @@ pub const ORDER: [Canary; 4] = [
     Canary::Generator,
 ];
 
-pub fn verdict(_canaries: &[(Canary, Status)], _pin_checked: bool) -> Status {
-    Status::Pass
+pub fn verdict(canaries: &[(Canary, Status)], pin_checked: bool) -> Status {
+    if canaries.len() != ORDER.len()
+        || canaries.iter().zip(ORDER).any(|((kind, _), expected)| *kind != expected)
+    {
+        return Status::Unknown;
+    }
+    if canaries.iter().any(|(_, status)| *status == Status::Fail) {
+        Status::Fail
+    } else if pin_checked && canaries.iter().all(|(_, status)| *status == Status::Pass) {
+        Status::Pass
+    } else {
+        Status::Unknown
+    }
 }
 
-pub fn relevant(_path: &str) -> bool {
-    true
+pub const PIN: &str = "crates/controller/src/adapters/flux_checks/activation/qualification.json";
+pub const INDEX: &str = "crates/controller/qualification/current.json";
+pub const INPUTS: &str = "crates/controller/qualification/fx-current/";
+pub const PATHSET_VERSION: &str = "executor-pathset-v1-amended-20261110";
+
+// Explicit proof-only directories inspected at the X-3 base. New directories
+// remain relevant until this policy is reviewed again.
+const PROOFS: &[&str] = &[
+    "crates/controller-core/verus/",
+    "crates/harness-core/verus/",
+    "crates/controller/proofs/",
+    "crates/delivery/proofs/",
+    "crates/github/proofs/",
+    "crates/plan-check/proofs/",
+    "crates/verus-runner/proofs/",
+];
+
+pub fn derived(path: &str) -> bool {
+    path == PIN || path == INDEX || path.starts_with(INPUTS)
 }
 
-pub fn publication_order(_paths: &[String]) -> Result<Vec<String>, &'static str> {
-    Ok(Vec::new())
+pub fn relevant(path: &str) -> bool {
+    if derived(path)
+        || path.starts_with("crates/kernel/")
+        || PROOFS.iter().any(|prefix| path.starts_with(prefix))
+        || path.starts_with("tools/pb_nightly/")
+        || path.starts_with("tools/ci/verus_")
+        || path.starts_with("tools/ci/kani_")
+        || path.starts_with("docs/")
+        || path.starts_with("tools/bazel/verus") && path.ends_with(".bzl")
+        || path.ends_with(".md")
+            && !path.starts_with("harness/")
+            && !path.starts_with("crates/controller/qualification/")
+    {
+        return false;
+    }
+    ["crates/", "harness/", "workers/", "tools/", "deploy/", ".cargo/"]
+        .iter().any(|prefix| path.starts_with(prefix))
+        || ["Cargo.toml", "Cargo.lock", "BUILD.bazel", "MODULE.bazel", "MODULE.bazel.lock",
+            ".bazelrc", ".bazelversion", ".bazelignore", ".gitignore", "gazelle_python.yaml"]
+            .contains(&path)
+}
+
+pub fn publication_order(paths: &[String]) -> Result<Vec<String>, &'static str> {
+    let unique: std::collections::BTreeSet<_> = paths.iter().collect();
+    if unique.len() != paths.len() || !paths.iter().all(|p| derived(p))
+        || !paths.iter().any(|p| p == INDEX) || !paths.iter().any(|p| p == PIN)
+        || paths.iter().any(|p| p.split('/').any(|part| part == ".." || part == "." || part.is_empty()))
+    {
+        return Err("qualification.publication.inventory");
+    }
+    let mut result = paths.to_vec();
+    result.sort_by_key(|path| (if path == INDEX { 2 } else if path == PIN { 1 } else { 0 }, path.clone()));
+    Ok(result)
 }
 
 #[cfg(test)]

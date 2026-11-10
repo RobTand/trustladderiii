@@ -9,7 +9,7 @@ use std::{
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-enum Command {
+pub enum Command {
     Allocate {
         profile: PathBuf,
         call: String,
@@ -243,7 +243,7 @@ fn response(prepared: &Prepared, profile: &Profile, options: &backend::Options) 
     )
 }
 
-fn execute(command: Command) -> Result<Value> {
+pub fn execute(command: Command) -> Result<Value> {
     match command {
         Command::Activation {
             profile: path,

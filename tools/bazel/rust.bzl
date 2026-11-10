@@ -400,7 +400,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             name = "example_" + name,
             crate_name = name.replace("-", "_"),
             crate_root = source,
-            srcs = [source],
+            srcs = [source] + native.glob(["examples/fx_qualification/**/*.rs", "tools/fx_qualification/**/*.rs", "tools/generate_fx_qualification.rs"], exclude = [source]),
             compile_data = _EXAMPLE_DATA.get(source, []),
             edition = "2024",
             crate_features = _example_options(name, crate, example_features, options)["crate_features"],
@@ -472,7 +472,7 @@ def _crate_test(kind, package, name, source, harness, options):
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
         if name in ["tl3_controller", "tl3_controller_loom", "generate-fx-qualification"]:
-            compile_data = compile_data + native.glob(["qualification/fx-exact42b/*.json", "tools/generate_fx_qualification.rs"])
+            compile_data = compile_data + native.glob(["qualification/**/*.json", "tools/generate_fx_qualification.rs", "tools/fx_qualification/**/*.rs"])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(

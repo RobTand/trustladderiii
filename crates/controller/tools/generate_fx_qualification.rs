@@ -5,6 +5,19 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+#[path = "fx_qualification/current.rs"]
+pub mod current;
+
+/// Prefer the source-owned current input index once it has been published.
+pub fn generate_checkout(root: &Path) -> Result<Vec<u8>, String> {
+    let index = root.join("qualification/current.json");
+    if index.try_exists().map_err(|error| error.to_string())? {
+        current::generate(&index)
+    } else {
+        generate(&root.join("qualification/fx-exact42b"))
+    }
+}
+
 const SOURCE: &str = "42b68e30fcb3d37cc03c0a70166af9e912b25dc6";
 const RECONCILIATION: &str = "0623e1deacca0adddba501822e433be68e7c5f1abcaeaa3fcfe8d96d485c03be";
 const FAULT: &str = "0640df231230053922fc64d3bab8f154bc40c66d4f08dafd7d4423a8253faeed";
@@ -164,7 +177,7 @@ fn run() -> Result<(), String> {
             return Err("unrecognized argument".into());
         }
     }
-    let raw = generate(&root.join("qualification/fx-exact42b"))?;
+    let raw = generate_checkout(root)?;
     if check {
         if fs::read(output).map_err(|error| error.to_string())? != raw {
             return Err("qualification.regeneration".into());

@@ -4,7 +4,7 @@ use crate::run_backend::{self as backend, durable};
 use serde::{Deserialize, Serialize};
 mod inputs;
 mod waits;
-pub use inputs::command;
+pub use inputs::{Command, command, execute};
 pub(crate) use inputs::reservation;
 pub use waits::Waits;
 

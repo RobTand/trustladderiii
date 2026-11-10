@@ -311,6 +311,9 @@ class Supervised:
                             raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'input_gate_lost') from error
                         self.pending_input = self.pending_input[count:]
                         if not self.pending_input:
+                            if self.evidence is not None:
+                                self.evidence.record('payload_released', {'marker': 'tl3.payload_released.v1',
+                                    'container': self.container, 'monotonic_ns': time.monotonic_ns()})
                             ready.unregister(self.child.stdin)
                             self.child.stdin.close()
                             self.pending_input = None

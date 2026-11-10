@@ -979,7 +979,8 @@ def capture_processes(executable, container, evidence, timeout):
     """Hold kernel process identities while the trusted container wrapper is gated."""
     import subprocess
 
-    template = '{"Id":{{json .ID}},"Name":{{json .Name}},"Labels":{{json .Config.Labels}},"Pid":{{.State.Pid}},"ConmonPid":{{.State.ConmonPid}}}'
+    template = ('{"Id":{{json .ID}},"Name":{{json .Name}},"Labels":{{json .Config.Labels}},'
+                '"Pid":{{.State.Pid}},"ConmonPid":{{.State.ConmonPid}}}')
     inspected = subprocess.run([executable, 'container', 'inspect', '--format', template, container],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                timeout=timeout, check=True)
@@ -989,6 +990,19 @@ def capture_processes(executable, container, evidence, timeout):
         for name in ('Pid', 'ConmonPid'):
             handles.append(os.pidfd_open(metadata[name]))
         evidence.record('container_processes', metadata)
+        # Selected runtime facts only. Full inspect includes image environment.
+        selected = ('{"Image":{{json .Image}},"ImageName":{{json .ImageName}},'
+                    '"Mounts":{{json .Mounts}},"NetworkMode":{{json .HostConfig.NetworkMode}},'
+                    '"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},'
+                    '"CapAdd":{{json .HostConfig.CapAdd}},"CapDrop":{{json .HostConfig.CapDrop}},'
+                    '"SecurityOpt":{{json .HostConfig.SecurityOpt}},"PidMode":{{json .HostConfig.PidMode}},'
+                    '"IpcMode":{{json .HostConfig.IpcMode}},"PidsLimit":{{json .HostConfig.PidsLimit}},'
+                    '"Privileged":{{json .HostConfig.Privileged}},"Init":{{json .HostConfig.Init}}}')
+        observed = subprocess.run([executable, 'container', 'inspect', '--format', selected, metadata['Id']],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  timeout=timeout, check=True)
+        evidence.record('container_configuration', {'container_id': metadata['Id'],
+                                                   'facts': json.loads(observed.stdout)})
         if evidence.context is not None:
             bind_container_launch(evidence, metadata, timeout=timeout)
         return handles

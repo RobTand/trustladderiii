@@ -20,6 +20,8 @@ use tl3_controller::{
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+mod fx_qualification;
+
 fn git(root: &Path, arguments: &[&str]) -> Result<String> {
     let output = Command::new("/usr/bin/git")
         .current_dir(root)
@@ -71,6 +73,7 @@ fn write(path: &Path, value: &impl serde::Serialize) -> Result<()> {
 enum FixtureKind {
     Success,
     Cancel,
+    ReadyCancel,
 }
 
 impl FixtureKind {
@@ -86,6 +89,7 @@ impl FixtureKind {
         match self {
             Self::Success => json!({"kind":"success", "wait_seconds":0}),
             Self::Cancel => json!({"kind":"cancel", "wait_seconds":12}),
+            Self::ReadyCancel => json!({"kind":"cancel", "wait_seconds":240}),
         }
     }
 
@@ -94,6 +98,9 @@ impl FixtureKind {
             Self::Success => format!("def value(): return {value}\n"),
             Self::Cancel => {
                 format!("def value():\n    import time\n    time.sleep(12)\n    return {value}\n")
+            }
+            Self::ReadyCancel => {
+                format!("def value():\n    import time\n    for _ in range(48):\n        print('TL3_X3_CANCEL_READY', flush=True)\n        time.sleep(5)\n    return {value}\n")
             }
         }
     }
@@ -331,6 +338,15 @@ fn fixture_kind(arguments: &[std::ffi::OsString]) -> Result<FixtureKind> {
 
 fn main() -> Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments.first().is_some_and(|arg| arg == "inventory-build") && arguments.len() == 2 {
+        return fx_qualification::inventory_build(Path::new(&arguments[1]));
+    }
+    if arguments.len()==2 && arguments[0].to_str().is_some_and(|arg|["admitted-prepare","admitted-generator-prepare","admitted-verify"].contains(&arg)) {
+        return fx_qualification::admitted_command(arguments[0].to_str().ok_or("operation")?,Path::new(&arguments[1]));
+    }
+    if arguments.first().is_some_and(|arg| arg == "qualify" || arg == "carry") {
+        return fx_qualification::command(&arguments);
+    }
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
             "fx-stage-packet DESTINATION CANONICAL_SANDBOX_MANIFEST CONTEXT_OPTIONS SOURCE_ROOT EXPECTED_GENERATION [--fixture-kind success|cancel]\nPreparation only; no native backend or container operations. Fresh shared destination required."
