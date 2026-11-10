@@ -3,7 +3,7 @@ use super::*;
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Copy, Debug, PartialEq, Eq)]
 pub(super) enum ReplyChange {
     Done { node: Node, note: Option<Notice> },
     Ask { node: Node, kind: QKind, cont: Cont, cost: u8 },
@@ -11,13 +11,43 @@ pub(super) enum ReplyChange {
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[derive(Clone, Copy)]
+#[derive(Copy)]
 pub(super) struct ReplyCtx {
     pub node: usize,
     pub generation: u64,
     pub reply: Reply,
     pub fast: bool,
     pub next_question: u64,
+}
+
+#[cfg(verus_keep_ghost)]
+vstd::prelude::verus! {
+impl Clone for ReplyChange {
+    fn clone(&self) -> (result: Self)
+        ensures result == *self,
+    {
+        *self
+    }
+}
+}
+#[cfg(not(verus_keep_ghost))]
+impl Clone for ReplyChange {
+    fn clone(&self) -> Self { *self }
+}
+
+#[cfg(verus_keep_ghost)]
+vstd::prelude::verus! {
+impl Clone for ReplyCtx {
+    fn clone(&self) -> (result: Self)
+        ensures result == *self,
+    {
+        *self
+    }
+}
+}
+#[cfg(not(verus_keep_ghost))]
+impl Clone for ReplyCtx {
+    fn clone(&self) -> Self { *self }
 }
 
 kernel_fn! {
