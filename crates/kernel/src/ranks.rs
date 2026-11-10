@@ -850,7 +850,71 @@ kernel_fn! {
 }
 
 kernel_fn! {
-    /// #771: same executable transition, partitioned for bounded solver queries.
+    /// #806 G5: the paused Slot arm of advance_slot, on a value. Same statements.
+    fn slot_paused_v(n: Node, next_ticket: u64) -> (result: (Node, u64, bool)) [
+        ensures result == advance_family_post::slot_paused_value(n, next_ticket),
+    ] {
+        if n.ticket.is_some() {
+            let mut m = n;
+            m.ticket = None;
+            return (m, next_ticket, true);
+        }
+        (n, next_ticket, false)
+    }
+}
+
+kernel_fn! {
+    /// #806 G5: the ticket-issuing Slot arm, on values. Same call.
+    fn slot_issue_v(n: Node, next_ticket: u64) -> (result: (Node, u64, bool)) [
+        requires next_ticket < u64::MAX,
+        ensures result == advance_family_post::slot_issue_value(n, next_ticket),
+    ] {
+        let mut m = n;
+        let mut t = next_ticket;
+        take_ticket_node(&mut m, &mut t);
+        (m, t, true)
+    }
+}
+
+kernel_fn! {
+    /// #806 G5: the granting Slot arm, on a value. Same writes and set_phase call.
+    fn slot_grant_v(n: Node, next_ticket: u64, r: Resume) -> (result: (Node, u64, bool)) [
+        requires n.generation < u64::MAX,
+        ensures result == advance_family_post::slot_grant_value(n, next_ticket, r),
+    ] {
+        let mut m = n;
+        m.holds = true;
+        set_phase(&mut m, r.phase());
+        (m, next_ticket, true)
+    }
+}
+
+kernel_fn! {
+    /// #806 G5: advance_slot's body on values; same branch order, arms in the helpers above.
+    fn advance_slot_value(n: Node, next_ticket: u64, context: AdvanceContext)
+        -> (result: (Node, u64, bool)) [
+        requires n.phase is Ready && !n.paused
+            ==> n.generation < u64::MAX && next_ticket < u64::MAX,
+        ensures result == advance_family_post::slot_value(n, next_ticket, context),
+    ] proof [reveal(advance_family_post::slot_value);] {
+        let Phase::Ready(r) = n.phase else {
+            return (n, next_ticket, false);
+        };
+        if n.paused {
+            return slot_paused_v(n, next_ticket);
+        }
+        if n.ticket.is_none() {
+            return slot_issue_v(n, next_ticket);
+        }
+        if context.slot {
+            return slot_grant_v(n, next_ticket, r);
+        }
+        (n, next_ticket, false)
+    }
+}
+
+kernel_fn! {
+    /// #806 G5: the Slot value result, bridged and written back.
     fn advance_slot(node: &mut Node, next_ticket: &mut u64,
         context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
@@ -861,36 +925,17 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
-        kernel_snapshot! { before_phase = node.phase }
-        let n = *node;
-        let Phase::Ready(r) = n.phase else {
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return false;
-        };
-        if n.paused {
-            if n.ticket.is_some() {
-                node.ticket = None;
-                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-                return true;
-            }
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return false;
+            advance_family_post::slot(*old(node), *final(node),
+    *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out), result),
+    ] {
+        kernel_proof! { advance_family_post::slot_bounds(*node, *next_ticket, _out.len); }
+        let v = advance_slot_value(*node, *next_ticket, context);
+        kernel_proof! {
+            advance_family_post::slot_bridge(*node, *next_ticket, context, *_out, _report.entries@, v);
         }
-        if n.ticket.is_none() {
-            take_ticket_node(node, next_ticket);
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return true;
-        }
-        if context.slot {
-            let m = &mut *node;
-            m.holds = true;
-            set_phase(m, r.phase());
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return true;
-        }
-        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-        false
+        *node = v.0;
+        *next_ticket = v.1;
+        v.2
     }
 }
 
