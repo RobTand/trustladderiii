@@ -1,7 +1,7 @@
 {
-  "source_head": "627a2348c1483459f86b5caf9fb9f6c4252717a8",
+  "source_head": "def9cf0d795de77d8cfa5f5d45a4a119e5ba9ec9",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "01c28bd6569c1eaac478e055b0bfbb3186cea58311dbd53b97e5332bf26479d5",
+  "source_sha256": "f887a4b11e2d5d50dacdc9c3fd3260de75833d0e90e1259391a56a915088dbcf",
   "groups": 605,
   "obligations": 803,
   "selections": [
@@ -2032,7 +2032,7 @@
     },
     {
       "target": "//crates/kernel:verus_commands",
-      "selector": "kernel::commands#on_command",
+      "selector": "kernel::command_dispatch#on_command",
       "expected": 1
     },
     {
