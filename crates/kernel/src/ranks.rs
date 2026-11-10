@@ -883,7 +883,7 @@ kernel_fn! {
         ensures result == advance_family_post::slot_grant_value(n, next_ticket, r),
     ] {
         let mut m = n;
-        m.holds = true;
+        m.holds = false;
         set_phase(&mut m, r.phase());
         (m, next_ticket, true)
     }
