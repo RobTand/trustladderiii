@@ -123,7 +123,12 @@ pub fn publish(
     if head != inputs.head && head != staged.commit {
         return Err("publication checkout moved from H or candidate".into());
     }
-    if !git(&inputs.repo, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+    if !git(
+        &inputs.repo,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?
+    .is_empty()
+    {
         return Err("publication requires a clean operator checkout".into());
     }
     let journal = inputs.out.join("publication.json");
@@ -137,7 +142,10 @@ pub fn publish(
     // The staged transport commit is also the final pin commit. No second
     // commit with a different identity or tree is manufactured at publication.
     if head != staged.commit {
-        git(&inputs.repo, &["merge", "--ff-only", "--no-edit", &staged.commit])?;
+        git(
+            &inputs.repo,
+            &["merge", "--ff-only", "--no-edit", &staged.commit],
+        )?;
     }
     if git(&inputs.repo, &["rev-parse", "HEAD"])? != staged.commit
         || git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])? != staged.tree
@@ -154,10 +162,12 @@ pub fn publish(
         value["relative_path"] = path.into();
         installed.push(value);
     }
-    Ok(json!({"path":inputs.repo.join(policy::PIN),"sha256":durable::digest(pin),"bytes":pin.len(),
+    Ok(
+        json!({"path":inputs.repo.join(policy::PIN),"sha256":durable::digest(pin),"bytes":pin.len(),
         "commit":staged.commit,"tree":staged.tree,"transport_branch":staged.branch,
         "inputs_index":identity(&inputs.repo.join(policy::INDEX))?,"check":"byte_identical",
-        "rebuilt_tree":build.overlay_tree,"activation_record":verified["deployment"],"installed_outputs":installed}))
+        "rebuilt_tree":build.overlay_tree,"activation_record":verified["deployment"],"installed_outputs":installed}),
+    )
 }
 
 fn fixtures_passed(log: &str) -> bool {

@@ -193,15 +193,23 @@ fn validate(inputs: &Inputs) -> Result<()> {
     }
     let head = git(&inputs.repo, &["rev-parse", "HEAD"])?;
     if head != inputs.head {
-        let staged: bb::OverlayCommit = serde_json::from_slice(&durable::read(&inputs.out.join("publication.json"))?)?;
-        if head != staged.commit || staged.base_head != inputs.head
-            || git(&inputs.repo, &["rev-list", "--parents", "-n1", &head])? != format!("{head} {}", inputs.head)
+        let staged: bb::OverlayCommit =
+            serde_json::from_slice(&durable::read(&inputs.out.join("publication.json"))?)?;
+        if head != staged.commit
+            || staged.base_head != inputs.head
+            || git(&inputs.repo, &["rev-list", "--parents", "-n1", &head])?
+                != format!("{head} {}", inputs.head)
             || git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])? != staged.tree
         {
             return Err("isolated checkout at H or owned published candidate required".into());
         }
     }
-    if !git(&inputs.repo, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+    if !git(
+        &inputs.repo,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?
+    .is_empty()
+    {
         return Err("clean qualification checkout required".into());
     }
     if inputs.repo == Path::new("/home/rob/.t3/projects/trustladderiii") {
