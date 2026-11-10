@@ -1,0 +1,314 @@
+{
+  "source": "crates/kernel/src/proofs.rs",
+  "source_sha256": "046d7d68b1c3c51f889153ae9d7331f5231bbca282c7137fe89e5d3e45572bbd",
+  "seed": "0x4b3511105eeda001",
+  "harnesses": [
+    {
+      "id": "H6",
+      "name": "apply_new_request",
+      "test": "kani_apply_new_request",
+      "family": "event"
+    },
+    {
+      "id": "H7",
+      "name": "apply_ingest_done",
+      "test": "kani_apply_ingest_done",
+      "family": "event"
+    },
+    {
+      "id": "H8",
+      "name": "apply_ingest_early_end",
+      "test": "kani_apply_ingest_early_end",
+      "family": "event"
+    },
+    {
+      "id": "H9",
+      "name": "apply_protected_paths",
+      "test": "kani_apply_protected_paths",
+      "family": "event"
+    },
+    {
+      "id": "H10",
+      "name": "apply_audit_agrees",
+      "test": "kani_apply_audit_agrees",
+      "family": "event"
+    },
+    {
+      "id": "H11",
+      "name": "apply_plan_leaf",
+      "test": "kani_apply_plan_leaf",
+      "family": "event"
+    },
+    {
+      "id": "H12",
+      "name": "apply_plan_split",
+      "test": "kani_apply_plan_split",
+      "family": "event"
+    },
+    {
+      "id": "H13",
+      "name": "apply_plan_cant_meet",
+      "test": "kani_apply_plan_cant_meet",
+      "family": "event"
+    },
+    {
+      "id": "H14",
+      "name": "apply_maker_done",
+      "test": "kani_apply_maker_done",
+      "family": "event"
+    },
+    {
+      "id": "H15",
+      "name": "apply_maker_needs_files",
+      "test": "kani_apply_maker_needs_files",
+      "family": "event"
+    },
+    {
+      "id": "H16",
+      "name": "apply_maker_cant_meet",
+      "test": "kani_apply_maker_cant_meet",
+      "family": "event"
+    },
+    {
+      "id": "H17",
+      "name": "apply_maker_out_of_room",
+      "test": "kani_apply_maker_out_of_room",
+      "family": "event"
+    },
+    {
+      "id": "H18",
+      "name": "apply_checks_done",
+      "test": "kani_apply_checks_done",
+      "family": "event"
+    },
+    {
+      "id": "H19",
+      "name": "apply_approved",
+      "test": "kani_apply_approved",
+      "family": "event"
+    },
+    {
+      "id": "H20",
+      "name": "apply_reviewer_out_of_room",
+      "test": "kani_apply_reviewer_out_of_room",
+      "family": "event"
+    },
+    {
+      "id": "H21",
+      "name": "apply_changes_requested",
+      "test": "kani_apply_changes_requested",
+      "family": "event"
+    },
+    {
+      "id": "H22",
+      "name": "apply_rebase_clean",
+      "test": "kani_apply_rebase_clean",
+      "family": "event"
+    },
+    {
+      "id": "H23",
+      "name": "apply_rebase_needs_changes",
+      "test": "kani_apply_rebase_needs_changes",
+      "family": "event"
+    },
+    {
+      "id": "H24",
+      "name": "apply_run_failed",
+      "test": "kani_apply_run_failed",
+      "family": "event"
+    },
+    {
+      "id": "H25",
+      "name": "apply_ack_confirmed",
+      "test": "kani_apply_ack_confirmed",
+      "family": "event"
+    },
+    {
+      "id": "H26",
+      "name": "apply_ack_delivery_accepted",
+      "test": "kani_apply_ack_delivery_accepted",
+      "family": "event"
+    },
+    {
+      "id": "H27",
+      "name": "apply_ack_retryable",
+      "test": "kani_apply_ack_retryable",
+      "family": "event"
+    },
+    {
+      "id": "H28",
+      "name": "apply_ack_permanent",
+      "test": "kani_apply_ack_permanent",
+      "family": "event"
+    },
+    {
+      "id": "H29",
+      "name": "apply_ack_body_policy_refused",
+      "test": "kani_apply_ack_body_policy_refused",
+      "family": "event"
+    },
+    {
+      "id": "H30",
+      "name": "apply_outside_push",
+      "test": "kani_apply_outside_push",
+      "family": "event"
+    },
+    {
+      "id": "H31",
+      "name": "apply_ci_failed",
+      "test": "kani_apply_ci_failed",
+      "family": "event"
+    },
+    {
+      "id": "H32",
+      "name": "apply_stop",
+      "test": "kani_apply_stop",
+      "family": "event"
+    },
+    {
+      "id": "H33",
+      "name": "apply_pause",
+      "test": "kani_apply_pause",
+      "family": "event"
+    },
+    {
+      "id": "H34",
+      "name": "apply_resume",
+      "test": "kani_apply_resume",
+      "family": "event"
+    },
+    {
+      "id": "H35",
+      "name": "apply_change_request",
+      "test": "kani_apply_change_request",
+      "family": "event"
+    },
+    {
+      "id": "H36",
+      "name": "apply_answer_continue",
+      "test": "kani_apply_answer_continue",
+      "family": "event"
+    },
+    {
+      "id": "H37",
+      "name": "apply_answer_try_again",
+      "test": "kani_apply_answer_try_again",
+      "family": "event"
+    },
+    {
+      "id": "H38",
+      "name": "apply_answer_add_credit",
+      "test": "kani_apply_answer_add_credit",
+      "family": "event"
+    },
+    {
+      "id": "H39",
+      "name": "apply_answer_change_request",
+      "test": "kani_apply_answer_change_request",
+      "family": "event"
+    },
+    {
+      "id": "H40",
+      "name": "apply_answer_stop",
+      "test": "kani_apply_answer_stop",
+      "family": "event"
+    },
+    {
+      "id": "H41",
+      "name": "apply_answer_unclear",
+      "test": "kani_apply_answer_unclear",
+      "family": "event"
+    },
+    {
+      "id": "H42",
+      "name": "apply_answer_retry",
+      "test": "kani_apply_answer_retry",
+      "family": "event"
+    },
+    {
+      "id": "H43",
+      "name": "apply_answer_mark_handled",
+      "test": "kani_apply_answer_mark_handled",
+      "family": "event"
+    },
+    {
+      "id": "H44",
+      "name": "advance_ingesting",
+      "test": "kani_advance_ingesting",
+      "family": "advance"
+    },
+    {
+      "id": "H45",
+      "name": "advance_auditing",
+      "test": "kani_advance_auditing",
+      "family": "advance"
+    },
+    {
+      "id": "H46",
+      "name": "advance_unplanned",
+      "test": "kani_advance_unplanned",
+      "family": "advance"
+    },
+    {
+      "id": "H47",
+      "name": "advance_planning",
+      "test": "kani_advance_planning",
+      "family": "advance"
+    },
+    {
+      "id": "H48",
+      "name": "advance_ready",
+      "test": "kani_advance_ready",
+      "family": "advance"
+    },
+    {
+      "id": "H49",
+      "name": "advance_making",
+      "test": "kani_advance_making",
+      "family": "advance"
+    },
+    {
+      "id": "H50",
+      "name": "advance_checking",
+      "test": "kani_advance_checking",
+      "family": "advance"
+    },
+    {
+      "id": "H51",
+      "name": "advance_reviewing",
+      "test": "kani_advance_reviewing",
+      "family": "advance"
+    },
+    {
+      "id": "H52",
+      "name": "advance_publishing",
+      "test": "kani_advance_publishing",
+      "family": "advance"
+    },
+    {
+      "id": "H53",
+      "name": "advance_awaiting_delivery",
+      "test": "kani_advance_awaiting_delivery",
+      "family": "advance"
+    },
+    {
+      "id": "H54",
+      "name": "advance_rebasing",
+      "test": "kani_advance_rebasing",
+      "family": "advance"
+    },
+    {
+      "id": "H55",
+      "name": "advance_stopping",
+      "test": "kani_advance_stopping",
+      "family": "advance"
+    },
+    {
+      "id": "H56",
+      "name": "apply_new_adoption",
+      "test": "kani_apply_new_adoption",
+      "family": "event"
+    }
+  ],
+  "claim": "the same assertions on enumerated and sampled inputs"
+}
