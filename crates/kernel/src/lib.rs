@@ -93,6 +93,24 @@ mod apply_answer_safety;
 #[path = "../verus/apply_command_safety.rs"]
 mod apply_command_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_values.rs"]
+mod reply_family_values;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_safety.rs"]
+mod reply_family_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_posts.rs"]
+mod reply_family_posts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_dispatch.rs"]
+mod reply_family_dispatch;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_ingest_world.rs"]
+mod reply_family_ingest_world;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_facts.rs"]
+mod reply_family_facts;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
@@ -599,6 +617,8 @@ impl Credit {
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
                 final(self).withheld == old(self).withheld,
+                final(self).ready == old(self).ready,
+                final(self).merge_credited == old(self).merge_credited,
         ] {
             self.spent += cost;
         }
