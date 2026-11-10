@@ -21,7 +21,7 @@ pub(super) open spec fn reserved(w: World, i: int, t: u64) -> bool {
 }
 
 pub(super) proof fn await_stutters(b: Node, n: Node, t0: u64, t1: u64, moved: bool)
-    requires current_item(b) == Some(Item::Await), !b.waiting_incident,
+    requires !b.waiting_incident,
         advance_post(b, n, t0, t1, moved),
     ensures !moved, n == b,
 {
