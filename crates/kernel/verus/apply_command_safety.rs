@@ -911,4 +911,45 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 
 
 
+
+/// The six frozen Answer exports. Consumers open them only through answer_ncut_rows.
+pub(super) closed spec fn answer_ncut(before: World, after: World, i: usize) -> bool {
+    ((after.nodes@[i as int].holds ==> before.nodes@[i as int].holds))
+        && ((after.nodes@[i as int].pool ==> before.nodes@[i as int].pool))
+        && (after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none())
+        && (after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]))
+        && (before.next_question <= after.next_question)
+        && ((retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])))
+}
+
+/// Close literal node and table rows without repeating the entry's L1 contract.
+pub(super) proof fn answer_ncut_intro(before: World, after: World, i: usize)
+    requires (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures answer_ncut(before, after, i),
+{
+    reveal(answer_ncut);
+}
+
+/// Reopen the frozen exports at a consumer's call site.
+pub(super) proof fn answer_ncut_rows(before: World, after: World, i: usize)
+    requires answer_ncut(before, after, i),
+    ensures (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+    reveal(answer_ncut);
+}
+
+
 }

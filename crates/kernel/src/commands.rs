@@ -337,13 +337,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             _ => true,
         }),
 
-        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
-        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
-        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
-        old(w).next_question <= final(w).next_question,
-        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
-            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        apply_command_safety::answer_ncut(*old(w), *final(w), i),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -373,6 +367,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         apply_command_safety::answer_pair_last_cmd(before_rules_world@.nodes@[i as int], id,
             w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64));
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int]));
+        apply_command_safety::answer_ncut_intro(before_rules_world@, *w, i);
     }
 }
 }
