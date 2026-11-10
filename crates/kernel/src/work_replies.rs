@@ -368,7 +368,7 @@ fn rebase_paid_v(n: Node) -> (result: ReplyChange) [
     ensures result == reply_family_values::rebase_paid(n), reply_family_values::callable(result),
 ] {
     let mut m = n;
-    m.credit = spend_v(m.credit, 1);
+    m.credit = spend_v(m.credit, 0);
     m = set_phase_v(m, Phase::Making);
     ReplyChange::Done { node: m, note: None }
 }
