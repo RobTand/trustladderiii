@@ -227,12 +227,13 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && final(w).nodes@[i as int].ticket.is_none()
             && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
             && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
-    // E5.6 REQ R11, PROVISIONAL (v2.8; PENDING LEAD RULING, OQ-4): the v2 form over-claimed for paused
-    // items (pause_node clears holds). Conservative subset of both proposals: an unpaused PrepareWorktree
-    // step, and an Await step, keep the slot.
-    (old(w).nodes@[i as int].holds && !old(w).nodes@[i as int].paused && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::PrepareWorktree)))
+    // E5.6 REQ R11 (v2.22, lead ruling, owner advance; advance G5-REST-PLAN.md section 3): a slot holder that is
+    // making its change or rebasing keeps the slot unless it is paused.
+    old(w).nodes@[i as int].holds
+        && !old(w).nodes@[i as int].paused
+        && (old(w).nodes@[i as int].phase == Phase::Making
+            || old(w).nodes@[i as int].phase == Phase::Rebasing)
         ==> final(w).nodes@[i as int].holds,
-    (old(w).nodes@[i as int].holds && current_item(old(w).nodes@[i as int]) == Some(Item::Await)) ==> final(w).nodes@[i as int].holds,
     // E11.3 REQ R26 (a): a teardown step whose resource is already gone is skipped.
     (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && (match current_item(old(w).nodes@[i as int]) {
         Some(Item::Teardown(k)) => advance_family_post::teardown_gone(old(w).nodes@[i as int], k), _ => false }))
