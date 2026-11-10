@@ -152,7 +152,7 @@ class FluxAdmissionTests(unittest.TestCase):
         if args[:2] == ('job', 'info') and args[-1] == 'R':
             return 0, fx.encoded({'version': 1, 'execution': {'R_lite': [{'rank': '0', 'children': {'core': '0-' + str(self.intent['cpus'] - 1)}}], 'nodelist': ['dl380g10']}}), b''
         if args[:2] == ('job', 'id'):
-            return 0, b'42', b''
+            return 0, self.identifier.encode() if args[2] == '--to=f58' else b'42', b''
         self.fail('unexpected native fixture command')
 
     def test_x7_plain_memory_ceiling_is_24_gib(self):
