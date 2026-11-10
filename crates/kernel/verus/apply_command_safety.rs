@@ -56,4 +56,79 @@ pub(super) proof fn pause_facts(w: World, b: Node, id: u64)
     }
 }
 
+
+pub(super) proof fn last_cmd_shift(n: Node, nq: u64, id: u64)
+    requires node_headroom(n), arithmetic_consistent(n),
+    ensures node_headroom(Node { last_cmd: id, ..n }),
+        arithmetic_consistent(Node { last_cmd: id, ..n }),
+        handler_safety::node_ok(n, nq) ==> handler_safety::node_ok(Node { last_cmd: id, ..n }, nq),
+{
+}
+
+
+pub(super) proof fn answer_command_facts(w: World, b: Node, id: u64, question: u64, answer: Answer)
+    requires node_headroom(b), arithmetic_consistent(b), w.next_question < u64::MAX,
+        id > b.last_cmd,
+    ensures ({ let a = Node { last_cmd: id, ..b };
+        let r = apply_answer_values::answered(a, w.next_question, question, answer);
+        (node_checked(w, b) && command_progress_input(b, Command::Answer { question, answer })
+            ==> distance(r.0) < distance(b))
+        && (b.phase is Closed ==> r.0.phase is Closed)
+        && r.0.repo == b.repo
+        && r.0.footprint == b.footprint
+        && (settle_shape(b) ==> settle_shape(r.0))
+        && r.0.generation as int <= b.generation as int + 1
+        && r.0.next_seq == b.next_seq
+        && r.0.credit.start == b.credit.start
+        && r.0.credit.earned == b.credit.earned
+        && r.0.credit.added as int <= b.credit.added as int + 255
+        && r.0.credit.spent as int <= b.credit.spent as int + 1
+        && r.0.last_cmd == id
+        && r.1 as int <= w.next_question as int + 1
+        && w.next_question <= r.1
+        && progress_gate_apply::resume_post(b, r.0, id, Command::Answer { question, answer })
+        && r.0.proposed == b.proposed
+        && r.0.adopted == b.adopted
+        && (b.phase is Closed ==> r.0.phase == b.phase)
+        && handler_safety::command_step(b, r.0)
+        && (node_checked(w, b) && r.0 != (Node { last_cmd: r.0.last_cmd, ..b })
+            ==> (match b.question { Some(q) => q.id == question, None => false })
+                && (match r.0.question { Some(q) => q.id != question, None => true }))
+        && (r.0.holds ==> b.holds)
+        && (r.0.pool ==> b.pool)
+        && (r.0.ticket == b.ticket || r.0.ticket.is_none())
+        && r.0.credit.withheld == b.credit.withheld
+        && (retirement::node_rules(w, b) ==> handler_safety::node_rules_v(r.0, r.1)) }),
+{
+    let a = Node { last_cmd: id, ..b };
+    let nq = w.next_question;
+    let r = apply_answer_values::answered(a, nq, question, answer);
+    last_cmd_shift(b, nq, id);
+    apply_answer_safety::answer_frame(a, nq, question, answer);
+    apply_answer_safety::answer_resources(a, nq, question, answer);
+    apply_answer_safety::answer_question_order(a, nq, question, answer);
+    apply_answer_safety::answer_step(a, nq, question, answer);
+    handler_safety::last_cmd_step(b, a, r.0);
+    reveal(progress_gate_apply::resume_post);
+    if node_checked(w, b) {
+        handler_safety::checked_node_ok(w, b);
+        handler_safety::distance_last_cmd(b, id);
+        apply_answer_safety::answer_progress(a, nq, question, answer);
+        apply_answer_safety::answer_consumed(a, nq, question, answer);
+    }
+    if retirement::node_rules(w, b) {
+        handler_safety::rules_to_v(w, b);
+        handler_safety::last_cmd_rules_v(b, nq, id);
+        apply_answer_safety::answer_rules(a, nq, question, answer);
+    }
+}
+
+
+pub(super) proof fn nodes_rewrite_frame(s: Seq<Node>, i: int, a: Node, x: Node)
+    requires 0 <= i < s.len(),
+    ensures s.update(i, a).update(i, x) == s.update(i, x),
+{
+    assert(s.update(i, a).update(i, x) =~= s.update(i, x));
+}
+
 }

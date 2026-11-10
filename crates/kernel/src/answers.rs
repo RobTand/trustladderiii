@@ -87,6 +87,40 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
 }
 
 kernel_fn! {
+/// K5 design 4: on_answer's unchanged statements with an exact, per-field world post,
+/// so answer_command transfers one node equation and no field rows.
+pub(super) fn on_answer_exact(w: &mut World, i: usize, id: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@ == old(w).nodes@.update(i as int, apply_answer_values::answered(
+            old(w).nodes@[i as int], old(w).next_question, id, answer).0),
+        final(w).next_question == apply_answer_values::answered(
+            old(w).nodes@[i as int], old(w).next_question, id, answer).1,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+] {
+    kernel_snapshot! { before_exact = *w }
+    let (n1, nq1, note) = answer_value(w.nodes[i], w.next_question, id, answer);
+    w.nodes[i] = n1;
+    kernel_proof! { assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, n1)); }
+    w.next_question = nq1;
+    match note {
+        Some(x) => notice(out, i, x),
+        None => {}
+    }
+}
+}
+
+kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
 /// K5 value form of on_answer's work: the node and next question id come in by
 /// value; the answered node, the next id and at most one notice are returned.

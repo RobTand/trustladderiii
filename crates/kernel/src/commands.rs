@@ -468,42 +468,25 @@ fn answer_command(w: &mut World, i: usize, id: u64, question: u64, answer: Answe
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
-    kernel_snapshot! { before_rules_world = *w }
-    kernel_proof! {
-        if retirement::node_rules(*w, w.nodes@[i as int]) {
-            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
-            handler_safety::last_cmd_rules_v(w.nodes@[i as int], w.next_question, id);
-        }
-    }
-
+kernel_snapshot! { before_rules_world = *w }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
-    kernel_snapshot! { before_command_world = *w }
+    kernel_proof! {
+        apply_command_safety::answer_command_facts(*w, w.nodes@[i as int], id, question, answer);
+    }
     w.nodes[i].last_cmd = id;
     kernel_snapshot! { after_id = w.nodes@[i as int] }
     kernel_proof! {
-        if node_checked(before_command_world@, before_command_node@) {
-            footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
-            assert(node_checked(*w, w.nodes@[i as int]));
-            if command_progress_input(before_command_node@, Command::Answer { question, answer }) {
-                assert(answer_progress_input(w.nodes@[i as int], question, answer));
-                assert(distance(after_id@) == distance(before_command_node@)) by { reveal(distance); }
-            }
-        }
+        assert(after_id@ == Node { last_cmd: id, ..before_command_node@ });
+        assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, after_id@));
     }
+    on_answer_exact(w, i, question, answer, out);
     kernel_proof! {
+        apply_command_safety::nodes_rewrite_frame(before_rules_world@.nodes@, i as int,
+            after_id@, w.nodes@[i as int]);
         if retirement::node_rules(before_rules_world@, before_command_node@) {
-            handler_safety::rules_world_update(before_rules_world@, *w, before_command_node@, after_id@);
+            handler_safety::rules_world_update(before_rules_world@, *w,
+                before_command_node@, w.nodes@[i as int]);
         }
     }
-    on_answer(w, i, question, answer, out);
-    kernel_proof! {
-        reveal(progress_gate_apply::resume_post);
-    }
-    kernel_proof! {
-        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
-        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
-    }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }
