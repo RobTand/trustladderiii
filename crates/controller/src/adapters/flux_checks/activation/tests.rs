@@ -507,3 +507,37 @@ fn qualified_binding_passes_real_controller_capacity_and_startup_activation() {
     );
     assert!(stager.prepare(&repo.delivery()).is_err());
 }
+
+/// FX-REQUAL-43 OQ-1: an activated Stager never carries the canary marker, and the
+/// canary gate refuses a configured record. Built only with the example-only feature.
+#[cfg(feature = "activation-qualification")]
+#[test]
+#[ignore = "PB fixture: canonical shared bundle paths and retained qualification inputs"]
+fn canary_qualification_gate_never_marks_an_activated_stager_and_refuses_records() {
+    use crate::adapters::flux_checks::staging::{CANARY_QUALIFICATION_MARKER, Stager};
+    let mut fixture = Fixture::new();
+    fixture.flux.output_root = "/mnt/shared/flux-out/tl3".into();
+    let options = crate::production::flux_options(&fixture.flux);
+    fixture.record.backend_options_sha256 = identity(&options).unwrap();
+    fixture.seal_record();
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    config.flux = Some(fixture.flux.clone());
+    for repo in &mut config.github.repos {
+        repo.container_image = None;
+    }
+    let activated = Stager::new(&config).unwrap();
+    assert_eq!(activated.canary_qualification_marker(), None);
+    assert_refusal(
+        Stager::for_canary_qualification(&config),
+        "flux.activation.canary_qualification",
+    );
+    config.flux.as_mut().unwrap().activation = None;
+    let canary = Stager::for_canary_qualification(&config).unwrap();
+    assert_eq!(
+        canary.canary_qualification_marker(),
+        Some(CANARY_QUALIFICATION_MARKER)
+    );
+    assert_refusal(Stager::new(&config), "flux.activation");
+}
