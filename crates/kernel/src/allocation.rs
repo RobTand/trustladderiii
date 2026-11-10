@@ -279,7 +279,7 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
 ] {
     let (node, next_question, notes) = ask_value(w.nodes[i], w.next_question,
         i, kind, cont, cost);
-    w.nodes[i] = node;
+    let _ = node;
     w.next_question = next_question;
     if let Some(item) = notes.items[0] {
         out.push(item);
