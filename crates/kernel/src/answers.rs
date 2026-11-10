@@ -344,7 +344,7 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         if handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet {
             handler_safety::retry_rules_v(n, q, u64::MAX);
             assert(m == try_again_node(n));
-            assert((Question { cost: q.cost.max(1), ..q }) == q);
+            assert((Question { cost: if q.cost > 1 { q.cost } else { 1u8 }, ..q }) == q);
         }
     }
     m = continue_node(
