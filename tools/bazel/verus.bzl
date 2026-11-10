@@ -1833,6 +1833,9 @@ def verus_proofs():
             "special_safety_resume_apply_projection": ("kernel::special_safety::resume_apply_projection", 1),
             "special_safety_invalid_command_assembly": ("kernel::special_safety::invalid_command_assembly", 1),
             "special_safety_aggregate_command_assembly": ("kernel::special_safety::aggregate_command_assembly", 1),
+            "special_safety_answer_frontier_reveal": ("kernel::special_safety::answer_frontier_reveal", 1),
+            "special_safety_answer_frontier": ("kernel::special_safety::answer_frontier", 1),
+            "special_safety_answer_apply_assembly": ("kernel::special_safety::answer_apply_assembly", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
