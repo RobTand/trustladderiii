@@ -366,7 +366,7 @@ pub(super) proof fn ingest_progress(n: Node, c: ReplyCtx)
 pub(super) proof fn ingest_completion(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
-    ensures reply_family_safety::rows(n, c, reply_family_values::ingest(n, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::ingest(n, c.reply)),
 {
     ingest_bounds(n, c);
     reveal(reply_family_safety::completed);
