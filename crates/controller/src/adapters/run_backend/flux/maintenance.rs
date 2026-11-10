@@ -119,6 +119,22 @@ impl Flux {
         }
     }
 
+    fn owner_error_deadline(
+        &self,
+        key: &str,
+        error: &BackendError,
+        now: u64,
+        failures: &BTreeMap<String, MaintenanceFailure>,
+    ) -> u64 {
+        failures
+            .get(key)
+            .map(|failure| failure.next_attempt_ms)
+            .unwrap_or_else(|| {
+                self.maintenance_error(key, &error.to_string(), now);
+                now.saturating_add(CADENCE_MS)
+            })
+    }
+
     pub(super) fn cleanup_deadline(&self) -> Result<Option<u64>> {
         let now = now_ms();
         let (mut failures, error_log_failed) = self.maintenance_failures_snapshot(now);
@@ -129,7 +145,10 @@ impl Flux {
         for (key, entry) in self.journal.records()? {
             match entry {
                 Ok(Some(record)) => {
-                    self.acquired_owner(&key, &mut failures)?;
+                    if let Err(error) = self.acquired_owner(&key, &mut failures) {
+                        deadlines.push(self.owner_error_deadline(&key, &error, now, &failures));
+                        continue;
+                    }
                     // Committed terminals are immutable. Report unresolved debt but
                     // do not wake the Look thread for a cleanup that cannot run.
                     if record.terminal.is_some() {
@@ -144,7 +163,13 @@ impl Flux {
                     }
                 }
                 Ok(None) => {
-                    let (_, expired) = self.busy_owner(&key, now)?;
+                    let expired = match self.busy_owner(&key, now) {
+                        Ok((_, expired)) => expired,
+                        Err(error) => {
+                            deadlines.push(self.owner_error_deadline(&key, &error, now, &failures));
+                            continue;
+                        }
+                    };
                     if expired
                         || failures.get(&key).is_some_and(|failure| {
                             failure.message.starts_with("persistently held owner lock")
@@ -155,21 +180,16 @@ impl Flux {
                         deadlines.push(
                             failures
                                 .get(&key)
-                                .map_or(now, |failure| failure.next_attempt_ms),
+                                .map_or(now.saturating_add(CADENCE_MS), |failure| {
+                                    failure.next_attempt_ms
+                                }),
                         );
                     } else {
                         deadlines.push(now.saturating_add(1_000));
                     }
                 }
                 Err(error) => {
-                    let deadline = failures
-                        .get(&key)
-                        .map(|failure| failure.next_attempt_ms)
-                        .unwrap_or_else(|| {
-                            self.maintenance_error(&key, &error.to_string(), now);
-                            now.saturating_add(CADENCE_MS)
-                        });
-                    deadlines.push(deadline);
+                    deadlines.push(self.owner_error_deadline(&key, &error, now, &failures));
                 }
             }
         }
