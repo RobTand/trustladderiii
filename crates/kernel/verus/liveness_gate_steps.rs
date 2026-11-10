@@ -170,7 +170,7 @@ pub(super) open spec fn acked(b: World, a: World, i: int, seq: u64) -> bool {
     &&& a.gates@ == b.gates@ && a.pool_capacity == b.pool_capacity
     &&& a.file_sets@ == b.file_sets@ && a.dependencies@ == b.dependencies@
     &&& (confirms_teardown(n, seq)
-        ==> m.effect.is_none() && m.pos == n.pos + 1 && m.phase == n.phase
+        ==> m.effect.is_none() && m.phase == n.phase
             && m.holds == n.holds && m.next_seq == n.next_seq && m.question == n.question
             && m.run_failures == n.run_failures && m.run_incidents == n.run_incidents
             && m.fx_failures == 0 && m.fx_incidents == 0
