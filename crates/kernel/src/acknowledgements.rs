@@ -754,7 +754,7 @@ fn ack_append_value(out: Outbox, item: Out) -> (result: Outbox) [
         result.items@ == out.items@.update(out.len as int, Some(item)),
 ] {
     let mut output = out;
-    output.push(item);
+    output.push(Out::Notice { node: NodeId(0), notice: Notice::Incident { needs_rob: false } });
     output
 }
 }
