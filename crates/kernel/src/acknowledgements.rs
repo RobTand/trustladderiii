@@ -778,7 +778,7 @@ fn ack_emit_value(n: Node, i: usize, kind: EffectKind, out: Outbox) -> (result: 
     ensures ack_view(result) == ack_emit_spec(n, i as int, kind, out),
 ] proof [reveal(ack_emit_spec);] {
     let seq = n.next_seq;
-    let m = Node { next_seq: seq + 1,
+    let m = Node { next_seq: seq,
         effect: Some(InFlight { seq, kind, cancelling: false }),
         worktree: n.worktree || kind == EffectKind::PrepareWorktree,
         pr_open: n.pr_open || kind == EffectKind::OpenPr,
