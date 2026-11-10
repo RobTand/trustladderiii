@@ -1042,4 +1042,11 @@ pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
     }
 }
 
+
+/// R28 diagnostic (11-10): the incident conjunct of node_rules, as one implication.
+pub(super) proof fn rules_incident(w: World, n: Node)
+    ensures retirement::node_rules(w, n) ==> (n.incident_needs_rob ==> n.waiting_incident),
+{
+    reveal(retirement::node_rules);
+}
 }

@@ -408,6 +408,8 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         old(w).next_question <= final(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident)),
 ] {
     kernel_snapshot! { before_command_world = *w }
     on_answer(w, i, question, answer, out);
@@ -421,6 +423,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             NodeId(i as u64));
         apply_command_safety::r19_bridge(before_command_world@.nodes@[i as int],
             after_answer@.nodes@[i as int], w.nodes@[i as int]);
+        apply_command_safety::rules_incident(after_answer@, after_answer@.nodes@[i as int]);
     }
 }
 }
