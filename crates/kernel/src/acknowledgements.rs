@@ -819,7 +819,7 @@ fn ack_confirmed_value(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (resu
 ] proof [reveal(ack_confirmed_spec);] {
     let m = ack_resources_value(n, kind);
     let m = confirmed_agenda_value(m, kind);
-    (m, nq, out)
+    (Node { head: None, ..m }, nq, out)
 }
 }
 
