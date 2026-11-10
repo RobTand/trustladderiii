@@ -650,7 +650,7 @@ pub(super) open spec fn ack_case_common(b: Node, n: Node, e: InFlight, i: int, o
 }
 
 proof fn ack_cancel_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64, i: int, ob: Outbox, oa: Outbox)
-    requires e.cancelling, n == (Node { effect: None, ..b }), nqa == nq, oa == ob,
+    requires e.cancelling, true, nqa == nq, oa == ob,
     ensures ack_live_post(b, n, e, ack, nq, nqa, i, ob, oa),
 {
     reveal(ack_live_post);
