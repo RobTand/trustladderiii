@@ -1325,29 +1325,30 @@ def test_x7_container_uses_job_uri_and_readonly_socket_mount(tmp_path, monkeypat
     from tl3_harness import runtime
 
     import socket
+    import tempfile
 
-    broker = socket.socket(socket.AF_UNIX)
-    endpoint = tmp_path / 'local-1'
-    broker.bind(str(endpoint))
-    broker.close()
-    monkeypatch.setenv('FLUX_URI', 'local://' + str(endpoint))
-    monkeypatch.setattr(runtime, 'check_rootless_directory', lambda env: None)
-    import shutil
-    monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/' + name)
-    context = flux_context(monkeypatch, pass_flux_uri=opt_in, native_threads=1,
-                           coordinator_uri='local:///controller-submit-time',
-                           runtime={'image': 'sha256:' + '1' * 64, 'mode': 'in_job',
-                                    'executable': 'podman', 'trusted_root': '/harness', 'interpreter': 'python3'})
-    argv = runtime.command(tmp_path / 'checkout', tmp_path / 'scratch')
-    env = [argv[i + 1] for i, value in enumerate(argv) if value == '--env' and argv[i + 1].startswith('FLUX_')]
-    mounts = [argv[i + 1] for i, value in enumerate(argv) if value == '--mount']
-    assert env == (['FLUX_URI=local:///run/tl3-flux.sock'] if opt_in else [])
-    assert (f'type=bind,source={endpoint},target=/run/tl3-flux.sock,readonly' in mounts) == opt_in
-    assert len(mounts) == 3 + int(opt_in)
-    assert [value for value in mounts if not value.endswith(',readonly')] == [
-        f'type=bind,src={tmp_path / "scratch"},dst=/tmp']
-    assert not any(f'source={tmp_path},' in value for value in mounts)
-    assert not any('/controller-submit-time' in value for value in argv)
+    with tempfile.TemporaryDirectory(prefix='tl3sock-', dir='/tmp') as directory:
+        endpoint = Path(directory) / 'local-1'
+        with socket.socket(socket.AF_UNIX) as broker:
+            broker.bind(str(endpoint))
+        monkeypatch.setenv('FLUX_URI', 'local://' + str(endpoint))
+        monkeypatch.setattr(runtime, 'check_rootless_directory', lambda env: None)
+        import shutil
+        monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/' + name)
+        context = flux_context(monkeypatch, pass_flux_uri=opt_in, native_threads=1,
+                               coordinator_uri='local:///controller-submit-time',
+                               runtime={'image': 'sha256:' + '1' * 64, 'mode': 'in_job',
+                                        'executable': 'podman', 'trusted_root': '/harness', 'interpreter': 'python3'})
+        argv = runtime.command(tmp_path / 'checkout', tmp_path / 'scratch')
+        env = [argv[i + 1] for i, value in enumerate(argv) if value == '--env' and argv[i + 1].startswith('FLUX_')]
+        mounts = [argv[i + 1] for i, value in enumerate(argv) if value == '--mount']
+        assert env == (['FLUX_URI=local:///run/tl3-flux.sock'] if opt_in else [])
+        assert (f'type=bind,source={endpoint},target=/run/tl3-flux.sock,readonly' in mounts) == opt_in
+        assert len(mounts) == 3 + int(opt_in)
+        assert [value for value in mounts if not value.endswith(',readonly')] == [
+            f'type=bind,src={tmp_path / "scratch"},dst=/tmp']
+        assert not any(f'source={tmp_path},' in value for value in mounts)
+        assert not any('/controller-submit-time' in value for value in argv)
 
 
 @pytest.mark.parametrize('kind', ['directory', 'regular_file', 'missing'])
