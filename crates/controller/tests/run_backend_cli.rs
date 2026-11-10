@@ -52,7 +52,10 @@ fn fixture_scratch_is_ascii_under_unicode_flux_tmpdir() {
     let inherited = root.path().join("flux-vanilla/ƒhm2UMeMcT");
     fs::create_dir_all(&inherited).unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "fixture_scratch_is_ascii_under_unicode_flux_tmpdir"])
+        .args([
+            "--exact",
+            "fixture_scratch_is_ascii_under_unicode_flux_tmpdir",
+        ])
         .env("TL3_ASCII_SCRATCH_CHILD", "1")
         .env("TMPDIR", &inherited)
         .output()
@@ -4509,7 +4512,10 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
         .lines()
         .count();
     // Cleanup and maintenance each try once; cancel may also reach the helper.
-    assert!((2..=3).contains(&attempts), "second helper attempts: {attempts}");
+    assert!(
+        (2..=3).contains(&attempts),
+        "second helper attempts: {attempts}"
+    );
     f.events(&[
         json!({"name":"exception","context":{"type":"cancel","severity":0}}),
         json!({"name":"clean"}),

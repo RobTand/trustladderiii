@@ -67,8 +67,8 @@ fn accepted(canary: &CanaryEvidence) -> bool {
         "success" => required.push("real_pytest_base_red_head_green"),
         "generator" => required.extend([
             "bounded_generator_artifact",
-            "target_flux_uri_broker_and_containment_probes",
-            "actual_image_and_read_only_socket_mount",
+            "target_flux_absence_and_containment_probes",
+            "actual_image_and_socket_mount_absence",
         ]),
         _ => return false,
     }

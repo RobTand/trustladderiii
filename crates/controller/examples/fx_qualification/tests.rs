@@ -42,8 +42,8 @@ pub(super) fn canary(root: &Path, kind: &str) -> evidence::CanaryEvidence {
         "generator" => {
             checks.extend([
                 "bounded_generator_artifact",
-                "target_flux_uri_broker_and_containment_probes",
-                "actual_image_and_read_only_socket_mount",
+                "target_flux_absence_and_containment_probes",
+                "actual_image_and_socket_mount_absence",
             ]);
             api::Ending::Passed
         }
@@ -355,7 +355,10 @@ fn dry_run_exits_zero_only_for_the_completed_preview() {
 
 #[test]
 fn pq_production_canary_does_not_require_live_flux() {
-    assert!(!generator::PASS_FLUX_URI, "production PQ profile disables Flux transport");
+    assert!(
+        !generator::PASS_FLUX_URI,
+        "production PQ profile disables Flux transport"
+    );
 }
 
 #[test]
@@ -385,7 +388,12 @@ fn pq_tool_preflight_requires_flux_only_when_forwarded() {
             .args(["-c", prepare::pq_tool_preflight(forwarded)])
             .output()
             .unwrap();
-        assert_eq!(output.status.success(), pass, "git={git} flux={flux} forwarded={forwarded}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(
+            output.status.success(),
+            pass,
+            "git={git} flux={flux} forwarded={forwarded}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         if !pass {
             assert!(String::from_utf8_lossy(&output.stderr).contains("AssertionError"));
         }
@@ -401,8 +409,14 @@ fn qualification_plan_uses_production_pq_and_ascii_job_ids() {
     assert_eq!(planned["flux_job_count"], 7);
     let jobs = planned["jobs"].as_array().unwrap();
     for job in jobs {
-        assert_eq!(job["resources"], json!([{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":1},{"type":"memory","count":2}]}]));
-        assert_eq!(job["attributes"]["system"]["environment"], json!({"FLUX_F58_FORCE_ASCII":"1"}));
+        assert_eq!(
+            job["resources"],
+            json!([{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":1},{"type":"memory","count":2}]}])
+        );
+        assert_eq!(
+            job["attributes"]["system"]["environment"],
+            json!({"FLUX_F58_FORCE_ASCII":"1"})
+        );
         assert_eq!(job["environment_policy"]["start_empty"], true);
         assert_eq!(job["environment_policy"]["pass_flux_uri"], false);
         assert_eq!(job["rlimit_flags"], json!(["--rlimit=-*"]));

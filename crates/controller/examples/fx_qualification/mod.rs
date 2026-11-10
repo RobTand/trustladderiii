@@ -37,7 +37,7 @@ pub fn admitted_command(kind: &str, path: &Path) -> Result<()> {
     }
 }
 
-const PQ: &str = "dl380g10:5000/tl3/prismaquant@sha256:476eba939987ac80b021e1943f7a16c185e4fcf5950c270667082ed75056d60f";
+const PQ: &str = "dl380g10:5000/tl3/prismaquant@sha256:47273bfe2a3352d7e37e24a3e6c425adc8dc198e7a60002bfcee9957c4902dbc";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -244,13 +244,13 @@ fn validate(inputs: &Inputs) -> Result<()> {
 fn plan(inputs: &Inputs) -> Value {
     let jobs: Vec<_> = [
         ("preparation", 600, false), ("launch_failure", 120, false),
-        ("cancel", 300, false), ("success", 120, false), ("generator_preparation", 300, false), ("generator", 240, true),
+        ("cancel", 300, false), ("success", 120, false), ("generator_preparation", 300, false), ("generator", 240, generator::PASS_FLUX_URI),
         ("canonical_verification", 600, false),
     ].into_iter().map(|(kind, duration, pass_flux_uri)| json!({
         "kind":kind,"version":1,
         "resources":[{"type":"slot","count":1,"label":"task","with":[{"type":"core","count":1},{"type":"memory","count":2}]}],
         "tasks":[{"command":["<command-materialized-by-admitted-preparation>"],"slot":"task","count":{"per_slot":1}}],
-        "attributes":{"system":{"duration":duration}},"gpus":0,"parallelism":1,"native_threads":1,
+        "attributes":{"system":{"duration":duration,"environment":{"FLUX_F58_FORCE_ASCII":"1"}}},"gpus":0,"parallelism":1,"native_threads":1,
         "host_dependency":{"host":"dl380g10","reason":"provisioned amd64 image store and host interpreter"},
         "environment_policy":{"start_empty":true,"request_allowlist":["HOME","PATH","XDG_RUNTIME_DIR"],
             "controller_allowlist":["OUT","TL3_RUN_DIAGNOSTIC_DIR","FLUX_SCRATCH","TL3_RUN_BACKEND","TL3_RUN_INSTANCE",

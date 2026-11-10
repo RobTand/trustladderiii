@@ -216,6 +216,7 @@ pub fn run(
             "submit".into(),
             "--dry-run".into(),
             "--env=-*".into(),
+            "--env=FLUX_F58_FORCE_ASCII=1".into(),
             "--rlimit=-*".into(),
             "-n1".into(),
             format!("-t{duration}s"),

@@ -4,14 +4,12 @@ use tl3_controller::{
     production,
 };
 
-pub(super) const PASS_FLUX_URI: bool = true;
+pub(super) const PASS_FLUX_URI: bool = false;
 
-pub(super) const TARGET: &str = r#"import errno, json, os, pathlib, subprocess, tempfile
+pub(super) const TARGET: &str = r#"import errno, json, os, pathlib, tempfile
 names = sorted(name for name in os.environ if name.startswith('FLUX_'))
-assert names == ['FLUX_URI']
-assert os.environ['FLUX_URI'] == 'local:///run/tl3-flux.sock'
-query = subprocess.run(['flux', 'getattr', 'size'], check=True, capture_output=True, text=True, timeout=15)
-assert int(query.stdout.strip()) > 0
+assert names == []
+assert not os.path.lexists('/run/tl3-flux.sock')
 status = dict(line.split(':', 1) for line in pathlib.Path('/proc/self/status').read_text().splitlines() if ':' in line)
 assert int(status['CapEff'].strip(), 16) == 0
 assert status['NoNewPrivs'].strip() == '1'
@@ -30,8 +28,8 @@ probe = pathlib.Path('/checkout/x3-private-write')
 probe.write_text('x3'); probe.unlink()
 routes = pathlib.Path('/proc/net/route').read_text().splitlines()
 assert not any(line.split()[1] == '00000000' for line in routes[1:] if line.split())
-value = {'broker_read': True, 'capabilities_empty': True, 'flux_names': names,
-         'flux_uri': os.environ['FLUX_URI'], 'network_isolated': True, 'no_new_privileges': True,
+value = {'flux_socket_absent': True, 'capabilities_empty': True, 'flux_names': names,
+         'network_isolated': True, 'no_new_privileges': True,
          'protected_writes_denied': denied, 'private_writes_allowed': True}
 with open('/checkout/generated.json', 'x') as stream:
     stream.write(json.dumps(value, sort_keys=True) + '\n'); stream.flush(); os.fsync(stream.fileno())
@@ -203,8 +201,8 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
         arguments: vec![],
     })?;
     let request: api::Request = serde_json::from_value(plan["submit"]["request"].clone())?;
-    if !request.pass_flux_uri || request.repo != "RobTand/prismaquant" {
-        return Err("PQ pass_flux_uri contract missing".into());
+    if request.pass_flux_uri || request.repo != "RobTand/prismaquant" {
+        return Err("production PQ no-Flux contract missing".into());
     }
     write(&root.join("request.json"), &request)?;
     write(
@@ -267,10 +265,9 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
             .ok_or("generator output bytes")?,
     )?;
     let target: Value = serde_json::from_slice(&bytes)?;
-    let probes = target["flux_uri"] == "local:///run/tl3-flux.sock"
-        && target["flux_names"] == json!(["FLUX_URI"])
+    let probes = target["flux_names"] == json!([])
         && [
-            "broker_read",
+            "flux_socket_absent",
             "capabilities_empty",
             "network_isolated",
             "no_new_privileges",
@@ -287,7 +284,7 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
     let output = durable::blob(&inputs.out.join("generator-target-proof.json"), &bytes)?;
     result.artifacts.push(serde_json::to_value(output)?);
     result.checks.push(evidence::Check {
-        name: "target_flux_uri_broker_and_containment_probes".into(),
+        name: "target_flux_absence_and_containment_probes".into(),
         pass: probes,
         evidence: vec![artifact],
     });
@@ -333,14 +330,6 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
             let modes = mounts.iter().all(|m| match m["Destination"].as_str() {
                 Some("/checkout" | "/tmp") => m["RW"] == true,
                 Some("/checkout/.git" | "/harness") => m["RW"] == false,
-                Some("/run/tl3-flux.sock") => {
-                    m["RW"] == false
-                        && receipt
-                            .binding
-                            .as_ref()
-                            .and_then(|binding| binding.id.uri.strip_prefix("local://"))
-                            .is_some_and(|source| m["Source"] == source)
-                }
                 _ => false,
             });
             observed &= container_bound
@@ -375,12 +364,11 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
                         "/tmp",
                         "/checkout/.git",
                         "/harness",
-                        "/run/tl3-flux.sock",
                     ]);
         }
     }
     result.checks.push(evidence::Check {
-        name: "actual_image_and_read_only_socket_mount".into(),
+        name: "actual_image_and_socket_mount_absence".into(),
         pass: observed && configurations > 0 && rootless_pass,
         evidence: vec![receipt_ref.clone(), rootless],
     });

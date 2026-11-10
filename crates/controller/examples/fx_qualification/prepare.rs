@@ -20,8 +20,12 @@ fn run(command: &mut Command, root: &Path, name: &str) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(super) fn pq_tool_preflight(_pass_flux_uri: bool) -> &'static str {
-    "import shutil; assert shutil.which('git'); assert shutil.which('flux')"
+pub(super) fn pq_tool_preflight(pass_flux_uri: bool) -> &'static str {
+    if pass_flux_uri {
+        "import shutil; assert shutil.which('git'); assert shutil.which('flux')"
+    } else {
+        "import shutil; assert shutil.which('git')"
+    }
 }
 
 pub fn admitted(inputs: &Inputs) -> Result<()> {
