@@ -828,7 +828,7 @@ pub(in super::super) open spec fn ci_change(n: Node, fast: bool, infra: bool) ->
     if !ci_active(n, infra) { ReplyChange::Done { node: n, note: None } }
     else if infra {
         let prepared = ci_prepared(n, infra);
-        let retry = retirement::infrastructure_retry(prepared);
+        let retry = (prepared, None);
         match retry.1 {
             Some(needs_rob) => ReplyChange::Incident { node: retry.0, needs_rob },
             None => ReplyChange::Done { node: retry.0, note: None },
