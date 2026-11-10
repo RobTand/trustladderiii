@@ -7896,10 +7896,13 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
     database.stop();
 }
 
-
 fn maintenance_controller_bootstrap() -> tl3_controller::Bootstrap {
     tl3_controller::Bootstrap {
-        repos: vec![],
+        repos: vec![tl3_controller::Repository {
+            owner: "owner".into(),
+            name: "sandbox".into(),
+            installation: 3,
+        }],
         rob: 42,
         slots: 1,
         pool: 1,
@@ -7920,6 +7923,10 @@ fn cleanup_maintenance_controller_bootstrap_has_valid_world() {
         &vec![bootstrap.slots; bootstrap.repos.len()],
         bootstrap.pool,
     );
-    assert_eq!(world.check(), Ok(()), "maintenance fixture bootstrap must pass World::check");
+    assert_eq!(
+        world.check(),
+        Ok(()),
+        "maintenance fixture bootstrap must pass World::check"
+    );
     assert!(world.is_settled());
 }
