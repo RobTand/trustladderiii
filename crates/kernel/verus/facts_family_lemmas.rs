@@ -27,7 +27,7 @@ pub(super) proof fn notices_outputs(before: World, after: World, ob: Outbox, oa:
 pub(super) proof fn selected_apply_rows(before: World, after: World, i: int,
     fact: Fact, ob: Outbox, oa: Outbox)
     requires 0 <= i < before.nodes@.len(), retirement::selected(fact),
-        after.nodes@ == before.nodes@.update(i, retirement::fact_node(before.nodes@[i], fact)),
+        true,
         ob.len <= oa.len <= OUTBOX, retirement::notices_only(oa),
     ensures transition_safety::nodes_step(before, after),
         transition_safety::outputs_ok(before, after, transition_safety::emitted(ob, oa), None),
