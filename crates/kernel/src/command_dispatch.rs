@@ -178,8 +178,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
-        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
-            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        (match command {
+            Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
+            _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
+                ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+        }),
     // E11.1 REQ R24: a fresh Stop of a live item.
     (command is Stop && id > old(w).nodes@[i as int].last_cmd && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping))
         ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
