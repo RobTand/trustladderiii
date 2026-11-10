@@ -1,10 +1,35 @@
 {
-  "source_head": "923b56048792706ffc66628f333293e29519d80c",
+  "source_head": "f39487ccb967034b7407e7e17487da78664a71aa",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "37d4329614e382dec0907a89142fdcc78f60a094597f62b211d6f581a4d2cd58",
-  "groups": 622,
-  "obligations": 820,
+  "source_sha256": "5d8470badc1e7418c1ef2cc59fee2d8b04152647adee253db9a81977b3334104",
+  "groups": 627,
+  "obligations": 825,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_ingest_deposit_bounds",
+      "selector": "kernel::reply_family_dispatch#ingest_deposit_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_ingest_agrees_bounds",
+      "selector": "kernel::reply_family_dispatch#ingest_agrees_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_ingest_disagrees_bounds",
+      "selector": "kernel::reply_family_dispatch#ingest_disagrees_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_ingest_protected_bounds",
+      "selector": "kernel::reply_family_dispatch#ingest_protected_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_dispatch_withheld_distance",
+      "selector": "kernel::reply_family_dispatch#withheld_distance",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_dispatch_plan_leaf_v",
       "selector": "kernel::work_replies#plan_leaf_v",
