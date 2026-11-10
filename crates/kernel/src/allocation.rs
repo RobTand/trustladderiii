@@ -365,6 +365,18 @@ pub(super) fn incident_value(n: Node, i: usize, needs_rob: bool) -> (result: (No
         result.1.len == 1 && result.1.items@[0]
             == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } }),
 ] {
+    let m = incident_node(n, needs_rob);
+    let notes = incident_notes(i, needs_rob);
+    (m, notes)
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771, K5 value form: the exact incident update of one node.
+fn incident_node(n: Node, needs_rob: bool) -> (result: Node) [
+    requires holding(n.phase) ==> n.generation < u64::MAX,
+    ensures result == retirement::incident(n, needs_rob),
+] {
     kernel_snapshot! { before_incident = n }
     let mut m = n;
     m.waiting_incident = true;
@@ -383,6 +395,23 @@ pub(super) fn incident_value(n: Node, i: usize, needs_rob: bool) -> (result: (No
             allocation_incident_lemmas::waiting_result(before_incident@, m, needs_rob);
         }
     }
+    m
+}
+}
+
+kernel_fn! {
+/// Incident rows / #771, K5 value form: the single Incident notice of node i,
+/// as a one-slot outbox list.
+fn incident_notes(i: usize, needs_rob: bool) -> (result: Outbox) [
+    ensures result.len <= 1,
+        forall|k: int| 0 <= k < result.len ==> match #[trigger] result.items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            _ => false,
+        },
+        forall|k: int| result.len <= k < OUTBOX ==> (#[trigger] result.items@[k]).is_none(),
+        result.len == 1 && result.items@[0]
+            == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } }),
+] {
     let mut notes = Outbox::new();
     kernel_proof! {
         assert(notes.len == 0 && notes.items@ == Seq::new(OUTBOX as nat, |k: int| None::<Out>)) by {
@@ -390,7 +419,11 @@ pub(super) fn incident_value(n: Node, i: usize, needs_rob: bool) -> (result: (No
         }
     }
     notice(&mut notes, i, Notice::Incident { needs_rob });
-    (m, notes)
+    kernel_proof! {
+        assert(notes.items@ == Seq::new(OUTBOX as nat, |k: int| None::<Out>).update(0,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } })));
+    }
+    notes
 }
 }
 
