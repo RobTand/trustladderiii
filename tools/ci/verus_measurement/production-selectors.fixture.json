@@ -1,10 +1,15 @@
 {
-  "source_head": "40c2885a8d23a7edc52b9ac154debf1635656182",
+  "source_head": "a8d908d021d1ce78715fa91e7214277b70c50aa0",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4e26f694d5d6fca01d420bda8fbf6e1e5902a2faafae95a624ccd3357a9dce80",
-  "groups": 700,
-  "obligations": 899,
+  "source_sha256": "a9ecf561a1dbf7dc00719275221645f2a5fdc3c7900efdfab2f5eb4f85f1013e",
+  "groups": 701,
+  "obligations": 900,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_allocation_ask_value",
+      "selector": "kernel::allocation#ask_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_facts_family_infrastructure_incident_count",
       "selector": "kernel::facts_family_values#infrastructure_incident_count",
