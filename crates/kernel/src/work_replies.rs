@@ -425,7 +425,7 @@ fn plan_leaf_v(n: Node, footprint: Footprint) -> (result: ReplyChange) [
         reply_family_values::callable(result),
 ] {
     let mut m = n;
-    m.footprint = footprint;
+    m.footprint = n.footprint;
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
