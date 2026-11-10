@@ -236,4 +236,39 @@ pub(super) proof fn slot_bridge(b: Node, t0: u64, c: AdvanceContext, o0: Outbox,
         _ => {},
     }
 }
+
+/// G20/G22: a Ready waiter with a ticket and no local obstruction.
+pub(super) open spec fn ready_unobstructed(n: Node) -> bool {
+    n.phase is Ready && n.pos == 0 && !n.paused && !n.waiting_incident
+        && n.effect.is_none() && n.ticket.is_some()
+}
+
+/// G20/G22: an unobstructed Ready waiter is granted exactly when the context offers the slot.
+#[verifier::opaque]
+pub(super) open spec fn slot_grant(n: Node, a: Node, c: AdvanceContext, changed: bool) -> bool {
+    changed == c.slot
+    && (c.slot ==> a.holds && a.ticket.is_none()
+        && a.phase == resumed_phase(match n.phase { Phase::Ready(r) => r, _ => Resume::Making })
+        && a.repo == n.repo && a.footprint == n.footprint
+        && a.pool == n.pool && a.run == n.run)
+    && (!c.slot ==> a == n)
+}
+
+pub(super) proof fn slot_grant_from_value(b: Node, t0: u64, c: AdvanceContext, v: (Node, u64, bool))
+    requires ready_unobstructed(b), v == slot_value(b, t0, c),
+    ensures slot_grant(b, v.0, c, v.2),
+{
+    reveal(slot_grant);
+    reveal(slot_value);
+}
+
+/// G20/G22: an unobstructed Ready node dispatches to Slot.
+pub(super) proof fn ready_item(n: Node)
+    requires ready_unobstructed(n),
+    ensures current_item(n) == Some(Item::Slot),
+{
+    reveal(current_item);
+    reveal(items);
+}
+
 }
