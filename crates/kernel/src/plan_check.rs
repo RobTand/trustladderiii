@@ -10,7 +10,8 @@ pub(super) fn reply_plan_check(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures (successful_reply_input(old(w).nodes@[i as int], reply)
+    ensures reply_family_safety::entry_rows(*old(w), *final(w), i as int, reply),
+        (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -26,15 +27,50 @@ pub(super) fn reply_plan_check(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(_out) == *old(_out)
             }),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] {
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = _out.len }
+    kernel_proof! { reveal(reply_family_values::plan_check); }
+    let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
+        reply: reply, fast: w.fail_fast, next_question: w.next_question };
+    let change = reply_plan_check_node(w.nodes[i], c);
+    kernel_proof! { reply_family_dispatch::plan_check_value_posts(w.nodes@[i as int], c); }
+    resolve_reply_change(w, i, change, _out);
+    kernel_proof! {
+        reveal(retirement::stopped); reveal(handler_safety::ladder);
+        reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
+    }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, _out.len);
+    }
+}
+}
+
+kernel_fn! {
+/// Reply node work, with completed-stage rows separate from world mutation.
+pub(super) fn reply_plan_check_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures result == reply_family_values::plan_check(n),
+        reply_family_values::callable(result),
+] proof [reveal(reply_family_values::plan_check);] {
+    let mut node = n;
+    let mut note: Option<Notice> = None;
+    let i = c.node;
+    let reply = c.reply;
     match reply {
         Reply::PlanCheckRejected => {
-            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);
+            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);
+            return ReplyChange::Done { node, note };
         }
         Reply::PlanCheckNeedsSplit => {
-            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);
+            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);
+            return ReplyChange::Done { node, note };
         }
         _ => {}
     }
+    ReplyChange::Done { node, note }
 }
 }
