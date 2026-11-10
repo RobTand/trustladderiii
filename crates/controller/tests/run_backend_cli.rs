@@ -7042,6 +7042,63 @@ fn cleanup_maintenance_busy_owner_is_skipped_and_remains_due() {
 
 #[test]
 #[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_persistent_busy_owner_survives_restart_and_requires_stop_evidence() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("persistent-busy", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(f.options.journal_root.join(&f.intent.correlation).join("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let backend = maintenance_backend(&f);
+    assert!(backend.cleanup_maintenance(due).unwrap().pending.is_empty());
+    assert!(backend.cleanup_maintenance(due + 299_999).unwrap().pending.is_empty());
+    assert!(api::durable::maintenance_failures(&f.options.journal_root).unwrap().is_empty());
+    drop(backend);
+    // A fresh backend must use the first observation, not restart the grace period.
+    let backend = maintenance_backend(&f);
+    let expired = due + 300_000;
+    let report = backend.cleanup_maintenance(expired).unwrap();
+    assert_eq!(report.pending.len(), 1, "a persistently held owner lock must surface");
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].message.contains("persistently held owner lock"));
+    assert_eq!(failures[0].next_attempt_ms, expired + 300_000);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(expired + 300_000));
+    assert_eq!(f.state().cleanup_retry_ms, Some(due));
+    assert!(!cleanup_debts(&f).is_empty());
+    drop(lock);
+    // Acquisition resets the streak, but absence of positive evidence keeps debt pending.
+    assert!(!backend.cleanup_maintenance(expired + 1).unwrap().pending.is_empty());
+    assert!(!cleanup_debts(&f).is_empty());
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(f.options.journal_root.join(&f.intent.correlation).join("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    backend.cleanup_maintenance(expired + 2).unwrap();
+    backend.cleanup_maintenance(expired + 299_999).unwrap();
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert!(failures.iter().all(|failure| !failure.message.contains("persistently held owner lock")),
+        "successful acquisition must reset the busy streak");
+    drop(lock);
+    f.cleanup_facts(&owned, true);
+    let report = backend.cleanup_maintenance(expired + 300_001).unwrap();
+    assert!(report.pending.is_empty());
+    assert!(cleanup_debts(&f).is_empty());
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(api::durable::maintenance_failures(&f.options.journal_root).unwrap().is_empty());
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
 fn cleanup_maintenance_owner_limit_leaves_remaining_owners_due() {
     let mut fixtures = Vec::new();
     for name in ["bounded-first", "bounded-second"] {
