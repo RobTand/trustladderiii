@@ -361,8 +361,8 @@ impl RunBackend for Flux {
                 .jobspec
                 .clone()
                 .ok_or_else(|| BackendError::unknown("held submission lacks prepared jobspec"))?;
-            // Recheck immutable artifacts before resuming exactly this prepared intent.
-            validate::trusted_artifacts(&record.request)?;
+            // The staged tree and runtime may have changed while dispatch was held.
+            validate::preflight(&record.request)?;
             checked_blob(&spec, &record.intent.output_dir)?;
             return self.dispatch_prepared(&owner, &record, spec);
         }
