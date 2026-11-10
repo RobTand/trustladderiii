@@ -919,7 +919,7 @@ pub(super) proof fn answer_frame(before: World, after: World, i: usize)
     requires i < before.nodes@.len(),
         after.nodes@.len() == before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
-    ensures after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+    ensures after.nodes@ == before.nodes@,
 {
     assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
 }
