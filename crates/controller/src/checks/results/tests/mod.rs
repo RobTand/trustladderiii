@@ -1020,15 +1020,87 @@ fn c1_failure(phase: &str, exception: &str, assertion: bool) -> Value {
 #[test]
 fn c1_replay_compares_failure_class_type_phase_and_missing_detail() {
     for (base, head, base_phase, head_phase, base_type, head_type, passed) in [
-        ("assertion", "assertion", "call", "call", "builtins.AssertionError", "builtins.AssertionError", true),
-        ("assertion", "assertion", "call", "call", "builtins.AssertionError", "test_x.CustomAssertion", false),
-        ("assertion", "error", "call", "call", "builtins.AssertionError", "builtins.ValueError", false),
-        ("error", "assertion", "call", "call", "builtins.ValueError", "builtins.AssertionError", false),
-        ("error", "error", "setup", "setup", "builtins.ValueError", "builtins.ValueError", true),
-        ("error", "error", "call", "setup", "builtins.ValueError", "builtins.ValueError", false),
-        ("error", "error", "setup", "teardown", "builtins.ValueError", "builtins.ValueError", false),
-        ("error", "error", "collection", "collection", "builtins.ValueError", "builtins.ValueError", true),
-        ("error", "error", "call", "call", "builtins.ValueError", "", false),
+        (
+            "assertion",
+            "assertion",
+            "call",
+            "call",
+            "builtins.AssertionError",
+            "builtins.AssertionError",
+            true,
+        ),
+        (
+            "assertion",
+            "assertion",
+            "call",
+            "call",
+            "builtins.AssertionError",
+            "test_x.CustomAssertion",
+            false,
+        ),
+        (
+            "assertion",
+            "error",
+            "call",
+            "call",
+            "builtins.AssertionError",
+            "builtins.ValueError",
+            false,
+        ),
+        (
+            "error",
+            "assertion",
+            "call",
+            "call",
+            "builtins.ValueError",
+            "builtins.AssertionError",
+            false,
+        ),
+        (
+            "error",
+            "error",
+            "setup",
+            "setup",
+            "builtins.ValueError",
+            "builtins.ValueError",
+            true,
+        ),
+        (
+            "error",
+            "error",
+            "call",
+            "setup",
+            "builtins.ValueError",
+            "builtins.ValueError",
+            false,
+        ),
+        (
+            "error",
+            "error",
+            "setup",
+            "teardown",
+            "builtins.ValueError",
+            "builtins.ValueError",
+            false,
+        ),
+        (
+            "error",
+            "error",
+            "collection",
+            "collection",
+            "builtins.ValueError",
+            "builtins.ValueError",
+            true,
+        ),
+        (
+            "error",
+            "error",
+            "call",
+            "call",
+            "builtins.ValueError",
+            "",
+            false,
+        ),
     ] {
         let (job, mut report) = fixture(base, head, passed, true);
         report["schema"] = json!("tl3.checks.v3");
@@ -1036,7 +1108,10 @@ fn c1_replay_compares_failure_class_type_phase_and_missing_detail() {
             "base":[c1_failure(base_phase, base_type, base == "assertion")],
             "head":[c1_failure(head_phase, head_type, head == "assertion")]});
         let evidence = evaluate(&job, &report);
-        assert!(evidence.0, "valid failure report refused: {report}: {evidence:?}");
+        assert!(
+            evidence.0,
+            "valid failure report refused: {report}: {evidence:?}"
+        );
         assert_eq!(evidence.1, passed, "{report}");
         if !passed {
             report["results"][0]["verdict"] = json!("pass");
@@ -1050,11 +1125,15 @@ fn c1_replay_compares_failure_class_type_phase_and_missing_detail() {
 fn c1_replay_checks_and_preserves_the_not_checked_count() {
     let (job, mut report) = fixture("error", "error", true, true);
     let failure = c1_failure("call", "builtins.ValueError", false);
-    report["results"][0]["tests"][0]["regression_failures"] = json!({"base":[failure], "head":[failure]});
+    report["results"][0]["tests"][0]["regression_failures"] =
+        json!({"base":[failure], "head":[failure]});
     report["results"][0]["base_failures_not_checked"] = json!(1);
     let evidence = evaluate(&job, &report);
     assert!(evidence.0 && evidence.1, "{evidence:?}");
-    assert_eq!(evidence.2[0]["base_failures_not_checked"], 1, "review receives the stored count");
+    assert_eq!(
+        evidence.2[0]["base_failures_not_checked"], 1,
+        "review receives the stored count"
+    );
     for wrong in [0, 2] {
         report["results"][0]["base_failures_not_checked"] = json!(wrong);
         assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
@@ -1080,7 +1159,8 @@ fn c1_replay_checks_every_parameter_and_the_retained_phase_facts() {
 
     let (job, mut report) = fixture("error", "error", true, true);
     let failure = c1_failure("call", "builtins.ValueError", false);
-    report["results"][0]["tests"][0]["regression_failures"] = json!({"base":[failure], "head":[failure]});
+    report["results"][0]["tests"][0]["regression_failures"] =
+        json!({"base":[failure], "head":[failure]});
     let passed = json!({"outcome":"passed", "exception":"", "assertion":false});
     let run = json!({"test":"tests/test_x.py::test_x", "setup":passed, "teardown":passed,
         "call":{"outcome":"failed", "exception":"builtins.TypeError", "assertion":false}});

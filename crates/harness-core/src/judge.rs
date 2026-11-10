@@ -114,8 +114,10 @@ pub fn judge(input: Input) -> Decision {
             available
                 && (matches!(input.head, Outcome::Passed)
                     || input.same_failure
-                        && (matches!(input.base, Outcome::Assertion) && matches!(input.head, Outcome::Assertion)
-                            || matches!(input.base, Outcome::Error) && matches!(input.head, Outcome::Error)))
+                        && (matches!(input.base, Outcome::Assertion)
+                            && matches!(input.head, Outcome::Assertion)
+                            || matches!(input.base, Outcome::Error)
+                                && matches!(input.head, Outcome::Error)))
         }
         Kind::BehaviorPreserving => {
             matches!(input.base, Outcome::Passed) && matches!(input.head, Outcome::Passed)
@@ -322,8 +324,11 @@ pub fn message(
         return String::new();
     }
     if decision.pre_existing && matches!(input.head, Outcome::Assertion | Outcome::Error) {
-        return format!("Regression failure changed: base {} (no failure detail); head {} (no failure detail).",
-            input.base.as_str(), input.head.as_str());
+        return format!(
+            "Regression failure changed: base {} (no failure detail); head {} (no failure detail).",
+            input.base.as_str(),
+            input.head.as_str()
+        );
     }
     let mut result = head_message.to_owned();
     if let Some(during) = input.forced {

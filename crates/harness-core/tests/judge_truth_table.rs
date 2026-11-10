@@ -125,8 +125,20 @@ fn regression_preserves_base_failures_but_requires_available_base() {
     };
     let decision = judge(input);
     assert!(decision.passed && decision.pre_existing && !decision.infrastructure);
-    assert!(!judge(Input { same_failure: false, ..input }).passed);
-    assert!(!judge(Input { head: Outcome::Assertion, ..input }).passed);
+    assert!(
+        !judge(Input {
+            same_failure: false,
+            ..input
+        })
+        .passed
+    );
+    assert!(
+        !judge(Input {
+            head: Outcome::Assertion,
+            ..input
+        })
+        .passed
+    );
     assert!(
         !judge(Input {
             base: Outcome::Skipped,

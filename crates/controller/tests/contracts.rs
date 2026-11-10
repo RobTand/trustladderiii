@@ -971,17 +971,33 @@ mod typed {
     }
 
     fn regression_failure() -> BoxedStrategy<RegressionFailure> {
-        (node(), select(vec![FailurePhase::Collection, FailurePhase::Setup,
-            FailurePhase::Call, FailurePhase::Teardown]), text::<0, 200>(), any::<bool>())
+        (
+            node(),
+            select(vec![
+                FailurePhase::Collection,
+                FailurePhase::Setup,
+                FailurePhase::Call,
+                FailurePhase::Teardown,
+            ]),
+            text::<0, 200>(),
+            any::<bool>(),
+        )
             .prop_map(|(test, phase, exception, assertion)| RegressionFailure {
-                test: Text::new(test).unwrap(), phase, exception, assertion,
-            }).boxed()
+                test: Text::new(test).unwrap(),
+                phase,
+                exception,
+                assertion,
+            })
+            .boxed()
     }
 
     fn regression_failures() -> BoxedStrategy<RegressionFailures> {
-        (list::<RegressionFailure, 0, UNBOUNDED>(regression_failure()),
-         list::<RegressionFailure, 0, UNBOUNDED>(regression_failure()))
-            .prop_map(|(base, head)| RegressionFailures { base, head }).boxed()
+        (
+            list::<RegressionFailure, 0, UNBOUNDED>(regression_failure()),
+            list::<RegressionFailure, 0, UNBOUNDED>(regression_failure()),
+        )
+            .prop_map(|(base, head)| RegressionFailures { base, head })
+            .boxed()
     }
 
     fn test_result() -> BoxedStrategy<TestResult> {
@@ -994,7 +1010,14 @@ mod typed {
             proptest::option::of(regression_failures()),
         )
             .prop_map(
-                |(test, (base, head, pre_existing, passed), message, head_forced, phases, regression_failures)| {
+                |(
+                    test,
+                    (base, head, pre_existing, passed),
+                    message,
+                    head_forced,
+                    phases,
+                    regression_failures,
+                )| {
                     TestResult {
                         test: Text::new(test).unwrap(),
                         base,
