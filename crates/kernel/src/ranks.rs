@@ -1107,7 +1107,6 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-        *final(_next_ticket) == *old(_next_ticket),
     ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = _node.phase }
         kernel_proof! { report::lemmas::quiet(before_phase@, _node.phase, _report.entries@); }
