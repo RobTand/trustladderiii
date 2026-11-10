@@ -968,7 +968,7 @@ pub(in super::super) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize,
         value = node;
         next_question = counter;
         if let Some(item) = tail.items[0] {
-            notes.push(item);
+            notes.items[1] = notes.items[0]; notes.items[0] = Some(item); notes.len += 1;
         }
     }
     kernel_proof! {
