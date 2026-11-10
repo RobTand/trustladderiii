@@ -7737,6 +7737,190 @@ fn maintenance_temp_backend(root: &Path) -> tl3_controller::adapters::run_backen
     .unwrap()
 }
 
+// Deliberately incomplete native cleanup is a retained failure, without invoking
+// a helper or reading runtime artifacts. Every path belongs to this temp journal.
+fn maintenance_temp_record(root: &Path, key: &str) -> api::durable::Record {
+    let request = Request {
+        repo: "fixture/repo".into(),
+        tree: TreeIdentity {
+            head: "a".repeat(40),
+            tree: "b".repeat(40),
+            input_digest: "c".repeat(64),
+            root: root.join("tree"),
+            manifest: root.join("input.json"),
+        },
+        suite: Suite::SelectedCases {
+            membership_digest: "d".repeat(64),
+        },
+        reservation: Reservation {
+            cpus: 1.try_into().unwrap(),
+            gpus: 0,
+            memory_bytes: 1024.try_into().unwrap(),
+            memory_guarantee: MemoryGuarantee::DeclaredOnly,
+            parallelism: 1.try_into().unwrap(),
+            native_threads: 1.try_into().unwrap(),
+        },
+        runner: RunnerIdentity {
+            executable: root.join("runner"),
+            executable_digest: "e".repeat(64),
+            arguments: vec![],
+            manifest: root.join("runner.json"),
+            manifest_digest: "f".repeat(64),
+        },
+        environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+        pass_flux_uri: false,
+        runtime: RuntimeIdentity {
+            manifest: root.join("runtime.json"),
+            manifest_digest: "a".repeat(64),
+            runtime: ExecutionRuntime::Native {
+                interpreter: "/usr/bin/python3".into(),
+            },
+            architecture: "x86_64".into(),
+            expected_image: None,
+            preflight: BlobRef {
+                path: root.join("preflight.json"),
+                sha256: "b".repeat(64),
+                bytes: 1,
+            },
+            host_dependency: None,
+            image: None,
+            cleanup: None,
+        },
+        scratch_root: root.join("scratch"),
+        no_progress_seconds: None,
+        walltime_seconds: 60.try_into().unwrap(),
+    };
+    api::durable::Record {
+        intent: SubmissionIntent {
+            backend: BackendTag::Flux,
+            instance: "fixture".into(),
+            uri: "local:///fixture".into(),
+            owner: "prior-owner".into(),
+            correlation: key.into(),
+            request_digest: digest(&serde_json::to_vec(&request).unwrap()),
+            output_dir: root.join("output").join(key),
+        },
+        request,
+        dispatched: true,
+        cleanup_retry_ms: Some(0),
+        held_submission_ms: None,
+        binding: None,
+        cancel_requested: false,
+        events: vec![],
+        terminal: None,
+        runtime_ownerships: vec![],
+        container_launches: Default::default(),
+        cleanup_evidence: Default::default(),
+        jobspec: None,
+        allocation_grant: None,
+        instance_observation: None,
+    }
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_elapsed_failures_do_not_starve_skipped_owner() {
+    cleanup_maintenance_elapsed_failure_fairness(true);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_oldest_retry_precedes_key_order() {
+    cleanup_maintenance_elapsed_failure_fairness(false);
+}
+
+fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path())
+        .with_cleanup_maintenance_limits(1, Duration::from_secs(5));
+    let journal = root.path().join("journal");
+    for key in ["a-owner", "b-owner"] {
+        let dir = journal.join(key);
+        fs::create_dir(&dir).unwrap();
+        api::durable::save(&dir, &maintenance_temp_record(root.path(), key)).unwrap();
+        api::durable::maintenance_failure(&journal, key, "persistent cleanup failure", 0).unwrap();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    assert_eq!(backend.cleanup_maintenance(now).unwrap().pending.len(), 2);
+    let failures = api::durable::maintenance_failures(&journal).unwrap();
+    assert_eq!(failures.iter().find(|f| f.key == "b-owner").unwrap().next_attempt_ms, 0);
+    if check_timer {
+        assert_eq!(
+            backend.next_cleanup_maintenance_ms().unwrap(), Some(0),
+            "skipped retained failure must remain immediately due"
+        );
+    }
+    // Even if the next Look is delayed until A is due again, B must go first.
+    backend.cleanup_maintenance(now + 300_000).unwrap();
+    let journal = api::durable::Journal::new(journal).unwrap();
+    for (key, due) in [("a-owner", now + 300_000), ("b-owner", now + 600_000)] {
+        let owner = Owner { owner: "prior-owner".into(), correlation: key.into() };
+        assert_eq!(
+            journal.load(&owner).unwrap().cleanup_retry_ms, Some(due),
+            "oldest due owner must be attempted within two capped passes"
+        );
+    }
+    for failure in api::durable::maintenance_failures(&root.path().join("journal")).unwrap() {
+        assert!(failure.message.contains("independent trusted runtime cleanup entry unavailable"));
+    }
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_budget_exhaustion_keeps_skipped_failure_due() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path())
+        .with_cleanup_maintenance_limits(4, Duration::from_secs(5));
+    let journal = root.path().join("journal");
+    for key in ["a-owner", "b-owner"] {
+        let mut record = maintenance_temp_record(root.path(), key);
+        record.dispatched = false;
+        record.cleanup_retry_ms = None;
+        record.held_submission_ms = Some(0);
+        let dir = journal.join(key);
+        fs::create_dir(&dir).unwrap();
+        api::durable::save(&dir, &record).unwrap();
+        api::durable::maintenance_failure(&journal, key, "persistent held failure", 0).unwrap();
+    }
+    let calls = std::cell::RefCell::new(Vec::new());
+    let authorize = |owner: &Owner| {
+        calls.borrow_mut().push(owner.correlation.clone());
+        // A real operation crosses the configured pass budget, without native I/O.
+        std::thread::sleep(Duration::from_millis(5_100));
+        Err(BackendError::invalid("fixture held authorization refused"))
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    backend.cleanup_maintenance_fenced(now, &authorize).unwrap();
+    assert_eq!(*calls.borrow(), vec!["a-owner"]);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(0),
+        "budget-skipped retained failure must remain immediately due");
+    backend.cleanup_maintenance_fenced(now + 300_000, &authorize).unwrap();
+    assert_eq!(*calls.borrow(), vec!["a-owner", "b-owner"],
+        "budget-limited passes must attempt the oldest owner within two passes");
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_failure_identity_must_match_recorded_key() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "corrupt-owner";
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    api::durable::maintenance_failure(&journal, key, "retained failure", 0).unwrap();
+    let failure = journal.join("maintenance-errors").join(format!("{}.json", digest(key.as_bytes())));
+    let mut bytes: Value = serde_json::from_slice(&fs::read(&failure).unwrap()).unwrap();
+    bytes["owner"] = json!({"owner":"different-owner", "correlation":"different-key"});
+    fs::write(&failure, serde_json::to_vec(&bytes).unwrap()).unwrap();
+    let report = backend.cleanup_maintenance(1).unwrap();
+    assert_eq!(report.pending, vec![Owner { owner: "maintenance-error".into(), correlation: key.into() }],
+        "a mismatched retained identity must not keep another owner's incident open");
+}
+
 #[test]
 #[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
 fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
@@ -7791,6 +7975,22 @@ fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
 #[test]
 #[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
 fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(0);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_held_only_busy_metadata_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(1);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_held_only_corrupt_failure_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(2);
+}
+
+fn cleanup_maintenance_prior_incident(source: u8) {
     struct PriorIncident {
         backend: CleanupMaintenanceExecutor,
         prior: Option<String>,
@@ -7837,14 +8037,30 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
         request_digest: "a".repeat(64),
         output_dir: root.path().join("unused-output"),
     };
-    let debt_dir = journal.join("cleanup-debt").join("a".repeat(64));
-    fs::create_dir_all(&debt_dir).unwrap();
-    let debt = debt_dir.join(format!("{key}.scratch"));
-    let retained = serde_json::to_vec(&intent).unwrap();
-    fs::write(&debt, &retained).unwrap();
     let dir = journal.join(key);
     fs::create_dir(&dir).unwrap();
-    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    let debt = journal.join("cleanup-debt").join("a".repeat(64)).join(format!("{key}.scratch"));
+    let retained = serde_json::to_vec(&intent).unwrap();
+    if source == 0 {
+        fs::create_dir_all(debt.parent().unwrap()).unwrap();
+        fs::write(&debt, &retained).unwrap();
+        fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    } else {
+        let mut record = maintenance_temp_record(root.path(), key);
+        record.dispatched = false;
+        record.cleanup_retry_ms = None;
+        record.held_submission_ms = Some(0);
+        api::durable::save(&dir, &record).unwrap();
+        if source == 1 {
+            // busy_owner fails before its identity lookup; state is still readable.
+            fs::write(journal.join("maintenance-busy"), b"not a directory").unwrap();
+        } else {
+            // Retain identity while state is readable, then lose state entirely.
+            api::durable::maintenance_failure(&journal, key, "held authorization refused", 0).unwrap();
+            fs::write(dir.join("state.json"), b"{truncated").unwrap();
+        }
+        assert!(!journal.join("cleanup-debt").exists());
+    }
     let lock = fs::OpenOptions::new()
         .create_new(true)
         .read(true)
@@ -7878,20 +8094,26 @@ fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
         }),
         "prior real incident must be open before the unreadable-owner pass"
     );
+    println!("ROUND7_IDENTITY_CONTROLLER_OPEN");
     for _ in 0..3 {
         controller.look_now().unwrap();
+        let snapshot = controller.snapshot().unwrap();
         assert!(
-            controller.snapshot().unwrap().rows.iter().any(|row| {
+            snapshot.rows.iter().any(|row| {
                 row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
             }),
             "unreadable locked identity must keep the prior real incident open"
         );
+        assert!(snapshot.rows.iter().filter(|row| row.table == "incidents" && row.value["open"] == true)
+            .all(|row| row.value["id"] == id ||
+                row.value["id"] == format!("runtime-cleanup:{}", digest(format!("PrismaBuild:maintenance-error:{key}").as_bytes()))),
+            "identity recovery must not keep an incident for a different owner");
     }
-    assert_eq!(
-        fs::read(&debt).unwrap(),
-        retained,
-        "identity recovery cannot change debt"
-    );
+    if source == 0 {
+        assert_eq!(fs::read(&debt).unwrap(), retained, "identity recovery cannot change debt");
+    } else {
+        assert!(!journal.join("cleanup-debt").exists());
+    }
     drop(controller);
     database.stop();
 }
