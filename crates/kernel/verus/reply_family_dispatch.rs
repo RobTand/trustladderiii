@@ -466,7 +466,7 @@ pub(super) proof fn plan_check_value_posts(n: Node, c: ReplyCtx)
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan_check(n)),
         reply_family_safety::rows(n, c, reply_family_values::plan_check(n)),
         (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::plan_check(n))) < distance(n)),
-        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint != n.footprint,
 {
     plan_check_bounds(n, c); plan_check_progress(n, c); plan_check_completion(n, c);
 }
