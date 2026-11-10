@@ -445,7 +445,7 @@ def _crate_test(kind, package, name, source, harness, options):
         if native.package_name() == "crates/kernel" and (kind == "lib" or source == "tests/proof_map.rs"):
             sources = sources + native.glob(["tests/mark_handled_equivalence/*.rs"])
         if source == "tests/proof_map.rs":
-            sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+            sources = sources + ["src/proofs.rs"] + native.glob(["verus/**"])
         if native.package_name() == "crates/kernel" and source == "tests/obligation_map.rs":
             sources = sources + ["tests/transition_covers.rs", "tests/fail_fast.rs", "tests/scenarios.rs", "tests/step_report.rs", "tests/dependency_safety.rs"]
         if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":

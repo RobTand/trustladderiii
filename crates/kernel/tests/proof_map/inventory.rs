@@ -20,9 +20,10 @@ impl Token {
 
 // Rust and Verus share lexical delimiters. Keep strings distinct from identifiers,
 // skip nested comments, and leave macro token trees visible except macro definitions.
-fn tokens(source: &str) -> Vec<Token> {
+fn located_tokens(source: &str) -> (Vec<Token>, Vec<usize>) {
     let bytes = source.as_bytes();
     let mut result = Vec::new();
+    let mut offsets = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i..].starts_with(b"//") {
@@ -47,6 +48,7 @@ fn tokens(source: &str) -> Vec<Token> {
         } else if bytes[i].is_ascii_whitespace() {
             i += 1;
         } else {
+            let offset = i;
             let raw_start = if bytes[i..].starts_with(b"br") {
                 i + 2
             } else if bytes[i] == b'r' {
@@ -81,7 +83,12 @@ fn tokens(source: &str) -> Vec<Token> {
             {
                 i += if bytes[i + 1] == b'\\' { 4 } else { 3 };
             } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' || bytes[i] >= 128 {
-                let start = i;
+                let start = if bytes[i..].starts_with(b"r#") {
+                    i += 2;
+                    i
+                } else {
+                    i
+                };
                 i += 1;
                 while i < bytes.len()
                     && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 128)
@@ -93,9 +100,16 @@ fn tokens(source: &str) -> Vec<Token> {
                 result.push(Token::Punct(bytes[i] as char));
                 i += 1;
             }
+            if offsets.len() < result.len() {
+                offsets.push(offset);
+            }
         }
     }
-    result
+    (result, offsets)
+}
+
+fn tokens(source: &str) -> Vec<Token> {
+    located_tokens(source).0
 }
 
 #[derive(Debug)]
@@ -445,7 +459,17 @@ struct Mount {
 }
 
 fn mounts(source: &str, module: &str) -> Vec<Mount> {
-    fn walk(ts: &[Token], module: &str, inline: &[String], result: &mut Vec<Mount>) {
+    all_mounts(source, module, false)
+}
+
+fn all_mounts(source: &str, module: &str, include_kani: bool) -> Vec<Mount> {
+    fn walk(
+        ts: &[Token],
+        module: &str,
+        inline: &[String],
+        include_kani: bool,
+        result: &mut Vec<Mount>,
+    ) {
         let mut i = 0;
         let mut path = None;
         let mut kani = false;
@@ -508,14 +532,14 @@ fn mounts(source: &str, module: &str) -> Vec<Mount> {
                         "unresolvable path attribute on inline module"
                     );
                     let end = closing(ts, i + 2);
-                    if !kani {
+                    if !kani || include_kani {
                         let mut nested = inline.to_vec();
                         nested.push(name.into());
-                        walk(&ts[i + 3..end], &child, &nested, result);
+                        walk(&ts[i + 3..end], &child, &nested, include_kani, result);
                     }
                     i = end + 1;
                 } else {
-                    if !kani {
+                    if !kani || include_kani {
                         result.push(Mount {
                             module: child,
                             inline: inline.to_vec(),
@@ -560,7 +584,7 @@ fn mounts(source: &str, module: &str) -> Vec<Mount> {
         assert!(path.is_none(), "unresolved module path attribute");
     }
     let mut result = Vec::new();
-    walk(&tokens(source), module, &[], &mut result);
+    walk(&tokens(source), module, &[], include_kani, &mut result);
     result
 }
 
@@ -574,6 +598,26 @@ fn normalized(path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+fn mount_candidates(file: &Path, mount: &Mount) -> Vec<PathBuf> {
+    let parent = file.parent().unwrap();
+    let nested: PathBuf = mount.inline.iter().collect();
+    if let Some(path) = &mount.path {
+        vec![normalized(&parent.join(&nested).join(path))]
+    } else {
+        let stem = file.file_stem().unwrap();
+        let directory = if matches!(stem.to_str(), Some("lib" | "mod")) {
+            parent.to_path_buf()
+        } else {
+            parent.join(stem)
+        };
+        let name = mount.name.as_ref().unwrap();
+        vec![
+            directory.join(&nested).join(format!("{name}.rs")),
+            directory.join(&nested).join(name).join("mod.rs"),
+        ]
+    }
 }
 
 fn collect(sources: &BTreeMap<PathBuf, String>, entry: &Path) -> Vec<Function> {
@@ -590,23 +634,7 @@ fn collect(sources: &BTreeMap<PathBuf, String>, entry: &Path) -> Vec<Function> {
         let source = sources.get(file).expect("unresolvable inventory source");
         result.extend(functions(source, module));
         for mount in mounts(source, module) {
-            let parent = file.parent().unwrap();
-            let nested: PathBuf = mount.inline.iter().collect();
-            let candidates = if let Some(path) = mount.path {
-                vec![normalized(&parent.join(&nested).join(path))]
-            } else {
-                let stem = file.file_stem().unwrap();
-                let directory = if matches!(stem.to_str(), Some("lib" | "mod")) {
-                    parent.to_path_buf()
-                } else {
-                    parent.join(stem)
-                };
-                let name = mount.name.unwrap();
-                vec![
-                    directory.join(&nested).join(format!("{name}.rs")),
-                    directory.join(&nested).join(name).join("mod.rs"),
-                ]
-            };
+            let candidates = mount_candidates(file, &mount);
             let resolved: Vec<_> = candidates
                 .iter()
                 .filter(|path| sources.contains_key(*path) || path.is_file())
@@ -983,4 +1011,326 @@ fn ambiguous_spec_headers_require_selectors() {
         "kernel",
     );
     assert!(fs[0].definition_only);
+}
+
+// The escape audit also treats imports and function values as trust sites: a
+// renamed assume/admit is just as trusted as a direct call.
+fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
+    fn group_end(ts: &[Token], start: usize) -> usize {
+        let close = match ts[start] {
+            Token::Punct('(') => ')',
+            Token::Punct('[') => ']',
+            Token::Punct('{') => '}',
+            _ => panic!("expected delimiter"),
+        };
+        let mut i = start + 1;
+        while i < ts.len() {
+            match ts[i] {
+                Token::Punct(c) if c == close => return i,
+                Token::Punct('(' | '[' | '{') => i = group_end(ts, i),
+                _ => {}
+            }
+            i += 1;
+        }
+        panic!("unterminated source group")
+    }
+
+    fn kani_item_end(ts: &[Token], mut i: usize) -> usize {
+        while i < ts.len() {
+            match ts[i] {
+                Token::Punct(';') => return i + 1,
+                Token::Punct('{') => return group_end(ts, i) + 1,
+                Token::Punct('(' | '[') => i = group_end(ts, i),
+                _ => {}
+            }
+            i += 1;
+        }
+        i
+    }
+
+    fn walk(
+        ts: &[Token],
+        start: usize,
+        end: usize,
+        kani_shadowed: bool,
+        hits: &mut Vec<(usize, &'static str)>,
+    ) {
+        let mut i = start;
+        while i < end {
+            if ts[i] == Token::Punct('#') {
+                let mut after = i;
+                let mut attributes = Vec::new();
+                let mut kani = false;
+                let mut inner = false;
+                while after < end && ts[after] == Token::Punct('#') {
+                    let mut open = after + 1;
+                    if ts.get(open) == Some(&Token::Punct('!')) {
+                        inner = true;
+                        open += 1;
+                    }
+                    if ts.get(open) != Some(&Token::Punct('[')) {
+                        break;
+                    }
+                    let close = group_end(ts, open);
+                    let attribute = &ts[open + 1..close];
+                    kani |= attribute
+                        == [
+                            Token::Name("cfg".into()),
+                            Token::Punct('('),
+                            Token::Name("kani".into()),
+                            Token::Punct(')'),
+                        ];
+                    attributes.push((open + 1, close));
+                    after = close + 1;
+                }
+                if kani {
+                    if inner {
+                        return;
+                    }
+                    i = kani_item_end(ts, after);
+                    continue;
+                }
+                for (a, b) in attributes {
+                    for (k, token) in ts.iter().enumerate().take(b).skip(a) {
+                        match token.name() {
+                            Some("external_body") => hits.push((k, "external_body")),
+                            Some("external") => hits.push((k, "external")),
+                            _ => {}
+                        }
+                    }
+                }
+                if after > i {
+                    // Still inspect other trust names inside attribute token trees.
+                    for k in i..after {
+                        if let Some(name @ ("admit" | "assume" | "assume_specification")) =
+                            ts[k].name()
+                        {
+                            hits.push((
+                                k,
+                                match name {
+                                    "admit" => "admit",
+                                    "assume" => "assume",
+                                    _ => "assume_specification",
+                                },
+                            ));
+                        }
+                    }
+                    i = after;
+                    continue;
+                }
+            }
+            if ts[i] == Token::Punct('{') {
+                let close = group_end(ts, i);
+                walk(ts, i + 1, close, kani_shadowed, hits);
+                i = close + 1;
+                continue;
+            }
+            let mut path_start = i;
+            while path_start >= 3
+                && ts[path_start - 1] == Token::Punct(':')
+                && ts[path_start - 2] == Token::Punct(':')
+                && ts[path_start - 3].name().is_some()
+            {
+                path_start -= 3;
+            }
+            match ts[i].name() {
+                Some("assume")
+                    if !kani_shadowed
+                        && ts[path_start].name() == Some("kani")
+                        && path_start < i => {}
+                Some("assume") => hits.push((i, "assume")),
+                Some("admit") => hits.push((i, "admit")),
+                Some("assume_specification") => hits.push((i, "assume_specification")),
+                Some("external_body" | "external")
+                    if ts[path_start].name() == Some("verifier")
+                        || (i >= 2
+                            && ts[i - 1] == Token::Punct('(')
+                            && ts[i - 2].name() == Some("verifier")) =>
+                {
+                    hits.push((
+                        i,
+                        if ts[i].name() == Some("external") {
+                            "external"
+                        } else {
+                            "external_body"
+                        },
+                    ));
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    let (ts, offsets) = located_tokens(source);
+    let kani_shadowed = ts.windows(2).any(|pair| {
+        pair[1].name() == Some("kani")
+            && matches!(
+                pair[0].name(),
+                Some("mod" | "as" | "type" | "struct" | "enum" | "union" | "trait")
+            )
+    }) || ts.iter().enumerate().any(|(i, t)| {
+        t.name() == Some("use")
+            && ts[i + 1..]
+                .iter()
+                .take_while(|t| **t != Token::Punct(';'))
+                .collect::<Vec<_>>()
+                .windows(2)
+                .any(|p| p[0].name() == Some("kani") && *p[1] != Token::Punct(':'))
+    });
+    let mut hits = Vec::new();
+    walk(&ts, 0, ts.len(), kani_shadowed, &mut hits);
+    hits.into_iter()
+        .map(|(i, marker)| {
+            (
+                source[..offsets[i]].bytes().filter(|&c| c == b'\n').count() + 1,
+                marker,
+            )
+        })
+        .collect()
+}
+
+fn trusted_marker_files(directory: &Path, result: &mut BTreeMap<PathBuf, String>) {
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            trusted_marker_files(&path, result);
+        } else {
+            result.insert(path.clone(), std::fs::read_to_string(path).unwrap());
+        }
+    }
+}
+
+// An out-of-line Kani module is excluded only if it has no non-Kani route.
+// Unmounted files remain scanned, including the outer Verus proof root.
+fn kani_only_files(sources: &BTreeMap<PathBuf, String>, root: &Path) -> BTreeSet<PathBuf> {
+    fn reachable(
+        sources: &BTreeMap<PathBuf, String>,
+        entry: &Path,
+        include_kani: bool,
+    ) -> BTreeSet<PathBuf> {
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![entry.to_path_buf()];
+        while let Some(file) = pending.pop() {
+            if !seen.insert(file.clone()) {
+                continue;
+            }
+            let Some(source) = sources.get(&file) else {
+                continue;
+            };
+            for mount in all_mounts(source, "kernel", include_kani) {
+                pending.extend(
+                    mount_candidates(&file, &mount)
+                        .into_iter()
+                        .filter(|p| sources.contains_key(p)),
+                );
+            }
+        }
+        seen
+    }
+    let mut all = BTreeSet::new();
+    let mut active = BTreeSet::new();
+    for entry in [root.join("src/lib.rs"), root.join("verus/progress.rs")] {
+        all.extend(reachable(sources, &entry, true));
+        active.extend(reachable(sources, &entry, false));
+    }
+    all.difference(&active).cloned().collect()
+}
+
+#[test]
+fn no_trusted_markers() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = BTreeMap::new();
+    trusted_marker_files(&root.join("src"), &mut sources);
+    trusted_marker_files(&root.join("verus"), &mut sources);
+    assert!(
+        sources.contains_key(&root.join("verus/progress.rs")),
+        "Verus root missing from test inputs"
+    );
+    let kani = kani_only_files(&sources, root);
+    let mut errors = Vec::new();
+    for (path, source) in &sources {
+        if kani.contains(path) {
+            continue;
+        }
+        for (line, marker) in trusted_markers(source) {
+            errors.push(format!(
+                "crates/kernel/{}:{line}: trusted marker {marker}",
+                path.strip_prefix(root).unwrap().display()
+            ));
+        }
+    }
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+    println!(
+        "Trusted-marker inventory: {} files, {} Kani-only files excluded",
+        sources.len(),
+        kani.len()
+    );
+}
+
+#[test]
+fn trusted_marker_detection_covers_attributes_calls_and_aliases() {
+    for marker in [
+        "#[verifier::external_body] fn f() {}",
+        "#[verifier(external_body)] fn f() {}",
+        "#[verifier::external] fn f() {}",
+        "#[cfg_attr(verus_keep_ghost, verifier(external_body))] fn f() {}",
+        "verifier(external_body)",
+        "admit()",
+        "vstd::prelude::admit()",
+        "assume(false)",
+        "builtin::assume(false)",
+        "assume_specification [f] () {}",
+        "use builtin::assume as trust;",
+        "r#assume(false)",
+    ] {
+        assert!(!trusted_markers(marker).is_empty(), "missed {marker}");
+    }
+    assert_eq!(
+        trusted_markers("// admit()\n\n#[verifier::external_body]\nfn f() {}"),
+        [(3, "external_body")]
+    );
+}
+
+#[test]
+fn trusted_marker_detection_ignores_noise_and_kani_but_not_neighbors() {
+    let source = r####"
+// #[verifier::external_body] admit()
+/* assume(false); /* #[verifier::external] */ assume_specification */
+let text = "admit() assume(false)";
+let raw = r###"#[verifier::external_body]"###;
+kani::assume(false);
+#[cfg(kani)] #[verifier::external_body] fn kani_only() { assume(false); admit(); }
+#[cfg(kani)] { assume(false); }
+#[allow(dead_code)] #[cfg(kani)] mod bounded { assume_specification [f] () {} }
+#[cfg(not(kani))] fn production() { assume(false); }
+"####;
+    assert_eq!(trusted_markers(source), [(10, "assume")]);
+    assert!(trusted_markers("#![cfg(kani)] #[verifier::external] fn f() { admit(); }").is_empty());
+    assert!(!trusted_markers("#[cfg(kani)] fn f() { admit(); } assume(false);").is_empty());
+    assert!(!trusted_markers("other::kani::assume(false);").is_empty());
+    assert!(!trusted_markers("mod kani {} kani::assume(false);").is_empty());
+}
+
+#[test]
+fn kani_file_exclusion_requires_an_exclusively_kani_route() {
+    let root = Path::new("/trusted-fixture");
+    let mut sources = BTreeMap::from([
+        (root.join("src/lib.rs"), "#[cfg(kani)] mod bounded;".into()),
+        (root.join("src/bounded.rs"), "mod nested; admit();".into()),
+        (root.join("src/bounded/nested.rs"), "assume(false);".into()),
+        (root.join("verus/unmounted.rs"), "admit();".into()),
+    ]);
+    assert_eq!(
+        kani_only_files(&sources, root),
+        BTreeSet::from([
+            root.join("src/bounded.rs"),
+            root.join("src/bounded/nested.rs")
+        ])
+    );
+    sources
+        .get_mut(&root.join("src/lib.rs"))
+        .unwrap()
+        .push_str(" #[path = \"bounded.rs\"] mod live;");
+    assert!(kani_only_files(&sources, root).is_empty());
 }
