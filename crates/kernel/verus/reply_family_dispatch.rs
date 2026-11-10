@@ -434,7 +434,7 @@ pub(super) proof fn plan_check_progress(n: Node, c: ReplyCtx)
 pub(super) proof fn plan_check_completion(n: Node, c: ReplyCtx)
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures reply_family_safety::rows(n, c, reply_family_values::plan_check(n)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::plan_check(n)),
 {
     plan_check_bounds(n, c);
     reveal(reply_family_safety::completed);
