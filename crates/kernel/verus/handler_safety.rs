@@ -116,6 +116,20 @@ pub(super) open spec fn answer_pair(b: Node, n: Node, fresh: bool, question: u64
         } else { b.credit.withheld })
 }
 
+/// R23 in plain form (CONTRACTS.md v2.6, form rule 1 amended): the withheld rule inside the opaque
+/// answer_pair, stated with open/closed dependency predicates only. answer_pair stays opaque.
+pub(super) proof fn answer_pair_withheld(b: Node, n: Node, fresh: bool, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires answer_pair(b, n, fresh, question, answer, table, node),
+    ensures n.credit.withheld == (if fresh && answer_withholds(b, question, answer) {
+            b.credit.withheld || (!dependencies::delivered(table, node) && !n.planning_started
+                && dependencies::early(n.phase) && n.credit.ready)
+        } else { b.credit.withheld }),
+{
+    reveal(answer_pair);
+    reveal(dependencies::withheld_after);
+}
+
 /// K5-L1: a command step keeps the dependency-credit flag.
 pub(super) proof fn step_withheld(b: Node, n: Node)
     requires command_step(b, n),

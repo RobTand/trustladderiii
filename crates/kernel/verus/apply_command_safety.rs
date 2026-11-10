@@ -588,8 +588,10 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
 }
 
 
-/// L1 re-stack: the node on_answer_exact leaves, i.e. the answered node and then L1's guarded
+/// L1 re-stack: the answered node and then L1's guarded
 /// withholding (withhold_dependency_credit's exact post, over the answered node's fields).
+/// Opaque; revealed by the held_* row lemmas only.
+#[verifier::opaque]
 pub(super) open spec fn held_answer(n: Node, nq: u64, id: u64, answer: Answer, table: Seq<Dependency>,
     node: NodeId) -> Node {
     let x = apply_answer_values::answered(n, nq, id, answer).0;
@@ -611,8 +613,6 @@ pub(super) proof fn answered_held_parts(b: Node, nq: u64, id: u64, question: u64
     table: Seq<Dependency>, node: NodeId)
     ensures answered_held(b, nq, id, question, answer, table, node)
             == held_answer(Node { last_cmd: id, ..b }, nq, question, answer, table, node),
-        handler_safety::answer_withholds(Node { last_cmd: id, ..b }, question, answer)
-            == handler_safety::answer_withholds(b, question, answer),
 {
     reveal(answered_held);
 }
@@ -634,6 +634,7 @@ pub(super) proof fn held_fields(b: Node, nq: u64, id: u64, question: u64, answer
         && distance(v) == distance(x) }),
 {
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     let x = apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0;
     if handler_safety::answer_withholds(Node { last_cmd: id, ..b }, question, answer) {
@@ -643,13 +644,16 @@ pub(super) proof fn held_fields(b: Node, nq: u64, id: u64, question: u64, answer
 }
 
 /// L1 re-stack: an answer that left the node unchanged withholds nothing (the guard needs
-/// AwaitingRob, which is not an early phase).
+/// AwaitingRob, which is not an early phase). Stated in the question clause's own form
+/// (`x == Node { last_cmd: x.last_cmd, ..b }`), so answer_dist needs no last_cmd row.
 pub(super) proof fn held_same(b: Node, nq: u64, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
-    ensures answered_node(b, nq, id, question, answer) == (Node { last_cmd: id, ..b })
+    ensures answered_node(b, nq, id, question, answer)
+            == (Node { last_cmd: answered_node(b, nq, id, question, answer).last_cmd, ..b })
         ==> answered_held(b, nq, id, question, answer, table, node) == answered_node(b, nq, id, question, answer),
 {
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     reveal(dependencies::withheld_after);
     let x = apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0;
@@ -677,6 +681,7 @@ pub(super) proof fn answer_held_rules(w: World, b: Node, id: u64, question: u64,
 {
     answer_node_rules(w, b, id, question, answer);
     reveal(answered_held);
+    reveal(held_answer);
     reveal(answered_node);
     let a = Node { last_cmd: id, ..b };
     let x = apply_answer_values::answered(a, w.next_question, question, answer).0;
@@ -698,12 +703,25 @@ pub(super) proof fn held_withheld(b: Node, nq: u64, id: u64, question: u64, answ
 {
     let a = Node { last_cmd: id, ..b };
     reveal(answered_held);
+    reveal(held_answer);
     apply_answer_safety::answer_step(a, nq, question, answer);
     handler_safety::step_withheld(a, apply_answer_values::answered(a, nq, question, answer).0);
 }
 
+/// L1 re-stack: answer_pair ignores last_cmd, and a fresh id keeps the guard.
+pub(super) proof fn answer_pair_last_cmd(b: Node, id: u64, n: Node, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::answer_pair(Node { last_cmd: id, ..b }, n, true, question, answer, table, node),
+        id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
+{
+    reveal(handler_safety::answer_pair);
+    reveal(handler_safety::command_step);
+}
+
 /// L1 re-stack (fix 2): the answer_pair row of the held node by L1's own route:
-/// answer_pair_intro over the plain held node n, then answer_pair_rebase to b.
+/// answer_pair_intro over the plain held node n, then the Node-equation-free rebase to b
+/// (design review 11-10: L1's answer_pair_rebase takes a whole-Node equation premise).
 pub(super) proof fn answer_pair_row(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires n == answered_held(b, nq, id, question, answer, table, node),
@@ -718,7 +736,7 @@ pub(super) proof fn answer_pair_row(b: Node, n: Node, nq: u64, id: u64, question
     held_fields(b, nq, id, question, answer, table, node);
     held_withheld(b, nq, id, question, answer, table, node);
     handler_safety::answer_pair_intro(a, x, n, question, answer, table, node);
-    handler_safety::answer_pair_rebase(b, a, n, id > b.last_cmd, question, answer, table, node);
+    answer_pair_last_cmd(b, id, n, question, answer, table, node);
 }
 
 /// Answer: the entry's equality and bound rows, verbatim over (b, n).
@@ -888,6 +906,139 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
     answer_held_rules(before, b, id, question, answer, after.dependencies@, NodeId(i as u64));
     if retirement::node_rules(before, b) {
         handler_safety::rules_world_update(before, after, b, n);
+    }
+}
+
+
+
+
+
+
+/// SPLIT: the consumers' frame lemma for answer_command (table frame from length + other-node frame).
+pub(super) proof fn answer_frame(before: World, after: World, i: usize)
+    requires i < before.nodes@.len(),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
+    ensures after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+{
+    assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
+}
+
+/// SPLIT: answer_pair carries across record_last_cmd. Premises are record_last_cmd's per-field posts
+/// (every field but last_cmd), verbatim, as r19_bridge's; no node equation in the caller.
+pub(super) proof fn answer_pair_fields(b: Node, a: Node, n: Node, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::answer_pair(b, a, true, question, answer, table, node),
+        id > b.last_cmd,
+        n.phase == a.phase,
+        n.pos == a.pos,
+        n.repo == a.repo,
+        n.footprint == a.footprint,
+        n.generation == a.generation,
+        n.next_seq == a.next_seq,
+        n.effect == a.effect,
+        n.run == a.run,
+        n.job == a.job,
+        n.pool == a.pool,
+        n.ticket == a.ticket,
+        n.holds == a.holds,
+        n.paused == a.paused,
+        n.question == a.question,
+        n.attempt == a.attempt,
+        n.round == a.round,
+        n.replanned == a.replanned,
+        n.plan_retries == a.plan_retries,
+        n.audit_rounds == a.audit_rounds,
+        n.early_end == a.early_end,
+        n.run_failures == a.run_failures,
+        n.run_incidents == a.run_incidents,
+        n.fx_failures == a.fx_failures,
+        n.fx_incidents == a.fx_incidents,
+        n.waiting_incident == a.waiting_incident,
+        n.incident_needs_rob == a.incident_needs_rob,
+        n.proposed == a.proposed,
+        n.adopted == a.adopted,
+        n.head == a.head,
+        n.checked == a.checked,
+        n.approved == a.approved,
+        n.merged == a.merged,
+        n.pr_open == a.pr_open,
+        n.had_pr == a.had_pr,
+        n.worktree == a.worktree,
+        n.rechecks == a.rechecks,
+        n.review_restarted == a.review_restarted,
+        n.credit == a.credit,
+        n.priority == a.priority,
+        n.review_stop == a.review_stop,
+        n.planning_started == a.planning_started,
+        n.waiting_prerequisite == a.waiting_prerequisite,
+    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
+{
+    assert(n == (Node { last_cmd: n.last_cmd, ..a }));
+    reveal(handler_safety::answer_pair);
+    let u = handler_safety::unwithheld(a, b.credit.withheld);
+    command_step_last_cmd(b, u, n.last_cmd);
+    assert(handler_safety::unwithheld(n, b.credit.withheld) == (Node { last_cmd: n.last_cmd, ..u }));
+}
+
+/// SPLIT: command_step does not read last_cmd.
+pub(super) proof fn command_step_last_cmd(b: Node, n: Node, id: u64)
+    requires handler_safety::command_step(b, n),
+    ensures handler_safety::command_step(b, (Node { last_cmd: id, ..n })),
+{
+    reveal(handler_safety::command_step);
+}
+
+/// SPLIT: L1's question clause across record_last_cmd. Premises are record_last_cmd's per-field posts
+/// (every field but last_cmd), verbatim.
+pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
+    requires
+        n.phase == a.phase,
+        n.pos == a.pos,
+        n.repo == a.repo,
+        n.footprint == a.footprint,
+        n.generation == a.generation,
+        n.next_seq == a.next_seq,
+        n.effect == a.effect,
+        n.run == a.run,
+        n.job == a.job,
+        n.pool == a.pool,
+        n.ticket == a.ticket,
+        n.holds == a.holds,
+        n.paused == a.paused,
+        n.question == a.question,
+        n.attempt == a.attempt,
+        n.round == a.round,
+        n.replanned == a.replanned,
+        n.plan_retries == a.plan_retries,
+        n.audit_rounds == a.audit_rounds,
+        n.early_end == a.early_end,
+        n.run_failures == a.run_failures,
+        n.run_incidents == a.run_incidents,
+        n.fx_failures == a.fx_failures,
+        n.fx_incidents == a.fx_incidents,
+        n.waiting_incident == a.waiting_incident,
+        n.incident_needs_rob == a.incident_needs_rob,
+        n.proposed == a.proposed,
+        n.adopted == a.adopted,
+        n.head == a.head,
+        n.checked == a.checked,
+        n.approved == a.approved,
+        n.merged == a.merged,
+        n.pr_open == a.pr_open,
+        n.had_pr == a.had_pr,
+        n.worktree == a.worktree,
+        n.rechecks == a.rechecks,
+        n.review_restarted == a.review_restarted,
+        n.credit == a.credit,
+        n.priority == a.priority,
+        n.review_stop == a.review_stop,
+        n.planning_started == a.planning_started,
+        n.waiting_prerequisite == a.waiting_prerequisite,
+    ensures n != (Node { last_cmd: n.last_cmd, ..b }) ==> a != b,
+{
+    if a == b {
+        assert(n == (Node { last_cmd: n.last_cmd, ..b }));
     }
 }
 

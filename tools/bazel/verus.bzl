@@ -879,6 +879,13 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_command_step_last_cmd": ("kernel::apply_command_safety#command_step_last_cmd", 1),
+            "commands_record_last_cmd": ("kernel::commands#record_last_cmd", 1),
+            "apply_command_safety_answer_pair_fields": ("kernel::apply_command_safety#answer_pair_fields", 1),
+            "apply_command_safety_r19_bridge": ("kernel::apply_command_safety#r19_bridge", 1),
+            "handler_safety_answer_pair_withheld": ("kernel::handler_safety#answer_pair_withheld", 1),
+            "apply_command_safety_answer_frame": ("kernel::apply_command_safety#answer_frame", 1),
+            "apply_command_safety_answer_pair_last_cmd": ("kernel::apply_command_safety#answer_pair_last_cmd", 1),
             "transition_safety_apply_exports_rows": ("kernel::transition_safety#apply_exports_rows", 1),
             "advance_family_post_step_rows_intro": ("kernel::advance_family_post#step_rows_intro", 1),
             "advance_family_frames": ("kernel::advance_family_frames", 1),
@@ -916,7 +923,6 @@ def verus_proofs():
             "apply_command_safety_stop_world": ("kernel::apply_command_safety#stop_world", 1),
             "apply_command_safety_change_request_world": ("kernel::apply_command_safety#change_request_world", 1),
             "apply_command_safety_pause_world": ("kernel::apply_command_safety#pause_world", 1),
-            "answers_on_answer_exact": ("kernel::answers#on_answer_exact", 1),
             "apply_command_safety_last_cmd_shift": ("kernel::apply_command_safety#last_cmd_shift", 1),
             "apply_command_safety_pause_facts": ("kernel::apply_command_safety#pause_facts", 1),
             "apply_command_safety_nodes_rewrite_frame": ("kernel::apply_command_safety#nodes_rewrite_frame", 1),

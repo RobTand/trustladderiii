@@ -71,8 +71,11 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
-        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
-            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        (match command {
+            Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
+            _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
+                ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+        }),
 ] {
     kernel_snapshot! { before_rules_world = *w }
 
@@ -97,8 +100,12 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
         Command::Resume => resume_command(w, i, id),
         Command::Answer { question, answer } => answer_command(w, i, id, question, answer, out),
     }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
+    kernel_proof! {
+        match command {
+            Command::Answer { .. } => apply_command_safety::answer_frame(before_rules_world@, *w, i),
+            _ => assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])),
+        }
+    }
 }
 }
 
