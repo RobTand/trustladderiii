@@ -6,6 +6,7 @@ assertion_hashes.json and sync.py. Worker A adds common/a_extra.rs only.
 An integration test starts with:
 
 ```rust
+extern crate alloc;
 #[path = "kani_scenarios/common/mod.rs"]
 mod common;
 use common::*;
@@ -15,7 +16,7 @@ The `use common::*` is required: the real footprint/query modules refer to
 crate-root World, FileId, EffectKind, Node and Phase. The scope compiles the
 production modules directly from src. kernel_scope.rs copies lib.rs with only
 module paths adjusted, crate-only documentation/attributes removed and unrelated
-unit-test modules omitted. assert_source_identity() fails if lib.rs drifts;
+unit-test modules omitted. AdvanceContext is public within this test scope so existing nested equivalence tests can resolve their crate-root import. assert_source_identity() fails if lib.rs drifts;
 sync.py refreshes that scope and the verbatim functions from proofs.rs.
 Production source is not edited or made public.
 

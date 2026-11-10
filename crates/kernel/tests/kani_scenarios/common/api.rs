@@ -65,8 +65,18 @@ pub fn node_fixture(phase: Phase, index: usize, random: u64) -> Node {
         n.pr_open = true; n.had_pr = true;
     }
     if phase == Phase::AwaitingRob {
-        n.question = Some(Question { id: 0, kind: QKind::CantMeet,
-            cont: Cont::Planning { must_split: index & 2 != 0 }, cost: 1, clarified: index & 4 != 0 });
+        let kinds = [QKind::AuditDisagreement, QKind::NeedsSplitting, QKind::CantMeet,
+            QKind::OutOfCredit, QKind::EffectFailed, QKind::CleanupFailed];
+        let conts = [Cont::Ingesting, Cont::Auditing, Cont::Unplanned,
+            Cont::Planning {must_split: false}, Cont::Planning {must_split: true},
+            Cont::Ready(Resume::Making), Cont::Ready(Resume::Checking), Cont::Ready(Resume::Reviewing),
+            Cont::Ready(Resume::Publishing), Cont::Ready(Resume::Rebasing),
+            Cont::Stop(Outcome::Merged), Cont::Stop(Outcome::Stopped), Cont::Stop(Outcome::Replaced),
+            Cont::Stop(Outcome::Duplicate), Cont::Stop(Outcome::AlreadyDone), Cont::Stop(Outcome::NotActionable),
+            Cont::Nowhere];
+        let kind = kinds[(index / conts.len()) % kinds.len()];
+        n.question = Some(Question { id: 0, kind, cont: conts[index % conts.len()],
+            cost: if matches!(kind, QKind::CantMeet | QKind::OutOfCredit) {1} else {0}, clarified: index & 4 != 0 });
         n.credit.ready = true;
     }
     match n.current() {
@@ -91,6 +101,11 @@ pub fn node_fixture(phase: Phase, index: usize, random: u64) -> Node {
             if phase.is_closed() { n.credit.merge_credited = true; }
         }
         if phase.is_closed() { n.effect = None; }
+    }
+    if index & 128 != 0 && !phase.holding() && !phase.is_closed() {
+        n.waiting_incident = true; n.incident_needs_rob = index & 256 != 0;
+        n.ticket = None; n.run = None; n.job = None; n.pool = false;
+        if let Some(effect) = &mut n.effect { effect.cancelling = true; }
     }
     n
 }

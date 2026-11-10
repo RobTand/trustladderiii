@@ -34,7 +34,7 @@ while i<len(lines):
   out.append(line);i+=1;continue
  line=re.sub(r'include!\("([^"]+)"\)',r'include!("../../../src/\1")',line)
  out.append(line);i+=1
-scope=''.join(out)
+scope=''.join(out).replace('struct AdvanceContext {', 'pub struct AdvanceContext {')
 (D/'kernel_scope.rs').write_text(scope)
 (D/'kernel_original.txt').write_text(root)
 names=['small_head','small','require_consistent','teardown','check_nodes','check_outputs','check_effect','rebase_progress_applies','check_apply','check_fail_fast','check_fail_fast_funding','check_fail_fast_diverts','check_advance','reply','waiting_dependency_world','check_dependency_delivery','check_dependency_waiting','check_dependency_cycles','check_dependency_registration','check_dependency_remove','ack','fact','command','answer','adoption_preparation','check_adoption_at_most_once','check_adoption_has_no_maker_credit','gate_world','gate_world_in_phase','gate_world_with_waiters','check_gate_grant','check_gate_planning','publishing_ci_transition','check_publishing_ci_tests','check_publishing_ci_earlier_step','check_gate_leaf_progress','spec_key','pool_world','check_pool_grant_order','check_pool_order_is_strict_priority']
