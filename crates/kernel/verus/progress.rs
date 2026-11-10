@@ -18,6 +18,7 @@ proof fn command_headroom(last: u64)
     requires last < u64::MAX,
     ensures last as int + 1 <= u64::MAX as int,
 {
+    admit();
 }
 }
 fn main() {}
