@@ -814,7 +814,7 @@ pub(super) fn ci_prefix_value(n: Node, infra: bool) -> (result: (Node, bool)) [
             value.effect = Some(ci_cancel_effect_value(effect));
         }
     }
-    (value, true)
+    (value, false)
 }
 }
 
