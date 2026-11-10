@@ -99,11 +99,11 @@ The helper performs this sequence:
    so newly started workers belong to that slice. Size the exact file inventory against the bounded
    action budget. Stop tl3d, prove `inactive`, explicitly stop and prove
    MLflow/status/console inactive, then stop Postgres and prove it inactive.
-3. Copy the complete cluster including WAL and declared tablespaces, controller
+3. Recheck worker quiescence. Copy the complete cluster including WAL and declared tablespaces, controller
    journals, attempts and private config. Hash every file and record ownership,
    modes, directories and scope. Verify the copied inventory against the original pre-copy hashes,
    then flush the copy before any reset. Undeclared symlinks and special files refuse.
-4. Recheck worker quiescence before the cold copy and again before file reset.
+4. Recheck worker quiescence before file reset.
    Empty only the manifest's supported adapter directories. Keep the cold copy
    as diagnostic evidence. Install each selected release binary from one hash-checked buffer, then verify
    the installed checksums before executing any selected binary.
