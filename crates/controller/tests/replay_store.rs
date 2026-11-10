@@ -38,13 +38,25 @@ fn replay_requires_initialized_unchanged_world_identity() {
     let mut reader = Reader::open(&settings).unwrap();
     replay::run(&mut reader, Some("fixture:identity-anchor")).unwrap();
     for (name, value, expected) in [
-        ("rewritten", Some(identity.clone()), "changed after initialization"),
-        ("changed", Some(json!(if identity == json!("0".repeat(32)) {
-            "1".repeat(32)
-        } else {
-            "0".repeat(32)
-        })), "changed after initialization"),
-        ("malformed", Some(json!("invalid")), "stored world id must be 128 bits of lowercase hex"),
+        (
+            "rewritten",
+            Some(identity.clone()),
+            "changed after initialization",
+        ),
+        (
+            "changed",
+            Some(json!(if identity == json!("0".repeat(32)) {
+                "1".repeat(32)
+            } else {
+                "0".repeat(32)
+            })),
+            "changed after initialization",
+        ),
+        (
+            "malformed",
+            Some(json!("invalid")),
+            "stored world id must be 128 bits of lowercase hex",
+        ),
         ("missing", None, "stored world id is missing"),
     ] {
         let snapshot = store.load().unwrap();

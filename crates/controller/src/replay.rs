@@ -198,11 +198,15 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
         .ok_or_else(|| Error::Replay("no replayable kernel snapshot in selected history".into()))?;
     crate::snapshot::world_id(&snapshot)
         .map_err(|error| Error::Replay(format!("event {last_key}: world identity: {error}")))?;
-    let initialized = tl3_store::find_event_revision(&mut tx, "controller:init")?
-        .ok_or_else(|| Error::Replay("missing controller initialization for world identity".into()))?;
-    if snapshot.rows.iter().any(|row| {
-        row.table == "kernel" && row.id == "world_id" && row.version != initialized
-    }) {
+    let initialized =
+        tl3_store::find_event_revision(&mut tx, "controller:init")?.ok_or_else(|| {
+            Error::Replay("missing controller initialization for world identity".into())
+        })?;
+    if snapshot
+        .rows
+        .iter()
+        .any(|row| row.table == "kernel" && row.id == "world_id" && row.version != initialized)
+    {
         return Err(Error::Replay(format!(
             "event {last_key}: world identity changed after initialization"
         )));
