@@ -16,6 +16,7 @@ use vstd::prelude::*;
         },
     )
 )]
+#[verifier::external_body]
 pub(crate) fn validate_raw_event(event: Event) -> Result<Event, &'static str> {
     match event {
         Event::Command { .. } => {
