@@ -4,52 +4,26 @@ use super::*;
 
 verus! {
 
-/// Reveal of `command_frames::command_frame_rows`: the four frozen framing rows.
+/// Reveal of `command_frames::command_frame_rows` (v2.56): its two parts. Rows then come from
+/// `stop_frame_reveal::stop_post_rows` (R24) / `stop_frame_reveal::stop_frames_reveal` and `command_owner_rows_reveal`.
 pub(super) proof fn command_frame_rows_reveal(b: Node, n: Node, id: u64, command: Command)
     requires command_frames::command_frame_rows(b, n, id, command),
     ensures
-        (command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
-            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
-            && n.holds == b.holds && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.next_seq == b.next_seq && n.last_cmd == id
-            && (match b.effect {
-                None => n.effect.is_none(),
-                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
-                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
-            }),
-        (command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-            ==> n.run_failures == b.run_failures && n.run_incidents == b.run_incidents
-                && n.fx_failures == b.fx_failures && n.fx_incidents == b.fx_incidents
-                && n.credit == b.credit && n.generation as int == b.generation as int + 1,
-        (command is Stop && id > b.last_cmd && b.phase is Stopping)
-            ==> n.phase == b.phase && n.pos == b.pos && n.holds == b.holds
-                && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open
-                && n.worktree == b.worktree && n.effect == b.effect
-                && n.next_seq == b.next_seq && n.question == b.question,
-        ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
-            ==> dependencies::owner_waiting_ok(n),
-        (command is Pause) ==> dependencies::same_endpoint(b, n),
+        (command is Stop && id > b.last_cmd) ==> stop_frames::stop_post(b, n, id),
+        command_frames::command_owner_rows(b, n, command),
 {
     reveal(command_frames::command_frame_rows);
 }
 
-/// E11.1 REQ R24 carrier (CONTRACTS.md v2.45, form rule 1; owner apply): a fresh Stop of a live item, R24's rows
-/// exactly as frozen, over the input node `b` and the literal written node `n`.
-pub(super) proof fn r24_stop(b: Node, n: Node, id: u64)
-    requires command_frames::command_frame_rows(b, n, id, Command::Stop),
-    ensures (id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
-            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
-            && n.holds == b.holds && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.next_seq == b.next_seq && n.last_cmd == id
-            && (match b.effect {
-                None => n.effect.is_none(),
-                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
-                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
-            }),
+/// Reveal of `command_frames::command_owner_rows`: N4a and N4b, one ensures each, verbatim.
+pub(super) proof fn command_owner_rows_reveal(b: Node, n: Node, command: Command)
+    requires command_frames::command_owner_rows(b, n, command),
+    ensures
+        ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
+            ==> dependencies::owner_waiting_ok(n),
+        (command is Pause) ==> dependencies::same_endpoint(b, n),
 {
-    reveal(command_frames::command_frame_rows);
+    reveal(command_frames::command_owner_rows);
 }
 
 /// Projection of `command_frames::command_rows` for one Command event: every row as its own ensures.

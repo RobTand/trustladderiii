@@ -21,9 +21,9 @@ pub(super) fn stop(w: &mut World, Ghost(k): Ghost<int>)
     let mut out = Outbox::new();
     command_dispatch::on_command(w, 1, 1, Command::Stop, &mut out);
     proof {
-        // Integration (CONTRACTS.md v2.35): the v2.7 Stop rows are behind the opaque command_frame_rows.
-        command_frames_reveal::command_frame_rows_reveal(before.nodes@[1], w.nodes@[1], 1, Command::Stop);
-        command_frames_reveal::r24_stop(before.nodes@[1], w.nodes@[1], 1);
+        // v2.56: on_command proves stop_post; R24's rows and the v2.7 rows come back through apply's reveals.
+        stop_frame_reveal::stop_post_rows(before.nodes@[1], w.nodes@[1], 1);
+        stop_frame_reveal::stop_frames_reveal(before.nodes@[1], w.nodes@[1]);
         liveness_bounds::event_accepts(before, *w, 1);
         reveal(small);
         liveness_bounds::context_frame(before, *w, 1, k, 2);

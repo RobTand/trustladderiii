@@ -6,64 +6,42 @@ use super::*;
 
 verus! {
 
-/// E2 framing (rule 2): R24's Stop rows (v2.45), N4a, N4b, E11.1b and the v2.7 Stop counter/credit/generation rows, verbatim as frozen,
-/// over the input node `b` and the literal written node `n`. R24's rows stay direct on `on_command`.
+/// E2.N4 part (CONTRACTS.md v2.56, form rule 2; owner apply): N4a and N4b, verbatim as frozen (v2.20), over the
+/// input node `b` and the literal written node `n`. Apply builds N4a/N4b to this name.
 #[verifier::opaque]
-pub(super) open spec fn command_frame_rows(b: Node, n: Node, id: u64, command: Command) -> bool {
-    // E11.1 REQ R24 (v2.45, rule 1: hash-frozen body; carrier command_frames_reveal::r24_stop).
-    ((command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
-            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
-            && n.holds == b.holds && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.next_seq == b.next_seq && n.last_cmd == id
-            && (match b.effect {
-                None => n.effect.is_none(),
-                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
-                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
-            }))
-    // E11.1 framing (v2.7): a fresh Stop of a live item keeps the counters and credit; generation + 1 exactly.
-    && ((command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.run_failures == b.run_failures && n.run_incidents == b.run_incidents
-            && n.fx_failures == b.fx_failures && n.fx_incidents == b.fx_incidents
-            && n.credit == b.credit && n.generation as int == b.generation as int + 1)
-    // E11.1b: a fresh Stop of an item already stopping keeps its teardown state.
-    && ((command is Stop && id > b.last_cmd && b.phase is Stopping)
-        ==> n.phase == b.phase && n.pos == b.pos && n.holds == b.holds
-            && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open
-            && n.worktree == b.worktree && n.effect == b.effect
-            && n.next_seq == b.next_seq && n.question == b.question)
+pub(super) open spec fn command_owner_rows(b: Node, n: Node, command: Command) -> bool {
     // E2.N4a: Stop and ChangeRequest keep a waiting owner's rows.
-    && (((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
+    (((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
         ==> dependencies::owner_waiting_ok(n))
     // E2.N4b: Pause keeps the dependency endpoint.
     && ((command is Pause) ==> dependencies::same_endpoint(b, n))
 }
 
-/// Intro for `command_frame_rows` (apply's producers end with this call).
-pub(super) proof fn command_frame_rows_intro(b: Node, n: Node, id: u64, command: Command)
+/// Intro for `command_owner_rows` (apply's producers end with this call).
+pub(super) proof fn command_owner_rows_intro(b: Node, n: Node, command: Command)
     requires
-        (command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
-            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
-            && n.holds == b.holds && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.next_seq == b.next_seq && n.last_cmd == id
-            && (match b.effect {
-                None => n.effect.is_none(),
-                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
-                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
-            }),
-        (command is Stop && id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-            ==> n.run_failures == b.run_failures && n.run_incidents == b.run_incidents
-                && n.fx_failures == b.fx_failures && n.fx_incidents == b.fx_incidents
-                && n.credit == b.credit && n.generation as int == b.generation as int + 1,
-        (command is Stop && id > b.last_cmd && b.phase is Stopping)
-            ==> n.phase == b.phase && n.pos == b.pos && n.holds == b.holds
-                && n.pool == b.pool && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open
-                && n.worktree == b.worktree && n.effect == b.effect
-                && n.next_seq == b.next_seq && n.question == b.question,
         ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
             ==> dependencies::owner_waiting_ok(n),
         (command is Pause) ==> dependencies::same_endpoint(b, n),
+    ensures command_owner_rows(b, n, command),
+{
+    reveal(command_owner_rows);
+}
+
+/// E2 command framing (v2.56, reconciled to apply's E11.1 proof): the Stop part is apply's proven atom
+/// `stop_frames::stop_post` (R24's rows, the v2.7 rows and E11.1b; carrier `stop_frame_reveal::stop_post_rows`),
+/// the N4 part is `command_owner_rows`. The outer interface consumers and E1.5 name.
+#[verifier::opaque]
+pub(super) open spec fn command_frame_rows(b: Node, n: Node, id: u64, command: Command) -> bool {
+    ((command is Stop && id > b.last_cmd) ==> stop_frames::stop_post(b, n, id))
+    && command_owner_rows(b, n, command)
+}
+
+/// Intro for `command_frame_rows` from its two parts.
+pub(super) proof fn command_frame_rows_intro(b: Node, n: Node, id: u64, command: Command)
+    requires
+        (command is Stop && id > b.last_cmd) ==> stop_frames::stop_post(b, n, id),
+        command_owner_rows(b, n, command),
     ensures command_frame_rows(b, n, id, command),
 {
     reveal(command_frame_rows);
