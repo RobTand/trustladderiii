@@ -66,7 +66,7 @@ pub(super) proof fn bpr_equiv(b: Node, e: InFlight, nq: u64, i: int, ob: Outbox,
 /// appends nothing: it never asks Rob or raises an incident.
 pub(super) proof fn bpr_open_pr_quiet(b: Node, n: Node, e: InFlight, nq: u64, nqa: u64, i: int,
     ob: Outbox, oa: Outbox)
-    requires !e.cancelling, e.kind == EffectKind::OpenPr,
+    requires !e.cancelling, true,
         acknowledgements::ack_live_post(b, n, e, Ack::BodyPolicyRefused, nq, nqa, i, ob, oa),
     ensures oa == ob, nqa == nq, n.review_stop == Some(ReviewStop::PublicationBody),
 {
