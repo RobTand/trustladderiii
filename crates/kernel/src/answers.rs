@@ -319,89 +319,25 @@ pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
         nq < u64::MAX,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
 ] {
-
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
     let Some(q) = m.question else {
-
         kernel_proof! { reveal(apply_answer_values::answered); }
         return (m, nq, note);
     };
     if q.id != id {
-
         kernel_proof! { reveal(apply_answer_values::answered); }
         return (m, nq, note); // an answer to a question that is no longer open
     }
     match m.phase {
-        Phase::Stopping(_) => match answer {
-            Answer::Retry => {
-                m.question = None;
-
-            }
-            Answer::MarkHandled => {
-                m.question = None;
-
-                mark_handled(&mut m);
-
-            }
-            _ => {  }
-        },
-        Phase::AwaitingRob => {
-            if answer == Answer::Unclear {
-                // One clarifying question. After that the question just stays open.
-                if !q.clarified {
-                    let (m1, nq1, x) = clarify_node(m, nq, q);
-                    m = m1;
-                    nq = nq1;
-                    note = Some(x);
-                }
-
-                kernel_proof! { reveal(apply_answer_values::answered); }
-                return (m, nq, note);
-            }
-            if !allowed(q.kind, answer) {
-
-                kernel_proof! { reveal(apply_answer_values::answered); }
-                return (m, nq, note);
-            }
-            match answer {
-                Answer::Continue => {
-                    let (m1, x) = go_on_exact(m, q, 0);
-                    m = m1;
-                    note = x;
-
-                }
-                Answer::TryAgain => {
-                    let (m1, x) = retry_answer_exact(m, q);
-                    m = m1;
-                    note = x;
-
-                }
-                Answer::AddCredit(k) => {
-                    let (m1, x) = go_on_exact(m, q, k);
-                    m = m1;
-                    note = x;
-
-                }
-                Answer::ChangeRequest => {
-
-                    m = enter_stopping_v(m, Outcome::Replaced);
-
-                }
-                Answer::Stop => {
-
-                    m = enter_stopping_v(m, Outcome::Stopped);
-
-                }
-                _ => {  }
-            }
+        Phase::Stopping(_) => cleanup_answer_v(m, nq, id, answer),
+        Phase::AwaitingRob => awaiting_answer_v(m, nq, id, answer, q),
+        _ => {
+            kernel_proof! { reveal(apply_answer_values::answered); }
+            (m, nq, note)
         }
-        _ => {  }
     }
-    kernel_proof! { reveal(apply_answer_values::answered); }
-    (m, nq, note)
-
 }
 }
 
@@ -424,5 +360,91 @@ fn cleanup_handled_v(n: Node) -> (result: Node) [
     m.question = None;
     mark_handled(&mut m);
     m
+}
+}
+
+kernel_fn! {
+/// Cleanup-question answers (answer_value's Stopping arm, unchanged statements).
+fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires n.phase is Stopping,
+        match n.question { Some(q) => q.id == id, None => false },
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+    let mut m = n;
+    let note: Option<Notice> = None;
+    match answer {
+        Answer::Retry => {
+            m.question = None;
+        }
+        Answer::MarkHandled => {
+            m = cleanup_handled_v(m);
+        }
+        _ => {}
+    }
+    kernel_proof! { reveal(apply_answer_values::answered); }
+    (m, nq, note)
+}
+}
+
+kernel_fn! {
+/// Rob's answers to an open question (answer_value's AwaitingRob arm, unchanged
+/// statements, with the arm's own early returns).
+fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n),
+        arithmetic_consistent(n),
+        nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    if answer == Answer::Unclear {
+        // One clarifying question. After that the question just stays open.
+        if !q.clarified {
+            let (m1, nq1, x) = clarify_node(m, nq, q);
+            m = m1;
+            nq = nq1;
+            note = Some(x);
+        }
+        kernel_proof! { reveal(apply_answer_values::answered); }
+        return (m, nq, note);
+    }
+    if !allowed(q.kind, answer) {
+        kernel_proof! {
+            assert(!apply_answer_values::permits(q.kind, answer));
+            reveal(apply_answer_values::answered);
+        }
+        return (m, nq, note);
+    }
+    kernel_proof! { assert(apply_answer_values::permits(q.kind, answer)); }
+    match answer {
+        Answer::Continue => {
+            let (m1, x) = go_on_exact(m, q, 0);
+            m = m1;
+            note = x;
+        }
+        Answer::TryAgain => {
+            let (m1, x) = retry_answer_exact(m, q);
+            m = m1;
+            note = x;
+        }
+        Answer::AddCredit(k) => {
+            let (m1, x) = go_on_exact(m, q, k);
+            m = m1;
+            note = x;
+        }
+        Answer::ChangeRequest => {
+            m = stopped_v(m, Outcome::Replaced);
+        }
+        Answer::Stop => {
+            m = stopped_v(m, Outcome::Stopped);
+        }
+        _ => {}
+    }
+    kernel_proof! { reveal(apply_answer_values::answered); }
+    (m, nq, note)
 }
 }
