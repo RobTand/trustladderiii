@@ -106,7 +106,7 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
     kernel_proof! { ack_result_properties(*w, i as int, e, ack, *out, node, next_question, output); }
     w.nodes[i] = node;
     w.next_question = next_question;
-    *out = output;
+    *out = output; w.nodes[i].review_stop = Some(ReviewStop::ChecksFailed);
 }
 }
 
