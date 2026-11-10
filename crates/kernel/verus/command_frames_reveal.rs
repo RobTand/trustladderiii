@@ -1,30 +1,9 @@
-//! K5 consumer reveals (CONTRACTS.md v2.35, form rule 2): the only place `command_frames`' opaque predicates are
-//! opened for consumers. Each ensures is one frozen row, verbatim (rule 7).
+//! K5 consumer reveals (CONTRACTS.md v2.35, v2.61, form rule 2): the projection of E1.5's opaque `command_rows`.
+//! The Stop and N4 rows behind it come back through apply's `stop_frame_reveal` (`stop_post_rows`, `stop_frames_reveal`,
+//! `n4_frames_reveal`). Each ensures is one frozen row, verbatim (rule 7).
 use super::*;
 
 verus! {
-
-/// Reveal of `command_frames::command_frame_rows` (v2.56): its two parts. Rows then come from
-/// `stop_frame_reveal::stop_post_rows` (R24) / `stop_frame_reveal::stop_frames_reveal` and `command_owner_rows_reveal`.
-pub(super) proof fn command_frame_rows_reveal(b: Node, n: Node, id: u64, command: Command)
-    requires command_frames::command_frame_rows(b, n, id, command),
-    ensures
-        (command is Stop && id > b.last_cmd) ==> stop_frames::stop_post(b, n, id),
-        command_frames::command_owner_rows(b, n, command),
-{
-    reveal(command_frames::command_frame_rows);
-}
-
-/// Reveal of `command_frames::command_owner_rows`: N4a and N4b, one ensures each, verbatim.
-pub(super) proof fn command_owner_rows_reveal(b: Node, n: Node, command: Command)
-    requires command_frames::command_owner_rows(b, n, command),
-    ensures
-        ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(b))
-            ==> dependencies::owner_waiting_ok(n),
-        (command is Pause) ==> dependencies::same_endpoint(b, n),
-{
-    reveal(command_frames::command_owner_rows);
-}
 
 /// Projection of `command_frames::command_rows` for one Command event: every row as its own ensures.
 pub(super) proof fn command_rows_project(before: World, after: World, node: NodeId, id: u64, command: Command)
@@ -49,8 +28,12 @@ pub(super) proof fn command_rows_project(before: World, after: World, node: Node
                 id > before.nodes@[node.0 as int].last_cmd, question, answer, after.dependencies@, node),
             _ => handler_safety::command_step(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
         }),
-        node.0 < before.nodes@.len() ==> (retirement::node_rules(before, before.nodes@[node.0 as int])
-            ==> command_frames::command_frame_rows(before.nodes@[node.0 as int], after.nodes@[node.0 as int], id, command)),
+        node.0 < before.nodes@.len() ==> ((command is Stop && id > before.nodes@[node.0 as int].last_cmd)
+            ==> stop_frames::stop_post(before.nodes@[node.0 as int], after.nodes@[node.0 as int], id)),
+        node.0 < before.nodes@.len() ==> ((command is Stop || command is ChangeRequest)
+            ==> stop_frames::owner_waiting_kept(before.nodes@[node.0 as int], after.nodes@[node.0 as int])),
+        node.0 < before.nodes@.len() ==> ((command is Pause)
+            ==> stop_frames::endpoint_kept(before.nodes@[node.0 as int], after.nodes@[node.0 as int])),
         node.0 < before.nodes@.len() ==> (match command {
             Command::Answer { .. } => retirement::node_rules(before, before.nodes@[node.0 as int])
                 ==> (after.nodes@[node.0 as int].incident_needs_rob ==> after.nodes@[node.0 as int].waiting_incident),
