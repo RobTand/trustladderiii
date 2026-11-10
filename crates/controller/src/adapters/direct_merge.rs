@@ -1363,7 +1363,9 @@ fn merge_evidence(
         })
         .and_then(|row| row.value["base_sha"].as_str())
         .map(str::to_owned);
-    let merge_base = pull.base.sha.clone();
+    let merge_base = base_before_merge
+        .clone()
+        .unwrap_or_else(|| pull.base.sha.clone());
     let base_moved = checked_base.as_ref().map(|base| base != &merge_base);
     let parents: Vec<_> = commit
         .parents

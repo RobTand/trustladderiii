@@ -1803,6 +1803,7 @@ fn m4_lost_reply_retains_landed_commit_and_saved_base() {
     assert_eq!(record["landed"]["commit"], "dddddddddddddddddddddddddddddddddddddddd");
     assert_eq!(record["landed"]["parent_matches"], true);
     assert!(record["landed"]["base_before_merge"].is_string());
+    assert_eq!(record["landed"]["merge_base"], record["landed"]["base_before_merge"]);
     assert!(m4_notices(&mut controller).is_empty());
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
