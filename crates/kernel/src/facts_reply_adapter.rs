@@ -23,7 +23,7 @@ pub(super) fn resolve_reply_value(change: ReplyChange, nq: u64, i: usize)
     ensures result.0 == reply_family_values::finish(nq, change),
         result.1 == reply_family_values::next_question(nq, change),
         result.2.len == match reply_family_values::item(nq, change) {
-            Some(_) => 1, None => 0,
+            Some(_) => 1usize, None => 0usize,
         },
         result.2.items@ =~= reply_items(nq, change, i),
 ] {

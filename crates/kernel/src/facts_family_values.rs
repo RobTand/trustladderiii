@@ -879,7 +879,7 @@ pub(crate) fn failed_round_unreported_value(n: Node, nq: u64, fast: bool,
             reply_family_values::failed_round(n, fast, step)),
         result.2.len == match reply_family_values::item(nq,
             reply_family_values::failed_round(n, fast, step)) {
-            Some(_) => 1, None => 0,
+            Some(_) => 1usize, None => 0usize,
         },
         result.2.items@ =~= facts_reply_adapter::reply_items(nq,
             reply_family_values::failed_round(n, fast, step), i),
@@ -905,7 +905,7 @@ pub(crate) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
     ensures result.0 == reply_family_values::finish(nq, ci_change(n, fast, infra)),
         result.1 == reply_family_values::next_question(nq, ci_change(n, fast, infra)),
         result.2.len == match reply_family_values::item(nq, ci_change(n, fast, infra)) {
-            Some(_) => 1, None => 0,
+            Some(_) => 1usize, None => 0usize,
         },
         result.2.items@ =~= facts_reply_adapter::reply_items(nq, ci_change(n, fast, infra), i),
         notices(result.2, i, 1),

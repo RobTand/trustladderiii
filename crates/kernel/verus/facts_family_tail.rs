@@ -219,7 +219,7 @@ pub(super) proof fn failed_round_frame(n: Node, nq: u64, fast: bool, step: Revie
 }
 
 pub(super) proof fn reply_notice_bound(notes: Outbox, nq: u64, change: ReplyChange, i: usize)
-    requires notes.len == match reply_family_values::item(nq, change) { Some(_) => 1, None => 0 },
+    requires notes.len == match reply_family_values::item(nq, change) { Some(_) => 1usize, None => 0usize },
         notes.items@ =~= facts_reply_adapter::reply_items(nq, change, i),
     ensures facts_family_values::notices(notes, i, 1),
 {
