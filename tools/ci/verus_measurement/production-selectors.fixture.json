@@ -1,10 +1,90 @@
 {
-  "source_head": "6dee1ed480d6bf6f9fca17a812ff22e4f8bae44f",
+  "source_head": "ebd5984bc22ffcdc20a8cb619288b311da9d57a1",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "a2e757e041b911d3bc689c261176757ed2f9f5a686335d7f1405ab2132fe514b",
-  "groups": 575,
-  "obligations": 779,
+  "source_sha256": "721b84830ed5de16a5db9a4934e910a6466f454ed2b3be2a0abf3927f7d245af",
+  "groups": 591,
+  "obligations": 795,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_clear_node_rules",
+      "selector": "kernel::acknowledgement_resources#confirmed_clear_node_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_clear_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_clear_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_cancel_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_cancel_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_resources_node_rules",
+      "selector": "kernel::acknowledgement_resources#confirmed_resources_node_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_resources_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_resources_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_step_node_rules",
+      "selector": "kernel::acknowledgement_resources#confirmed_step_node_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_agenda_teardown_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_agenda_teardown_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_agenda_step_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_agenda_step_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_agenda_other_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_agenda_other_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_value_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_value_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_live_question",
+      "selector": "kernel::acknowledgement_resources#confirmed_live_question",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_cancel_forward",
+      "selector": "kernel::acknowledgement_resources#confirmed_cancel_forward",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_value_forward",
+      "selector": "kernel::acknowledgement_resources#confirmed_value_forward",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_irrelevant_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_irrelevant_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_ack_rows",
+      "selector": "kernel::acknowledgement_resources#confirmed_ack_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgement_resources_confirmed_node_rules",
+      "selector": "kernel::acknowledgement_resources#confirmed_node_rules",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_acknowledgements_ack_permanent_rows",
       "selector": "kernel::acknowledgements#ack_permanent_rows",
