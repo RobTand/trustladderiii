@@ -30,6 +30,13 @@ scratch leaf, progress journal, no-progress allowance and native thread limits.
 Without them the harness refuses to run. Python 3.14 and pytest must be in the image.
 The trusted outer process needs Python 3.14 and Git.
 
+Test and generator process trees receive no `FLUX_*` environment names, including
+names injected by Flux or defined in an image. For PrismaQuant,
+`pass_flux_uri = true` forwards exactly the executing job's stock-injected
+`FLUX_URI`. The launcher validates its `local://` absolute path before forwarding
+it and binds the socket directory into a container. TL3's supervisor keeps its
+own Flux environment for allocation, reporting, and cleanup.
+
 `run_checks` returns immutable `Result` objects. Each contains the check's name,
 kind, verdict, and each named test's base outcome, head outcome, pre-existing
 failure flag, pass flag, and an optional failure message capped at 1,000 characters.
