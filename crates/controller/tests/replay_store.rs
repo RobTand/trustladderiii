@@ -15,7 +15,11 @@ fn replay_requires_initialized_unchanged_world_identity() {
         adapters::simulation(root.path()).unwrap(),
         Bootstrap {
             operations: None,
-            repos: vec![],
+            repos: vec![Repository {
+                owner: "owner".into(),
+                name: "sandbox".into(),
+                installation: 1,
+            }],
             rob: 42,
             slots: 1,
             pool: 2,
