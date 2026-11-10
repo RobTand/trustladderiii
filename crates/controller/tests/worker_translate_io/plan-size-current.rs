@@ -87,4 +87,3 @@ fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
         .map(|ch| if ch.is_ascii() { 1 } else { 6 * ch.len_utf16() })
         .sum())
 }
-
