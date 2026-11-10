@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::acknowledgements::ack_retry_emit_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_retry_incident_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_view": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_abandon_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_cancel_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -765,6 +767,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "acknowledgements_ack_retry_emit_value": ("kernel::acknowledgements#ack_retry_emit_value", 1),
+            "acknowledgements_ack_retry_incident_value": ("kernel::acknowledgements#ack_retry_incident_value", 1),
             "acknowledgements_ack_phase_value": ("kernel::acknowledgements#ack_phase_value", 1),
             "acknowledgements_ack_abandon_value": ("kernel::acknowledgements#ack_abandon_value", 1),
             "acknowledgements_ack_append_value": ("kernel::acknowledgements#ack_append_value", 1),
