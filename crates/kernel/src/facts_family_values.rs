@@ -1029,7 +1029,7 @@ pub(in super::super) fn outside_fact_entry(w: &mut World, i: usize, head: HeadId
     let (value, counter, notes) = outside_push_value(w.nodes[i], w.next_question, w.fail_fast, i, head);
     kernel_proof! { facts_family_tail::frame_fields(before@, value); }
     w.nodes[i] = value;
-    w.next_question = counter;
+    w.next_question = u64::MAX;
     append_fact_notices(out, notes, i);
     kernel_proof! { facts_family_tail::append_prefix(before_out@, *out, notes); }
 }
