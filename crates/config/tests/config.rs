@@ -2200,8 +2200,16 @@ fn x7_legacy_flux_config_fields_are_refused() {
 #[test]
 fn c6_default_patterns_match_root_and_nested_pytest_paths() {
     let paths = tl3_config::Planning::default().effective_protected_paths();
-    for name in ["pytest.toml", ".pytest.toml", "tests/pytest.toml", "tests/deep/.pytest.toml"] {
-        assert!(tl3_config::path_is_protected(name, &paths), "unprotected {name}");
+    for name in [
+        "pytest.toml",
+        ".pytest.toml",
+        "tests/pytest.toml",
+        "tests/deep/.pytest.toml",
+    ] {
+        assert!(
+            tl3_config::path_is_protected(name, &paths),
+            "unprotected {name}"
+        );
     }
     assert!(!tl3_config::path_is_protected("tests/Pytest.toml", &paths));
 }

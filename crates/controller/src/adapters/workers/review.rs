@@ -222,16 +222,27 @@ pub(super) fn inputs(
         inputs["generation_evidence"] = receipt.clone();
     }
     let patterns = [
-        "*requirements*.txt", "requirements*.in", "constraints*.txt", "constraints*.in",
-        "uv.lock", "setup.py", "setup.cfg", "poetry.lock", "Pipfile*", "MANIFEST.in",
+        "*requirements*.txt",
+        "requirements*.in",
+        "constraints*.txt",
+        "constraints*.in",
+        "uv.lock",
+        "setup.py",
+        "setup.cfg",
+        "poetry.lock",
+        "Pipfile*",
+        "MANIFEST.in",
         "pyproject.toml",
-    ].map(String::from);
+    ]
+    .map(String::from);
     let mut dependencies: Vec<_> = repository
         .changed_paths_since_merge_base(&run.base_sha, &head_id)?
         .into_iter()
-        .filter(|path| path.file_name().is_some_and(|name| {
-            tl3_config::path_is_protected(&name.to_string_lossy(), &patterns)
-        }))
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                tl3_config::path_is_protected(&name.to_string_lossy(), &patterns)
+            })
+        })
         .map(|path| path.to_string_lossy().into_owned())
         .collect();
     dependencies.sort();
