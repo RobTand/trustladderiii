@@ -643,10 +643,12 @@ pub(super) proof fn held_fields(b: Node, nq: u64, id: u64, question: u64, answer
 }
 
 /// L1 re-stack: an answer that left the node unchanged withholds nothing (the guard needs
-/// AwaitingRob, which is not an early phase).
+/// AwaitingRob, which is not an early phase). Stated in the question clause's own form
+/// (`x == Node { last_cmd: x.last_cmd, ..b }`), so answer_dist needs no last_cmd row.
 pub(super) proof fn held_same(b: Node, nq: u64, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
-    ensures answered_node(b, nq, id, question, answer) == (Node { last_cmd: id, ..b })
+    ensures answered_node(b, nq, id, question, answer)
+            == (Node { last_cmd: answered_node(b, nq, id, question, answer).last_cmd, ..b })
         ==> answered_held(b, nq, id, question, answer, table, node) == answered_node(b, nq, id, question, answer),
 {
     reveal(answered_held);
