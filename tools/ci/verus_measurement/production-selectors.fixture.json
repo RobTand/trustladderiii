@@ -1,10 +1,95 @@
 {
-  "source_head": "f8ecd6c2bee0a3860c3d9847c2e1ee591b311ae7",
+  "source_head": "79af45be45d1c20b723de349d8089b9e6019a7fd",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "11420761d9e6bdc00936d52e4b372c5f4ef2a081614bcaa184a41fe823b85aa0",
-  "groups": 502,
-  "obligations": 700,
+  "source_sha256": "399755f1f3c1c8f21048090ccb40c016a94d9205654c327bcc1ec3d515a991ac",
+  "groups": 519,
+  "obligations": 717,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_handler_safety_clarified_rules_v",
+      "selector": "kernel::handler_safety#clarified_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_cleanup_handled_rules_v",
+      "selector": "kernel::handler_safety#cleanup_handled_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_clear_cleanup_rules_v",
+      "selector": "kernel::handler_safety#clear_cleanup_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_continued_rules_v",
+      "selector": "kernel::handler_safety#continued_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_field_rules_v",
+      "selector": "kernel::handler_safety#field_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_handled_rules_v",
+      "selector": "kernel::handler_safety#handled_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_initial_rules",
+      "selector": "kernel::handler_safety#initial_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_last_cmd_rules_v",
+      "selector": "kernel::handler_safety#last_cmd_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_retry_rules_v",
+      "selector": "kernel::handler_safety#retry_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_rules_from_v",
+      "selector": "kernel::handler_safety#rules_from_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_rules_to_v",
+      "selector": "kernel::handler_safety#rules_to_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_rules_v_nq_grow",
+      "selector": "kernel::handler_safety#rules_v_nq_grow",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_rules_v_without_question",
+      "selector": "kernel::handler_safety#rules_v_without_question",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_rules_world_update",
+      "selector": "kernel::handler_safety#rules_world_update",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_stopped_no_grants",
+      "selector": "kernel::handler_safety#stopped_no_grants",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_stopped_rules_v",
+      "selector": "kernel::handler_safety#stopped_rules_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_new_safety_adoption_c2",
+      "selector": "kernel::apply_new_safety#adoption_c2",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_events_apply_new_request",
       "selector": "kernel::events#apply_new_request",
