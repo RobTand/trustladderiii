@@ -46,7 +46,11 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
 ] {
     kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
+        kernel_snapshot! { before_resources_call = *m }
         mark_handled_resources(m, kind);
+        kernel_proof! {
+            node_frame_groups_reveal::mark_handled_resources_rows(before_resources_call@, *m, kind);
+        }
         m.pos += 1;
     }
     kernel_proof! {
@@ -64,29 +68,17 @@ kernel_fn! {
 /// Resource writes used when marking a teardown item handled.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
-    ensures final(m).phase == old(m).phase,
-        final(m).repo == old(m).repo,
-        final(m).footprint == old(m).footprint,
-        final(m).generation == old(m).generation,
-        final(m).next_seq == old(m).next_seq,
-        final(m).effect == old(m).effect,
-        final(m).ticket == old(m).ticket,
-        final(m).holds == old(m).holds,
-        final(m).paused == old(m).paused,
-        final(m).last_cmd == old(m).last_cmd,
-        final(m).question == old(m).question,
-        final(m).waiting_incident == old(m).waiting_incident,
-        final(m).credit == old(m).credit,
-        final(m).pos == old(m).pos,
+    ensures node_frame_groups::ops_same(*old(m), *final(m)),
+        node_frame_groups::ledger_same(*old(m), *final(m)),
+        node_frame_groups::counters_same(*old(m), *final(m)),
+        node_frame_groups::pr_same(*old(m), *final(m)),
         final(m).run == if kind == EffectKind::StopRun { None } else { old(m).run },
         final(m).pool == if kind == EffectKind::StopRun { false } else { old(m).pool },
         final(m).job == if kind == EffectKind::WithdrawJob { None } else { old(m).job },
         final(m).pr_open == if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
         final(m).worktree == if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
-        final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
-        final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
-        final(m).replanned == old(m).replanned,
 ] {
+    kernel_snapshot! { before_resources = *m }
     match kind {
         EffectKind::StopRun => {
             m.run = None;
@@ -96,6 +88,9 @@ fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::ClosePr => m.pr_open = false,
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
+    }
+    kernel_proof! {
+        node_frame_groups_reveal::frame_intro(before_resources@, *m);
     }
 }
 }
