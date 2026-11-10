@@ -1,10 +1,125 @@
 {
-  "source_head": "4ff3e720b730b5444298faf8030cdc31724345ad",
+  "source_head": "21fb7941e96292fa60ddb9d94dfbb2ea0e24a98e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "0e4ca57e63c8dbe8f479f043be8c6f06f5721d152ee45997f5af7fa543827ff3",
-  "groups": 482,
-  "obligations": 680,
+  "source_sha256": "fbdae831cb03811769ab50fbc7b9e604fde4ace33b595c72d80a60524e478f2b",
+  "groups": 505,
+  "obligations": 704,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_rows",
+      "selector": "kernel::facts_family_values#value_node_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_value",
+      "selector": "kernel::facts_family_values#ordinary_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_fact_value",
+      "selector": "kernel::facts_family_values#merge_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_append_fact_notices",
+      "selector": "kernel::facts_family_values#append_fact_notices",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_entry",
+      "selector": "kernel::facts_family_values#ordinary_fact_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_dependency_entry",
+      "selector": "kernel::facts_family_values#fact_dependency_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_on_fact_rows",
+      "selector": "kernel::facts_family_lemmas#on_fact_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_notices_outputs",
+      "selector": "kernel::facts_family_lemmas#notices_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_selected_apply_rows",
+      "selector": "kernel::facts_family_lemmas#selected_apply_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_unchanged_node",
+      "selector": "kernel::transition_safety#unchanged_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_lift_apply",
+      "selector": "kernel::transition_safety#lift_apply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_lift_apply_none",
+      "selector": "kernel::transition_safety#lift_apply_none",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_distance_last_cmd",
+      "selector": "kernel::handler_safety#distance_last_cmd",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_stop_command",
+      "selector": "kernel::commands#stop_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_change_request_command",
+      "selector": "kernel::commands#change_request_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_pause_command",
+      "selector": "kernel::commands#pause_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_resume_command",
+      "selector": "kernel::commands#resume_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_answer_command",
+      "selector": "kernel::commands#answer_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_on_answer",
+      "selector": "kernel::answers#on_answer",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_checked_node_ok",
+      "selector": "kernel::handler_safety#checked_node_ok",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_notice_only_effects",
+      "selector": "kernel::transition_safety#notice_only_effects",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_set_phase_v",
+      "selector": "kernel::continuations#set_phase_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_enter_stopping_v",
+      "selector": "kernel::continuations#enter_stopping_v",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_internal_safety",
       "selector": "kernel::internal_safety",
@@ -1417,12 +1532,12 @@
     },
     {
       "target": "//crates/kernel:verus_commands",
-      "selector": "kernel::commands",
+      "selector": "kernel::commands#on_command",
       "expected": 1
     },
     {
       "target": "//crates/kernel:verus_answers",
-      "selector": "kernel::answers#on_answer",
+      "selector": "kernel::answers#answer_node",
       "expected": 1
     },
     {
