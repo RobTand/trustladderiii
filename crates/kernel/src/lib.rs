@@ -1554,8 +1554,20 @@ kernel_fn! {
     }
 }
 
+kernel_fn! {
 impl World {
-    pub fn new(gates: &[u8], pool_capacity: u8) -> World {
+    pub fn new(gates: &[u8], pool_capacity: u8) -> (result: World) [
+        ensures (gates@.len() > 0
+            && (forall|g: int| 0 <= g < gates@.len() ==> gates@[g] > 0)
+            && pool_capacity > 0) ==> checking::accepted(result),
+    ] proof [
+        assert forall|w: World| w.nodes@.len() == 0 && w.dependencies@.len() == 0
+            && w.gates@.len() > 0
+            && (forall|g: int| 0 <= g < w.gates@.len() ==> w.gates@[g].w > 0)
+            && w.pool_capacity > 0 implies checking::accepted(w) by {
+            dependency_start_exports::new_world_accepted(w);
+        }
+    ] {
         World {
             nodes: Vec::new(),
             gates: gates.iter().map(|&w| Gate { w }).collect(),
@@ -1567,7 +1579,10 @@ impl World {
             fail_fast: false,
         }
     }
+}
+}
 
+impl World {
     kernel_fn! {
     /// #771: external node IDs name existing storage or are ignored.
     fn index(&self, node: NodeId) -> (result: Option<usize>) [
