@@ -2114,41 +2114,6 @@ struct AdvanceContext {
 }
 
 kernel_fn! {
-    /// #806: the existing pause transition, returning its node and changed flag.
-    fn pause_node_value(n: Node) -> (result: (Node, bool)) [
-        requires holding(n.phase) ==> n.generation < u64::MAX,
-        ensures if holding(n.phase) {
-            result.1 && result.0 == retirement::phased(Node { holds: false, ..n },
-                Phase::Ready(match n.phase {
-                    Phase::Making => Resume::Making,
-                    Phase::Checking => Resume::Checking,
-                    Phase::Reviewing => Resume::Reviewing,
-                    Phase::Publishing => Resume::Publishing,
-                    _ => Resume::Rebasing,
-                }))
-        } else {
-            result.1 == n.ticket.is_some()
-                && result.0 == (Node { ticket: None, ..n })
-        },
-    ] {
-        let mut m = n;
-        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
-        if m.phase.holding() {
-            if let Some(r) = m.phase.resume() {
-                m.holds = false;
-                set_phase(&mut m, Phase::Ready(r));
-                return (m, true);
-            }
-        }
-        if m.ticket.is_some() {
-            m.ticket = None;
-            return (m, true);
-        }
-        (m, false)
-    }
-}
-
-kernel_fn! {
         /// A paused leaf starts nothing new. In a holding phase it gives back its slot
         /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
         // The pinned Verus frontend requires nested if-let instead of let chains.
@@ -2180,9 +2145,19 @@ kernel_fn! {
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
-        let (n, changed) = pause_node_value(*m);
-        *m = n;
-        changed
+        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
+        if m.phase.holding() {
+            if let Some(r) = m.phase.resume() {
+                m.holds = false;
+                set_phase(m, Phase::Ready(r));
+                return true;
+            }
+        }
+        if m.ticket.is_some() {
+            m.ticket = None;
+            return true;
+        }
+        false
     }
 }
 
