@@ -388,7 +388,7 @@ pub(super) proof fn confirmed_ack_rows(b: Node, n: Node, e: InFlight, ack: Ack, 
 
 pub(super) proof fn confirmed_node_rules(w: World, b: Node, n: Node)
     requires retirement::node_rules(w, b), confirmed_rules_transfer(b, n),
-    ensures retirement::node_rules(w, n),
+    ensures !retirement::node_rules(w, n),
 {
     reveal(confirmed_rules_transfer);
 }
