@@ -189,25 +189,15 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
             && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
             && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
-            // E11.1 framing (v2.7): counters, credit and generation for the next calls' preconditions.
-            && final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
-            && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit && final(w).nodes@[i as int].generation as int == old(w).nodes@[i as int].generation as int + 1
             && (match old(w).nodes@[i as int].effect {
                 None => final(w).nodes@[i as int].effect.is_none(),
                 Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
                     && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
             }),
-    // E11.1b framing: a fresh Stop of an item already stopping keeps its teardown state.
-    (command is Stop && id > old(w).nodes@[i as int].last_cmd && old(w).nodes@[i as int].phase is Stopping)
-        ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds
-            && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree && final(w).nodes@[i as int].effect == old(w).nodes@[i as int].effect
-            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
-    // E2.N4 (v2.20, framing, owner apply): checker-update rows for R28 (apply_n4_dependencies' last conjunct).
-    ((command is Stop || command is ChangeRequest) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
-        ==> dependencies::owner_waiting_ok(final(w).nodes@[i as int]),
-    (command is Pause) ==> dependencies::same_endpoint(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-    // E2.N4c (Answer) REMOVED v2.34: FALSE AS FROZEN (apply counterexample, AddCredit k>=2 from an AwaitingRob
-    // OutOfCredit owner continuing into Ingesting), pending the checker's reachability test and the lead's ruling.
+    // E2 framing (v2.35, form rule 2, owner apply): the v2.7 Stop counter/credit/generation rows, E11.1b,
+    // E2.N4a and E2.N4b behind one opaque predicate; consumers use command_frames_reveal. E2.N4c stays off
+    // (FALSE AS FROZEN, v2.34).
+    command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
 ] {
     on_command_proved(w, i, id, command, out)
 }

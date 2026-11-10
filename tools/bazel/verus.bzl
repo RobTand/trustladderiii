@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::command_frames::command_frame_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::command_frames::command_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_incident_count_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_retry_restart_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::ack_retry_plain_incident_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -912,6 +914,10 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "command_frames_command_frame_rows_intro": ("kernel::command_frames#command_frame_rows_intro", 1),
+            "command_frames_command_rows_intro": ("kernel::command_frames#command_rows_intro", 1),
+            "command_frames_reveal_command_frame_rows_reveal": ("kernel::command_frames_reveal#command_frame_rows_reveal", 1),
+            "command_frames_reveal_command_rows_project": ("kernel::command_frames_reveal#command_rows_project", 1),
             "acknowledgements_ack_permanent_rows": ("kernel::acknowledgements#ack_permanent_rows", 1),
             "acknowledgements_ack_incident_count": ("kernel::acknowledgements#ack_incident_count", 1),
             "acknowledgements_ack_retry_restart_value": ("kernel::acknowledgements#ack_retry_restart_value", 1),

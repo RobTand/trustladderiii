@@ -44,6 +44,9 @@ mod dependency_retirement;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/dependency_owner_exports.rs"]
 mod dependency_owner_exports;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/command_frames_reveal.rs"]
+mod command_frames_reveal;
 mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
@@ -2399,6 +2402,9 @@ mod progress_unplanned_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/special_safety.rs"]
 mod special_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/command_frames.rs"]
+mod command_frames;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_composition.rs"]
 mod transition_composition;
