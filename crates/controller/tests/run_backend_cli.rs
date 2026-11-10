@@ -2760,6 +2760,8 @@ if facts['schema']=='tl3.job_unit_absence_input.v1':
 owned=facts['ownership']
 root=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']
 (root/('helper-called-'+owned['execution'])).write_text(json.dumps(facts))
+with (root/('helper-attempts-'+owned['execution'])).open('a') as attempts:
+    attempts.write('attempt\n')
 control=root/('helper-control-'+owned['execution']+'.json')
 control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
@@ -6634,4 +6636,45 @@ fn cleanup_maintenance_never_resubmits_possible_native_acceptance() {
     assert!(matches!(backend.submit(f.request.clone(), f.intent.clone()).unwrap(), Submission::Unknown { .. }));
     let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
     assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 1, "{calls}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_restart_recovers_durable_attempt_and_serializes_owner() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let first = f.cleanup_execution("restart-first", 'd');
+    let second = f.cleanup_execution("restart-second", 'e');
+    f.cleanup_facts(&first, false);
+    f.cleanup_facts(&second, false);
+    f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
+    let due = maintenance_due(&f);
+    // The first pass crashes after advancing its durable claim. A fresh backend
+    // must retain that deadline and retry every remaining execution when due.
+    let path = f.options.journal_root.join(&f.intent.correlation).join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    state["cleanup_retry_ms"] = json!(due + 300_000);
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    f.cleanup_facts(&first, true);
+    f.cleanup_facts(&second, true);
+    f.cleanup_control(&first.execution, 1);
+    fs::remove_file(f.intent.output_dir.join(format!("helper-called-{}", first.execution))).unwrap();
+    let backend = maintenance_backend(&f);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(due + 300_000));
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(!f.intent.output_dir.join(format!("helper-called-{}", first.execution)).exists());
+    let one = backend.clone();
+    let two = backend.clone();
+    let worker = std::thread::spawn(move || one.cleanup_maintenance(due + 300_000).unwrap());
+    wait_until("maintenance helper started", Duration::from_secs(5), || f.intent.output_dir.join(format!("helper-called-{}", first.execution)).exists());
+    two.cleanup_maintenance(due + 300_000).unwrap();
+    worker.join().unwrap();
+    assert!(cleanup_debts(&f).is_empty());
+    assert_eq!(f.state().cleanup_evidence.len(), 2);
+    for owned in [&first, &second] {
+        let attempts = fs::read_to_string(f.intent.output_dir.join(format!("helper-attempts-{}", owned.execution))).unwrap();
+        assert_eq!(attempts.lines().count(), 2, "one failed attempt and one retry per execution");
+    }
+    assert!(maintenance_backend(&f).next_cleanup_maintenance_ms().unwrap().is_none());
 }
