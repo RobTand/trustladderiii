@@ -1,10 +1,25 @@
 {
-  "source_head": "b0e5e81371ff4c1c51bdf5dca227ad2ef554bbd4",
+  "source_head": "446c6db163effa7f13ac90348f461efff87338f3",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4392d4f4436ec40e04236cb3ea2b7262441c97351726aba6f47db7b172c7c11d",
-  "groups": 927,
-  "obligations": 1135,
+  "source_sha256": "c82846a59dd089a568d329bc4991c42c9d7db671f7755a2fb3659a28792d8862",
+  "groups": 930,
+  "obligations": 1138,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_answers_answer_write",
+      "selector": "kernel::answers#answer_write",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_rows_withheld_after",
+      "selector": "kernel::answer_owner#owner_rows_withheld_after",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_rules_withhold_same_node",
+      "selector": "kernel::answer_rules#withhold_same_node",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
       "selector": "kernel::event_frames#out_of_range_stutter_intro",
