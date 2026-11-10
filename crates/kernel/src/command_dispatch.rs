@@ -1,5 +1,5 @@
 //! The command dispatcher on_command, in its own module so that its SMT context holds only
-//! what it calls (the five command entries and the stutter lemma), not what the entries call.
+//! what it calls (the five command entries), not what the entries call.
 use super::*;
 
 kernel_fn! {
@@ -71,13 +71,14 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
-    kernel_snapshot! { before_out = *out }
 
     if id <= w.nodes[i].last_cmd {
+        kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
-            apply_command_safety::command_stutter(before_rules_world@, *w, i, id, command,
-                before_out@, *out);
+            handler_safety::same_step(w.nodes@[i as int]);
+            handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
         }
+        kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
         return; // a repeated command
     }
     match command {
@@ -87,5 +88,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         Command::Resume => resume_command(w, i, id),
         Command::Answer { question, answer } => answer_command(w, i, id, question, answer, out),
     }
+
+    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }
