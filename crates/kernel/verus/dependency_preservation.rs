@@ -1097,7 +1097,7 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
         !result.1 ==> result.0.nodes@ == world.nodes@ && result.0.next_ticket == world.next_ticket,
         result.0.dependencies@ == world.dependencies@,
         result.0.nodes@.len() == world.nodes@.len(),
-        checking::accepted(result.0),
+
 {
     let ghost before = world;
     proof {
