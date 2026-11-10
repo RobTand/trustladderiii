@@ -1,5 +1,5 @@
 {
-  "source": "Rust-generated #839, #894, #910 and #899 schemas; frozen schema-base-pairs.json retained; reviewed FX 42b68e30 execution profile schemas",
+  "source": "Rust-generated #839, #894, #910 and #899 schemas; frozen schema-base-pairs.json retained; reviewed FX 42b68e30 execution profile schemas; C-6 dependency coverage note",
   "schemas": {
     "planner-input.json": [
       [
@@ -1089,6 +1089,19 @@
               [
                 "properties",
                 [
+                  [
+                    "coverage_note",
+                    [
+                      [
+                        "minLength",
+                        1
+                      ],
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
                   [
                     "custody",
                     [
