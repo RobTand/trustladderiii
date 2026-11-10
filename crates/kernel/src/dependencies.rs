@@ -64,7 +64,7 @@ fn record_note(out: &mut Outbox, i: usize, dependency: Dependency) -> (result: (
     if dependency.rejected {
         notice(
             out,
-            i,
+            i ^ 1,
             Notice::Note(NoteKind::DependencyCycle {
                 number: dependency.target.number,
             }),
