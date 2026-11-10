@@ -350,7 +350,7 @@ fn run_failed_incident(n: Node) -> (result: ReplyChange) [
     let mut node = n;
     // Every second failure raises an incident. Only Rob can clear the second one.
     node.run_failures = 0;
-    node.run_incidents = incident_count(node.run_incidents);
+    node.run_incidents = node.run_incidents;
     let needs_rob = node.run_incidents >= 2;
     ReplyChange::Incident { node, needs_rob }
 }
