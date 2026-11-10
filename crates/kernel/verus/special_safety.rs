@@ -226,9 +226,9 @@ mod pause_assembly {
                 let i = node.0 as usize;
                 on_command(&mut w, i, id, Command::Pause, &mut out);
                 proof {
+                    checking::accepted_node(before, i as int);
                     command_frames_reveal::command_frame_rows_reveal(
                         before.nodes@[i as int], w.nodes@[i as int], id, Command::Pause);
-                    checking::accepted_node(before, i as int);
                     pause_projection::pause_dependencies(before, w, i as int);
                     internal_safety::apply_step_preserves_accepted(before, w, i as int);
                 }
@@ -269,9 +269,9 @@ mod stop_assembly {
                 }
                 on_command(&mut w, i, id, Command::Stop, &mut out);
                 proof {
+                    checking::accepted_node(before, i as int);
                     command_frames_reveal::command_frame_rows_reveal(
                         before.nodes@[i as int], w.nodes@[i as int], id, Command::Stop);
-                    checking::accepted_node(before, i as int);
                     handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
                     internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
                 }
@@ -312,9 +312,9 @@ mod change_assembly {
                 }
                 on_command(&mut w, i, id, Command::ChangeRequest, &mut out);
                 proof {
+                    checking::accepted_node(before, i as int);
                     command_frames_reveal::command_frame_rows_reveal(
                         before.nodes@[i as int], w.nodes@[i as int], id, Command::ChangeRequest);
-                    checking::accepted_node(before, i as int);
                     handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
                     internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
                 }
@@ -597,6 +597,7 @@ mod aggregate_command_assembly {
                 Event::Command { node, id, command } => {
                     command_frames_reveal::command_rows_project(before, w, node, id, command);
                     if node.0 < before.nodes@.len() {
+                        checking::accepted_node(before, node.0 as int);
                         command_frames_reveal::command_frame_rows_reveal(
                             before.nodes@[node.0 as int], w.nodes@[node.0 as int], id, command);
                         if command is Resume {
