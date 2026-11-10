@@ -7,6 +7,8 @@ mod live;
 mod policy;
 mod prepare;
 mod publish;
+#[cfg(test)]
+mod tests;
 
 use super::{Result, git, identity, write};
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,10 @@ struct State {
     phase: String,
     builds: Vec<bb::Build>,
     canaries: Vec<evidence::CanaryEvidence>,
+}
+
+fn lifecycle_canaries(canaries: &[evidence::CanaryEvidence]) -> Result<Vec<evidence::CanaryEvidence>> {
+    Ok(canaries.get(..3).ok_or("three lifecycle canaries required")?.to_vec())
 }
 
 fn save(out: &Path, state: &State) -> Result<()> {
@@ -366,7 +372,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         }
         state.phase = "lifecycle_complete".into();
         save(&inputs.out, &state)?;
-        let overlay = prepare::lifecycle_inputs(&inputs, &state.canaries[..3])?;
+        let overlay = prepare::lifecycle_inputs(&inputs, &lifecycle_canaries(&state.canaries)?)?;
         let qualified = bb::build(&inputs, "qualified-production", Some(&overlay))?;
         if state.builds.len() == 1 {
             state.builds.push(qualified);
