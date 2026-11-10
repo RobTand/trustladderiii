@@ -94,6 +94,22 @@ fn retain_canary(canaries: &mut Vec<evidence::CanaryEvidence>, result: evidence:
     });
 }
 
+fn collect_lifecycle(
+    inputs: &Inputs,
+    state: &mut State,
+    mut collect: impl FnMut(&str) -> Result<evidence::CanaryEvidence>,
+) -> Result<()> {
+    for kind in ["launch_failure", "cancel", "success"] {
+        let result = collect(kind)?;
+        retain_canary(&mut state.canaries, result.clone());
+        save(&inputs.out, state)?;
+        if result.status != "PASS" {
+            return Err(format!("{kind} canary did not pass; no following job dispatched").into());
+        }
+    }
+    Ok(())
+}
+
 fn exit_code(verdict: &Value, dry: bool) -> i32 {
     if verdict["status"] == "PASS"
         || dry
@@ -283,6 +299,24 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
     )
 }
 
+fn failure_verdict(inputs: &Inputs, state: &State, error: &str) -> Value {
+            let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
+                .into_iter()
+                .filter_map(|name| admission::retained(&inputs, name))
+                .collect();
+            let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
+                .into_iter()
+                .collect();
+            json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
+            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)]).ok(),
+            "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head).ok()},
+            "inputs":{"image_map":identity(&inputs.image_map).ok(),"test_image":inputs.test_image,"generator_image":inputs.generator_image},
+            "builds":state.builds,"preparation_jobs":preparation_jobs,
+            "verification_jobs":verification_jobs,"canaries":state.canaries,"pin":null,
+            "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
+            "errors":[{"phase":state.phase,"code":error,"evidence":[]}]})
+}
+
 pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     if args.first().is_some_and(|s| s == "carry") {
         return evidence::carry(&args[1..]);
@@ -402,19 +436,12 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         )?;
         state.phase = "lifecycle".into();
         save(&inputs.out, &state)?;
-        for kind in ["launch_failure", "cancel", "success"] {
+        collect_lifecycle(&inputs, &mut state, |kind| {
             let packet = inputs.out.join(format!("packet-{kind}"));
             let request: api::Request = read_json(&packet.join("request.json"))?;
             let options: api::Options = read_json(&packet.join("held-options.json"))?;
-            let result = live::collect(&inputs, request, options, kind)?;
-            retain_canary(&mut state.canaries, result.clone());
-            save(&inputs.out, &state)?;
-            if result.status != "PASS" {
-                return Err(
-                    format!("{kind} canary did not pass; no following job dispatched").into(),
-                );
-            }
-        }
+            live::collect(&inputs, request, options, kind)
+        })?;
         state.phase = "lifecycle_complete".into();
         save(&inputs.out, &state)?;
         let overlay = prepare::lifecycle_inputs(&inputs, &lifecycle_canaries(&state.canaries)?)?;
@@ -494,21 +521,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     let verdict = match outcome {
         Ok(value) => value,
         Err(error) => {
-            let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
-                .into_iter()
-                .filter_map(|name| admission::retained(&inputs, name))
-                .collect();
-            let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
-                .into_iter()
-                .collect();
-            json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
-            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)]).ok(),
-            "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head).ok()},
-            "inputs":{"image_map":identity(&inputs.image_map).ok(),"test_image":inputs.test_image,"generator_image":inputs.generator_image},
-            "builds":state.builds,"preparation_jobs":preparation_jobs,
-            "verification_jobs":verification_jobs,"canaries":state.canaries,"pin":null,
-            "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
-            "errors":[{"phase":state.phase,"code":error.to_string(),"evidence":[]}]})
+            failure_verdict(&inputs, &state, &error.to_string())
         }
     };
     durable::atomic(

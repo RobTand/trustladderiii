@@ -596,3 +596,41 @@ fn qualification_plan_uses_production_pq_and_ascii_job_ids() {
         assert!(job["attributes"]["system"]["duration"].as_u64().unwrap() <= 600);
     }
 }
+
+#[test]
+fn round18_lifecycle_failure_collects_all_jobs_and_retains_every_failed_predicate() {
+    let root = tempfile::tempdir().unwrap();
+    let inputs = inputs(root.path());
+    let mut state = State {
+        schema: "tl3.fx_qualification_state.v1".into(),
+        inputs: inputs.clone(),
+        phase: "lifecycle".into(),
+        builds: vec![],
+        canaries: vec![],
+    };
+    let mut dispatched = vec![];
+    let result = collect_lifecycle(&inputs, &mut state, |kind| {
+        dispatched.push(kind.to_string());
+        let mut result = canary(root.path(), kind);
+        result.status = "FAIL".into();
+        result.checks[0].pass = false;
+        result.checks[1].pass = false;
+        Ok(result)
+    });
+    assert_eq!(dispatched, ["launch_failure", "cancel", "success"], "failure must not skip independent lifecycle jobs");
+    assert_eq!(result.unwrap_err().to_string(), "lifecycle canaries did not pass; no D8 inputs generated");
+    let retained: State = read_json(&root.path().join("state.json")).unwrap();
+    assert_eq!(retained.canaries.len(), 3);
+    let decisions = evidence::decisions(&retained.canaries).unwrap();
+    assert!(decisions.iter().all(|(_, status)| *status == policy::Status::Fail));
+    assert_eq!(serde_json::to_value(&state.canaries).unwrap(), serde_json::to_value(&retained.canaries).unwrap());
+    assert!(retained.canaries.iter().all(|canary| canary.checks.iter().filter(|check| !check.pass).count() == 2));
+    let verdict = failure_verdict(&inputs, &retained, "lifecycle canaries did not pass; no D8 inputs generated");
+    assert_eq!(verdict["status"], "FAIL");
+    assert_eq!(verdict["canaries"].as_array().unwrap().len(), 3);
+    for canary in verdict["canaries"].as_array().unwrap() {
+        assert_eq!(canary["status"], "FAIL");
+        assert_eq!(canary["checks"].as_array().unwrap().iter().filter(|check| check["pass"] == false).count(), 2);
+    }
+    assert!(!root.path().join("private").exists());
+}
