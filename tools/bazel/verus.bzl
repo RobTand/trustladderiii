@@ -742,6 +742,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "events_apply_new_adoption": ("kernel::events#apply_new_adoption", 1),
+            "events_apply_new_request": ("kernel::events#apply_new_request", 1),
+            "events_apply_reply": ("kernel::events#apply_reply", 1),
+            "events_apply_ack": ("kernel::events#apply_ack", 1),
+            "events_apply_fact": ("kernel::events#apply_fact", 1),
+            "events_apply_command": ("kernel::events#apply_command", 1),
             "handler_safety_command_node_safety": ("kernel::handler_safety#command_node_safety", 1),
             "transition_safety_unchanged_node": ("kernel::transition_safety#unchanged_node", 1),
             "transition_safety_lift_apply": ("kernel::transition_safety#lift_apply", 1),
@@ -952,7 +958,7 @@ def verus_proofs():
             "kernel_take_ticket_node": ("kernel#take_ticket_node", 1),
             "kernel_world_checked_definition": ("kernel#world_checked_definition", 1),
             "kernel_world_measure": ("kernel#World::measure", 3),
-            "events": ("kernel::events", 1),
+            "events": ("kernel::events#apply", 1),
             "report_reply_kind": ("kernel::report#ReplyKind::of", 1),
             "report_stop_kind": ("kernel::report#StopCause::from_phase", 1),
             "report_new": ("kernel::report#Report::new", 1),
