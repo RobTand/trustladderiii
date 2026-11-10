@@ -300,6 +300,19 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             write(&input_path, &inputs)?;
         }
         let options = admission::options(&inputs, &inputs.out.join("production"))?;
+        let (exit, hosts) = admission::capture(
+            &options,
+            &["exec".into(), "-rall".into(), "/bin/hostname".into()],
+            &inputs.out.join("host-readiness.log"),
+        )?;
+        let hosts = String::from_utf8(hosts)?;
+        if exit != 0
+            || ["dl380g10", "sparky", "sparklina"]
+                .iter()
+                .any(|host| !hosts.lines().any(|line| line.trim() == *host))
+        {
+            return Err("all three standing Flux hosts must be reachable before admission".into());
+        }
         let command = |binary: &str, operation: &str| {
             vec![
                 inputs
