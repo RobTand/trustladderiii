@@ -395,7 +395,7 @@ fn incident_node(n: Node, needs_rob: bool) -> (result: Node) [
             allocation_incident_lemmas::waiting_result(before_incident@, m, needs_rob);
         }
     }
-    m
+    Node { ticket: n.ticket, ..m }
 }
 }
 
