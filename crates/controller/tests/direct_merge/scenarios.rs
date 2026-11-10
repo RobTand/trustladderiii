@@ -17,6 +17,7 @@ struct DirectState {
     fail_reads_after_acceptance: usize,
     failed_reads: usize,
     no_merge_method: bool,
+    different_tree: bool,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -34,6 +35,15 @@ impl Respond for DirectApi {
         if method == "GET" && path == "/repos/owner/sandbox" {
             let allowed = !self.direct.lock().unwrap().no_merge_method;
             return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":allowed,"allow_squash_merge":allowed,"allow_rebase_merge":allowed}));
+        }
+        if method == "GET" && path.starts_with("/repos/owner/sandbox/git/commits/") {
+            let sha = path.rsplit('/').next().unwrap();
+            let direct = self.direct.lock().unwrap();
+            let state = self.base.0.lock().unwrap();
+            let landed = sha == "dddddddddddddddddddddddddddddddddddddddd";
+            return ResponseTemplate::new(200).set_body_json(json!({"sha":sha,
+                "tree":{"sha":if landed && direct.different_tree {"2".repeat(40)} else {"1".repeat(40)}},
+                "parents":[{"sha":state.pull["base"]["sha"]}]}));
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
@@ -76,7 +86,7 @@ impl Respond for DirectApi {
             state.merged(false);
             direct.successes += 1;
             return if direct.lost_reply { ResponseTemplate::new(503) }
-                else { ResponseTemplate::new(200).set_body_json(json!({"merged":true,"sha":body["sha"],"message":"merged"})) };
+                else { ResponseTemplate::new(200).set_body_json(json!({"merged":true,"sha":"dddddddddddddddddddddddddddddddddddddddd","message":"merged"})) };
         }
         self.base.respond(request)
     }
@@ -1652,4 +1662,104 @@ fn settled_permanent_refusal_seen_by_a_look_raises_one_incident() {
     assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "publication_failures" && row.id == delivery.key));
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+fn m4_record(controller: &mut Controller) -> Value {
+    controller.snapshot().unwrap().rows.into_iter()
+        .find(|row| row.table == "merge_records")
+        .expect("completed merge must retain its landed commit and separate assurance facts").value
+}
+fn m4_notices(controller: &mut Controller) -> Vec<Value> {
+    controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "merge_audit")
+        .map(|row| { assert_eq!(row.value["blocking"], false); row.value }).collect()
+}
+#[test]
+fn m4_squash_records_landed_commit_and_tree() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_squash");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_ne!(record["landed"]["commit"], json!(delivery.head_sha));
+    assert_eq!(record["landed"]["commit"], "dddddddddddddddddddddddddddddddddddddddd");
+    assert_eq!(record["landed"]["tree"], "1".repeat(40));
+    assert_eq!(record["landed"]["head_tree"], "1".repeat(40));
+    assert_eq!(record["landed"]["parents"][0], record["landed"]["base_before_merge"]);
+    assert_eq!(record["landed"]["tree_matches"], true);
+    assert_eq!(record["landed"]["parent_matches"], true);
+}
+#[test]
+fn m4_different_landed_tree_raises_notice() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_tree");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().different_tree = true;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let notices = m4_notices(&mut controller);
+    assert_eq!(notices.len(), 1, "landed tree differs from the checked head must raise a notice");
+    let summary = notices[0]["summary"].as_str().unwrap();
+    assert!(summary.contains("landed tree differs from the checked head"));
+    assert!(summary.contains(&"1".repeat(40)) && summary.contains(&"2".repeat(40)));
+    assert_eq!(m4_record(&mut controller)["landed"]["tree_matches"], false);
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+}
+#[test]
+fn m4_zero_required_checks_records_count_and_notice() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_zero");
+    let fixture = DirectFixture::new();
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    let notices = m4_notices(&mut controller);
+    assert_eq!(notices.len(), 1, "merged with no required GitHub checks must raise a notice");
+    assert!(notices[0]["summary"].as_str().unwrap().contains("merged with no required GitHub checks"));
+    assert_eq!(m4_record(&mut controller)["required_checks"], json!({"passed":true,"count":0}));
+}
+#[test]
+fn m4_external_merge_reads_failing_required_checks() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_external");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    fixture.check(Some("failure"));
+    fixture.api.state.lock().unwrap().merged(false);
+    let mut body = webhook_fixture();
+    body["action"] = json!("closed");
+    body["repository"]["owner"]["login"] = json!("owner");
+    body["repository"]["name"] = json!("sandbox");
+    body["installation"] = json!({"id":3});
+    body["pull_request"] = fixture.api.state.lock().unwrap().pull.clone();
+    deliver(&settings, &fixture.api, "pull_request", &body);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["required_checks"], json!({"passed":false,"count":1}));
+    assert_eq!(record["tl3_checks_passed"], true);
+    assert_eq!(record["review_approved"], true);
+    assert!(m4_notices(&mut controller).iter().any(|n| n["summary"].as_str().unwrap().contains("required GitHub checks not passed")));
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+}
+#[test]
+fn m4_ordinary_merge_records_three_facts_without_notice() {
+    let mut database = support::Database::start();
+    let settings = database.create("m4_ordinary");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["head"], json!(delivery.head_sha));
+    assert_eq!(record["tl3_checks_passed"], true);
+    assert_eq!(record["review_approved"], true);
+    assert_eq!(record["required_checks"], json!({"passed":true,"count":1}));
+    assert!(m4_notices(&mut controller).is_empty());
+    let world = controller.world().unwrap();
+    assert_eq!(world.nodes[0].merged, world.nodes[0].approved);
+    assert!(matches!(world.nodes[0].phase, Phase::Closed(Outcome::Merged)));
 }
