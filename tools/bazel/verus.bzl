@@ -443,6 +443,10 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::acknowledgements::agenda_adopt_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::agenda_step_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::agenda_idle_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_case_common": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::effect_head": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::resources_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::agenda_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -750,6 +754,19 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "acknowledgements_confirmed_agenda_adopt": ("kernel::acknowledgements#confirmed_agenda_adopt", 1),
+            "acknowledgements_confirmed_agenda_step": ("kernel::acknowledgements#confirmed_agenda_step", 1),
+            "acknowledgements_confirmed_agenda_idle": ("kernel::acknowledgements#confirmed_agenda_idle", 1),
+            "acknowledgements_confirmed_agenda_value": ("kernel::acknowledgements#confirmed_agenda_value", 1),
+            "acknowledgements_agenda_result_properties": ("kernel::acknowledgements#agenda_result_properties", 1),
+            "acknowledgements_ack_cancel_post": ("kernel::acknowledgements#ack_cancel_post", 1),
+            "acknowledgements_ack_confirmed_post": ("kernel::acknowledgements#ack_confirmed_post", 1),
+            "acknowledgements_ack_delivery_post": ("kernel::acknowledgements#ack_delivery_post", 1),
+            "acknowledgements_ack_retry_post": ("kernel::acknowledgements#ack_retry_post", 1),
+            "acknowledgements_ack_permanent_post": ("kernel::acknowledgements#ack_permanent_post", 1),
+            "acknowledgements_ack_review_post": ("kernel::acknowledgements#ack_review_post", 1),
+            "ack_family_adoption_ack_result": ("kernel::ack_family_safety#adoption_ack_result", 1),
+            "ack_family_bpr_ack_result_equiv": ("kernel::ack_family_safety#bpr_ack_result_equiv", 1),
             "acknowledgements_ack_live": ("kernel::acknowledgements#ack_live", 1),
             "ack_family_node_safety": ("kernel::ack_family_safety#ack_node_safety", 1),
             "ack_family_adoption_facts": ("kernel::ack_family_safety#adoption_facts", 1),
