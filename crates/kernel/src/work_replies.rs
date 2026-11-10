@@ -391,7 +391,7 @@ fn rebase_head_v(n: Node, head: HeadId) -> (result: Node) [
         result.credit == n.credit, result.generation == n.generation, result.next_seq == n.next_seq,
 ] {
     let mut m = n;
-    update_recheck_head(&mut m, head);
+    m.checked = None;
     m
 }
 }
