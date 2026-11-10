@@ -628,6 +628,8 @@ pub(super) proof fn held_fields(b: Node, nq: u64, id: u64, question: u64, answer
         && v.credit.spent == x.credit.spent && v.last_cmd == x.last_cmd
         && v.proposed == x.proposed && v.adopted == x.adopted && v.phase == x.phase
         && v.holds == x.holds && v.pool == x.pool && v.ticket == x.ticket && v.question == x.question
+        && v.review_stop == x.review_stop && v.attempt == x.attempt && v.replanned == x.replanned
+        && v.credit.merge_credited == x.credit.merge_credited
         && (settle_shape(x) ==> settle_shape(v))
         && distance(v) == distance(x) }),
 {
@@ -652,50 +654,6 @@ pub(super) proof fn held_same(b: Node, nq: u64, id: u64, question: u64, answer: 
     reveal(dependencies::withheld_after);
     let x = apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0;
     handler_safety::unwithheld_same(x);
-}
-
-/// L1 re-stack (fix 1): the answer_pair row when the guard withholds; plain node parameters.
-pub(super) proof fn pair_withheld(b: Node, x: Node, w: bool, id: u64, question: u64, answer: Answer,
-    table: Seq<Dependency>, node: NodeId)
-    requires handler_safety::command_step(Node { last_cmd: id, ..b }, x),
-        handler_safety::answer_withholds(b, question, answer), id > b.last_cmd,
-        w == dependencies::withheld_after(x.credit.withheld, x.planning_started, x.phase, x.credit.ready,
-            table, node),
-    ensures handler_safety::answer_pair(b, handler_safety::unwithheld(x, w), id > b.last_cmd, question,
-        answer, table, node),
-{
-    reveal(handler_safety::answer_pair);
-    reveal(handler_safety::command_step);
-}
-
-/// L1 re-stack (fix 1): the answer_pair row when the guard does not withhold.
-pub(super) proof fn pair_plain(b: Node, x: Node, id: u64, question: u64, answer: Answer,
-    table: Seq<Dependency>, node: NodeId)
-    requires handler_safety::command_step(Node { last_cmd: id, ..b }, x),
-        !handler_safety::answer_withholds(b, question, answer), id > b.last_cmd,
-    ensures handler_safety::answer_pair(b, x, id > b.last_cmd, question, answer, table, node),
-{
-    reveal(handler_safety::answer_pair);
-    reveal(handler_safety::command_step);
-}
-
-/// L1 re-stack: the answer_pair row of the held node, one tiny lemma per guard outcome.
-pub(super) proof fn answer_pair_held(b: Node, nq: u64, id: u64, question: u64, answer: Answer,
-    table: Seq<Dependency>, node: NodeId)
-    requires node_headroom(b), arithmetic_consistent(b), nq < u64::MAX, id > b.last_cmd,
-    ensures handler_safety::answer_pair(b, answered_held(b, nq, id, question, answer, table, node),
-        id > b.last_cmd, question, answer, table, node),
-{
-    let a = Node { last_cmd: id, ..b };
-    let x = apply_answer_values::answered(a, nq, question, answer).0;
-    reveal(answered_held);
-    apply_answer_safety::answer_step(a, nq, question, answer);
-    if handler_safety::answer_withholds(b, question, answer) {
-        pair_withheld(b, x, dependencies::withheld_after(x.credit.withheld, x.planning_started, x.phase,
-            x.credit.ready, table, node), id, question, answer, table, node);
-    } else {
-        pair_plain(b, x, id, question, answer, table, node);
-    }
 }
 
 /// L1 re-stack: withholding keeps the node rules (it sets the flag only in an early, ready,
@@ -725,6 +683,42 @@ pub(super) proof fn answer_held_rules(w: World, b: Node, id: u64, question: u64,
     if retirement::node_rules(w, b) && handler_safety::answer_withholds(a, question, answer) {
         withhold_rules_v(x, answered_nq(b, w.next_question, id, question, answer), table, node);
     }
+}
+
+/// L1 re-stack (fix 2): the guarded flag of the held node, against the written node a.
+pub(super) proof fn held_withheld(b: Node, nq: u64, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires node_headroom(b), arithmetic_consistent(b), nq < u64::MAX,
+    ensures ({ let v = answered_held(b, nq, id, question, answer, table, node);
+        let a = Node { last_cmd: id, ..b };
+        v.credit.withheld == (if handler_safety::answer_withholds(a, question, answer) {
+            dependencies::withheld_after(a.credit.withheld, v.planning_started, v.phase,
+                v.credit.ready, table, node)
+        } else { a.credit.withheld }) }),
+{
+    let a = Node { last_cmd: id, ..b };
+    reveal(answered_held);
+    apply_answer_safety::answer_step(a, nq, question, answer);
+    handler_safety::step_withheld(a, apply_answer_values::answered(a, nq, question, answer).0);
+}
+
+/// L1 re-stack (fix 2): the answer_pair row of the held node by L1's own route:
+/// answer_pair_intro over the plain held node n, then answer_pair_rebase to b.
+pub(super) proof fn answer_pair_row(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires n == answered_held(b, nq, id, question, answer, table, node),
+        node_headroom(b), arithmetic_consistent(b), nq < u64::MAX, id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
+{
+    let a = Node { last_cmd: id, ..b };
+    let x = answered_node(b, nq, id, question, answer);
+    answered_parts(b, nq, id, question, answer);
+    apply_answer_safety::answer_step(a, nq, question, answer);
+    handler_safety::step_withheld(a, x);
+    held_fields(b, nq, id, question, answer, table, node);
+    held_withheld(b, nq, id, question, answer, table, node);
+    handler_safety::answer_pair_intro(a, x, n, question, answer, table, node);
+    handler_safety::answer_pair_rebase(b, a, n, id > b.last_cmd, question, answer, table, node);
 }
 
 /// Answer: the entry's equality and bound rows, verbatim over (b, n).
@@ -773,7 +767,7 @@ pub(super) proof fn answer_rows_imp(b: Node, n: Node, nq: u64, id: u64, question
     answer_node_resources(b, nq, id, question, answer);
     held_fields(b, nq, id, question, answer, t, nd);
     other_resume_post(b, n, id, Command::Answer { question, answer });
-    answer_pair_held(b, nq, id, question, answer, t, nd);
+    answer_pair_row(b, n, nq, id, question, answer, t, nd);
 }
 
 /// Answer: the progress and consumed-question rows, verbatim over (w, b, n).
