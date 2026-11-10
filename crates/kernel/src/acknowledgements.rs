@@ -841,7 +841,7 @@ fn ack_retry_emit_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbo
     ensures ack_view(result) == ack_retry_emit_spec(n, i as int, kind, nq, out),
 ] proof [reveal(ack_retry_emit_spec); reveal(ack_emit_spec);] {
     let (m, _, output) = ack_emit_value(n, i, kind, out);
-    (m, nq, output)
+    (Node { head: None, ..m }, nq, output)
 }
 }
 
