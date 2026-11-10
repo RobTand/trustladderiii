@@ -61,3 +61,65 @@ pub(super) proof fn gate_planning_holds_nothing(w: World, i: int, after: Node,
     reveal(advance_post);
 }
 }
+
+/// Projections of the owner's opaque advance contract live outside the
+/// consumer module so its representation stays local to this proof.
+mod advance_projection {
+    use super::*;
+
+    verus! {
+    pub(super) proof fn settle_rank(before: Node, after: Node,
+        ticket_before: u64, ticket_after: u64, changed: bool)
+        requires advance_post(before, after, ticket_before, ticket_after, changed),
+        ensures changed ==> 4 * node_distance(after) + pending_rank(after)
+            < 4 * node_distance(before) + pending_rank(before),
+    {
+        reveal(advance_post);
+        node_distance_definition(before);
+        node_distance_definition(after);
+    }
+    }
+}
+
+verus! {
+/// G20 gate_planning_w2/w3 over arbitrary accepted worlds. This verification
+/// entry calls the real scheduler; production has no caller of this wrapper.
+/// E5's node rows are lifted by the owner's frame lemma, then E7 proves the
+/// checker invariant. No constructor equality is exported by this consumer.
+fn gate_planning_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
+    -> (result: (World, Outbox, Report, bool))
+    requires checking::accepted(w), scheduling_safe(w),
+        w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
+        i < w.nodes@.len(), i <= u64::MAX as int,
+        advance_pre(w.nodes@[i as int], w.next_ticket, out.len),
+        w.nodes@[i as int].phase == Phase::Unplanned,
+        w.nodes@[i as int].pos == 0, w.nodes@[i as int].ticket.is_none(),
+    ensures checking::accepted(result.0), // R6: checker acceptance after an internal step.
+        !result.0.nodes@[i as int].holds, !result.0.nodes@[i as int].pool,
+        result.3 == (!w.nodes@[i as int].paused && !w.nodes@[i as int].waiting_incident
+            && w.nodes@[i as int].effect.is_none()
+            && dependencies::delivered(w.dependencies@, NodeId(i as u64))
+            && w.nodes@[i as int].repo.0 < w.gates@.len()
+            && slot_waiters(w.nodes@, w.nodes@.len(), w.nodes@[i as int].repo)
+                < w.gates@[w.nodes@[i as int].repo.0 as int].w),
+        result.3 ==> result.0.nodes@[i as int].phase == (Phase::Planning { must_split: false }),
+        result.3 ==> 4 * node_distance(result.0.nodes@[i as int]) + pending_rank(result.0.nodes@[i as int])
+            < 4 * node_distance(w.nodes@[i as int]) + pending_rank(w.nodes@[i as int]),
+        // E5.2 framing: keep the owner's opaque relation as the interface.
+        transition_safety::transition_safety(w, result.0,
+            transition_safety::Transition::Advance { node: i, moved: result.3 },
+            transition_safety::emitted(out, result.1)),
+{
+    let ghost before = w;
+    let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
+    proof {
+        advance_family_frames::step_premises_lift(before, w, i as int);
+        internal_safety::step_preserves_accepted_full(before, w, i as int);
+        gate_planning_holds_nothing(before, i as int, w.nodes@[i as int],
+            before.next_ticket, w.next_ticket, changed);
+        advance_projection::settle_rank(before.nodes@[i as int], w.nodes@[i as int],
+            before.next_ticket, w.next_ticket, changed);
+    }
+    (w, out, report, changed)
+}
+}
