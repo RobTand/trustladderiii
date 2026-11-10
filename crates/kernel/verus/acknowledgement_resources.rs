@@ -40,7 +40,7 @@ pub(super) open spec fn confirmed_clear_frame(b: Node, n: Node) -> bool {
         && (n.fx_failures == b.fx_failures)
         && (n.fx_incidents == b.fx_incidents)
         && (n.ticket == b.ticket)
-        && (n.generation == b.generation)
+        && (n.generation as int == b.generation as int + 1)
         && (confirmed_rules_transfer(b, n))
 }
 
