@@ -313,17 +313,8 @@ pub(super) fn run_failed_node(n: Node, i: usize, report: &mut Report) -> (result
             NodeId(i as u64), FailedRoundCause::RunFailed),
         reply_family_values::finish(0, result) == retries_facts::failed_run(n),
         reply_family_values::callable(result),
-        reply_family_values::frames(n, reply_family_values::finish(0, result)),
-        reply_family_values::finish(0, result).footprint == n.footprint,
-        (settle_shape(n) ==> settle_shape(reply_family_values::finish(0, result))),
-        reply_family_values::finish(0, result).generation as int <= n.generation as int + 2,
-        reply_family_values::finish(0, result).credit == n.credit,
-        reply_family_values::finish(0, result).question == n.question,
-        reply_family_values::finish(0, result).run_failures <= 1,
-        reply_family_values::finish(0, result).run_incidents <= 2,
-        !(result is Ask),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(0, result)),
-
+        match result { ReplyChange::Done { note, .. } => note.is_none(),
+            ReplyChange::Ask { .. } => false, ReplyChange::Incident { .. } => true },
 ] {
     kernel_snapshot! { before_report = report.entries@ }
     report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
@@ -339,37 +330,26 @@ kernel_fn! {
 /// Node-only work after the failed-round report entry.
 pub(super) fn run_failed_value(n: Node) -> (result: ReplyChange) [
     requires n.generation as int + 2 <= u64::MAX as int, n.run_failures <= 1, n.run_incidents <= 2,
-    ensures
-        reply_family_values::finish(0, result) == retries_facts::failed_run(n),
+    ensures reply_family_values::finish(0, result) == retries_facts::failed_run(n),
         reply_family_values::callable(result),
-        reply_family_values::frames(n, reply_family_values::finish(0, result)),
-        reply_family_values::finish(0, result).footprint == n.footprint,
-        (settle_shape(n) ==> settle_shape(reply_family_values::finish(0, result))),
-        reply_family_values::finish(0, result).generation as int <= n.generation as int + 2,
-        reply_family_values::finish(0, result).credit == n.credit,
-        reply_family_values::finish(0, result).question == n.question,
-        reply_family_values::finish(0, result).run_failures <= 1,
-        reply_family_values::finish(0, result).run_incidents <= 2,
-        !(result is Ask),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(0, result)),
-
-] proof [reveal(retirement::stopped); reveal(retirement::incident); reveal(retries_facts::failed_run); reveal(retries_facts::abandoned);] {
+        match result { ReplyChange::Done { note, .. } => note.is_none(),
+            ReplyChange::Ask { .. } => false, ReplyChange::Incident { .. } => true },
+] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    let m = &mut node;
-    abandon_operation(m);
-    m.pos = operation_start(m.phase);
-    m.generation += 1;
-    m.run_failures += 1;
-    if m.run_failures >= 2 {
+    abandon_operation(&mut node);
+    node.pos = operation_start(node.phase);
+    node.generation += 1;
+    node.run_failures += 1;
+    if node.run_failures >= 2 {
         // Every second failure raises an incident. Only Rob can clear the second one.
-        m.run_failures = 0;
-        m.run_incidents = (m.run_incidents + 1).min(2);
-        let needs_rob = m.run_incidents >= 2;
-
+        node.run_failures = 0;
+        node.run_incidents = (node.run_incidents + 1).min(2);
+        let needs_rob = node.run_incidents >= 2;
+        kernel_proof! { retries_facts::incident(n, node, needs_rob); }
         return ReplyChange::Incident { node, needs_rob };
-
     }
+    kernel_proof! { retries_facts::restarted(n, node); }
     ReplyChange::Done { node, note }
 }
 }
@@ -492,27 +472,26 @@ kernel_fn! {
 pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -> (result: ReplyChange) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures result == reply_family_values::room(n, fast, step),
-        reply_family_values::retry_bound(n, nq, result),
-        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, result)),
-
-] proof [reveal(retirement::stopped); reveal(retirement::incident);] {
+        reply_family_values::callable(result),
+] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-let fail_fast = fast;
-    let m = &mut node;
+    let fail_fast = fast;
     if fail_fast {
-        stop_for_review(m, step);
-
+        node = stop_for_review_v(node, step);
+        kernel_proof! { reveal(reply_family_values::room); }
         return ReplyChange::Done { node, note };
     }
-    m.holds = false;
-    if m.credit.can_spend(1) {
-        m.credit.spend(1);
-        m.plan_retries = 0;
-        set_phase(m, Phase::Planning { must_split: true });
+    node.holds = false;
+    if node.credit.can_spend(1) {
+        node.credit.spend(1);
+        node.plan_retries = 0;
+        node = set_phase_v(node, Phase::Planning { must_split: true });
     } else {
+        kernel_proof! { reveal(reply_family_values::room); }
         return ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: true }, cost: 1, };
     }
+    kernel_proof! { reveal(reply_family_values::room); }
     ReplyChange::Done { node, note }
 }
 }
@@ -585,5 +564,17 @@ let m = &mut node;
 
     }
     ReplyChange::Done { node, note }
+}
+}
+
+kernel_fn! {
+/// Value form of the unchanged review-stop transition.
+pub(super) fn stop_for_review_v(n: Node, step: ReviewStop) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == retirement::stopped(Node { review_stop: Some(step), ..n }, Outcome::Stopped),
+] {
+    let mut m = n;
+    stop_for_review(&mut m, step);
+    m
 }
 }

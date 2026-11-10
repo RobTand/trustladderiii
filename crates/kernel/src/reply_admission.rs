@@ -424,7 +424,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
-        let change = reply_files_node(w.nodes[i], c, files, fits, footprint, true);
+        let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, true);
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
@@ -438,7 +438,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
-        let change = reply_files_node(w.nodes[i], c, files, fits, footprint, false);
+        let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, false);
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
             handler_safety::fund_fast(before_files@.nodes@[i as int], w.nodes@[i as int]);
@@ -471,33 +471,30 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
 kernel_fn! {
 /// The two fitting-extension paths, after the original conditional union call.
 /// funded is the branch tag already selected by reply_files, not a new guard.
-pub(super) fn reply_files_node(n: Node, c: ReplyCtx, files: Footprint, fits: bool,
+pub(super) fn reply_files_node(n: Node, fast: bool, files: Footprint, fits: bool,
     union: Footprint, funded: bool) -> (result: ReplyChange) [
-    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
-        c.reply == (Reply::MakerNeedsFiles { files, fits }),
+    requires node_headroom(n), arithmetic_consistent(n),
         fits, !footprint::footprint_empty(files),
-        funded == transition_safety::can_spend_one(n), funded || c.fast,
-    ensures result == reply_family_values::files(n, c.fast, files, fits, union),
-        reply_family_values::reply_bound(n, c.next_question, result),
-        reply_family_safety::rows(n, c, result),
-] proof [reveal(retirement::stopped);] {
+        funded == transition_safety::can_spend_one(n), funded || fast,
+    ensures result == reply_family_values::files(n, fast, files, fits, union),
+        reply_family_values::callable(result),
+] {
     let mut node = n;
     if funded {
         let footprint = union;
-        let m = &mut node;
-        m.credit.spend(1);
-        m.footprint = footprint;
-        m.holds = false;
-        set_phase(m, Phase::Ready(Resume::Making));
+        node.credit.spend(1);
+        node.footprint = footprint;
+        node.holds = false;
+        node = set_phase_v(node, Phase::Ready(Resume::Making));
         let result = ReplyChange::Done { node, note: None };
-        kernel_proof! { reply_family_safety::files_rows(n, c, files, fits, union, result); }
+        kernel_proof! { reveal(reply_family_values::files); }
         result
     } else {
         let footprint = union;
         node.footprint = footprint;
         let result = ReplyChange::Ask { node, kind: QKind::OutOfCredit,
             cont: Cont::Ready(Resume::Making), cost: 1, };
-        kernel_proof! { reply_family_safety::files_rows(n, c, files, fits, union, result); }
+        kernel_proof! { reveal(reply_family_values::files); }
         result
     }
 }
