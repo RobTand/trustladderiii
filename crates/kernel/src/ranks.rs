@@ -872,7 +872,7 @@ kernel_fn! {
         let mut m = n;
         let mut t = next_ticket;
         take_ticket_node(&mut m, &mut t);
-        (m, t, true)
+        (m, t, false)
     }
 }
 
