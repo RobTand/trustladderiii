@@ -57,6 +57,8 @@ fn ingest(text: &str, bits: u16) -> Value {
         v["forecast"]["generator"] = json!("generate");
         v["forecast"]["generator_available"] = json!(true);
         v["forecast"]["generator_timeout_s"] = json!(600.0);
+        v["forecast"]["generator_cpus"] = json!(1);
+        v["forecast"]["generator_mem_gb"] = json!(4);
     }
     if bits & 4 != 0 {
         v["publication_branch"] =
