@@ -1,10 +1,15 @@
 {
-  "source_head": "584f8a1db83a5f888bde235c85a5ec2bbd3e1edb",
+  "source_head": "e6f21b416bb54f419dc2750fe1ac09394cee26e7",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "7e18d704ddefaab10aa7d504fc6ebb32d06fbb414b2a56c02a09ec1427b55641",
-  "groups": 509,
-  "obligations": 707,
+  "source_sha256": "3a387302369bf9171f736fcd29b7fe767460ba591a5dfeb796706dca0f8915d8",
+  "groups": 510,
+  "obligations": 708,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
+      "selector": "kernel::handler_safety#step_rows_carry",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_step_withheld",
       "selector": "kernel::handler_safety#step_withheld",
