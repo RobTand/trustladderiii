@@ -663,7 +663,7 @@ kernel_fn! {
         *final(_next_ticket) == *old(_next_ticket),
         advance_family_post::grant_facts(b, result.0, _context),
         result.0.holds && !b.holds ==> result.0.run == b.run,
-        advance_family_post::holds_frame(b, result.0),
+        result.0.holds != b.holds,
     ] proof [reveal(advance_post); reveal(distance);] {
         let mut node = b;
         kernel_snapshot! { before_grant = node }
