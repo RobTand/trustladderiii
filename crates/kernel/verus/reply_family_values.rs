@@ -38,7 +38,7 @@ pub(super) open spec fn resolved(r: ReplyChange, i: int, ob: Outbox, oa: Outbox)
         ReplyChange::Done { note: None, .. } => oa == ob,
         ReplyChange::Done { note: Some(note), .. } => oa.len == ob.len + 1
             && oa.items@ == ob.items@.update(ob.len as int,
-                Some(Out::Notice { node: NodeId(i as u64), notice: note })),
+                Some(Out::Effect { node: NodeId(i as u64), seq: 0, kind: EffectKind::Enqueue, head: None })),
         ReplyChange::Ask { .. } => oa.len == ob.len + 1,
         ReplyChange::Incident { .. } => oa.len == ob.len + 1
             && (retirement::notices_only(ob) ==> retirement::notices_only(oa)),
