@@ -595,7 +595,6 @@ mod aggregate_command_assembly {
         proof {
             match event {
                 Event::Command { node, id, command } => {
-                    command_frames_reveal::command_rows_project(before, w, node, id, command);
                     if node.0 < before.nodes@.len() {
                         command_frames_reveal::command_frame_rows_reveal(
                             before.nodes@[node.0 as int], w.nodes@[node.0 as int], id, command);
