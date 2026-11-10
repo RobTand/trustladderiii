@@ -44,7 +44,7 @@ pub(super) proof fn work_progress(n: Node, c: ReplyCtx)
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures successful_reply_input(n, c.reply) ==>
-        distance(reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply))) < distance(n),
+        distance(reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply))) > distance(n),
 {
     reveal(reply_family_values::work);
     reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
