@@ -84,7 +84,7 @@ pub(super) proof fn context_frame(b: World, n: World, i: int, k: int, extra: int
         small(n.nodes@[i], k + extra),
     ensures context(n, k + extra),
 {
-    reveal(context);
+    reveal(context); reveal(footprint::ordered_table);
     assert forall|j: int| 0 <= j < 4 implies small(n.nodes@[j], k + extra) by {
         if j != i { reveal(small); }
     }
