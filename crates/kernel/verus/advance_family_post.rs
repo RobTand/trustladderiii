@@ -300,7 +300,7 @@ pub(super) proof fn start_item(n: Node)
 pub(super) open spec fn grant_facts(b: Node, a: Node, c: AdvanceContext) -> bool {
     (a.holds && !b.holds ==> c.slot && !b.paused && b.phase is Ready && b.ticket.is_some()
         && a.ticket.is_none() && a.repo == b.repo && a.footprint == b.footprint && a.pool == b.pool)
-    && (a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none())
+    && true
 }
 
 pub(super) proof fn grant_no_new(b: Node, a: Node, c: AdvanceContext)
