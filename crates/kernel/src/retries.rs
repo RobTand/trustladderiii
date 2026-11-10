@@ -819,7 +819,7 @@ fn recheck_ask(node: Node, target: Phase) -> (result: ReplyChange) [
                 Resume::Reviewing
             } else {
                 Resume::Checking
-            }), cost: 1, }
+            }), cost: 0, }
 }
 }
 
