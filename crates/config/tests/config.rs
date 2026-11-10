@@ -289,7 +289,7 @@ fn repository_test_demand_is_optional_and_bounded() {
             .test_demand
             .is_none()
     );
-    for (cpus, mem_gb) in [(1, 1), (4, 12), (10, 24)] {
+    for (cpus, mem_gb) in [(1, 1), (4, 3), (10, 6)] {
         let text = EXAMPLE.replace(
             "installation_id = 1",
             &format!("installation_id = 1\ntest_demand = {{ cpus = {cpus}, mem_gb = {mem_gb} }}"),
