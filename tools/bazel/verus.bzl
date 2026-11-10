@@ -443,6 +443,10 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::node_frame_groups::ops_same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::node_frame_groups::ledger_same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::node_frame_groups::counters_same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::node_frame_groups::pr_same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::issued": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::slot": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -764,6 +768,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "node_frame_ops_same_reveal": ("kernel::node_frame_groups_reveal#ops_same_reveal", 1),
+            "node_frame_ledger_same_reveal": ("kernel::node_frame_groups_reveal#ledger_same_reveal", 1),
+            "node_frame_counters_same_reveal": ("kernel::node_frame_groups_reveal#counters_same_reveal", 1),
+            "node_frame_pr_same_reveal": ("kernel::node_frame_groups_reveal#pr_same_reveal", 1),
+            "node_frame_frame_intro": ("kernel::node_frame_groups_reveal#frame_intro", 1),
+            "node_frame_mark_handled_resources_rows": ("kernel::node_frame_groups_reveal#mark_handled_resources_rows", 1),
             "ranks_pending_rank_definition": ("kernel::ranks#pending_rank_definition", 1),
             "ranks_slot_paused_v": ("kernel::ranks#slot_paused_v", 1),
             "ranks_slot_issue_v": ("kernel::ranks#slot_issue_v", 1),

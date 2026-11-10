@@ -2402,6 +2402,12 @@ mod port_t860_scope;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_t860_frames.rs"]
 mod port_t860_frames;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/node_frame_groups.rs"]
+mod node_frame_groups;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/node_frame_groups_reveal.rs"]
+mod node_frame_groups_reveal;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_t860_apply.rs"]
