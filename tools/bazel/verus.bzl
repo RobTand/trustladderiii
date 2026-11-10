@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::stop_frames::owner_waiting_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::stop_frames::endpoint_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::stop_live_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::stop_stopping_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::stop_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -774,6 +776,10 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "stop_frames_stop_owner_waiting_frame": ("kernel::stop_frames#stop_owner_waiting_frame", 1),
+            "stop_frames_pause_endpoint_frame": ("kernel::stop_frames#pause_endpoint_frame", 1),
+            "stop_frames_n4_frames_refl": ("kernel::stop_frames#n4_frames_refl", 1),
+            "stop_frame_reveal_n4_frames_reveal": ("kernel::stop_frame_reveal#n4_frames_reveal", 1),
             "stop_frames_stop_e11_frames": ("kernel::stop_frames#stop_e11_frames", 1),
             "stop_frames_stop_post_intro": ("kernel::stop_frames#stop_post_intro", 1),
             "stop_frame_reveal_stop_frames_reveal": ("kernel::stop_frame_reveal#stop_frames_reveal", 1),
