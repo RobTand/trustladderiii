@@ -383,7 +383,8 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
         removed = obsolete(inputs, overlay)?;
         for (path, bytes) in overlay {
             let mut entry = json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,"sha256":durable::digest(bytes)});
-            let source = path.strip_prefix(&format!("{}fixtures/lib/tl3_harness/", policy::INPUTS))
+            let source = path
+                .strip_prefix(&format!("{}fixtures/lib/tl3_harness/", policy::INPUTS))
                 .filter(|name| name.ends_with(".py"))
                 .map(|name| format!("harness/src/tl3_harness/{name}"))
                 .filter(|source| fs::read(inputs.repo.join(source)).is_ok_and(|raw| raw == *bytes));
@@ -392,7 +393,9 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
                 // hash check binds the copy without uploading the code twice.
                 entry["source"] = source.into();
             } else {
-                entry["data"] = base64::engine::general_purpose::STANDARD.encode(bytes).into();
+                entry["data"] = base64::engine::general_purpose::STANDARD
+                    .encode(bytes)
+                    .into();
             }
             files.push(entry);
         }
@@ -449,8 +452,19 @@ mod tests {
         ]);
         for entry in fs::read_dir(inputs.repo.join("harness/src/tl3_harness")).unwrap() {
             let entry = entry.unwrap();
-            if entry.path().extension().is_some_and(|extension| extension == "py") {
-                overlay.insert(format!("{}fixtures/lib/tl3_harness/{}", policy::INPUTS, entry.file_name().to_str().unwrap()), fs::read(entry.path()).unwrap());
+            if entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "py")
+            {
+                overlay.insert(
+                    format!(
+                        "{}fixtures/lib/tl3_harness/{}",
+                        policy::INPUTS,
+                        entry.file_name().to_str().unwrap()
+                    ),
+                    fs::read(entry.path()).unwrap(),
+                );
             }
         }
         assert!(overlay.values().map(Vec::len).sum::<usize>() > 128 * 1024);
@@ -477,7 +491,9 @@ mod tests {
                 assert!(file.get("data").is_none());
                 fs::read(inputs.repo.join(source)).unwrap()
             } else {
-                base64::engine::general_purpose::STANDARD.decode(file["data"].as_str().unwrap()).unwrap()
+                base64::engine::general_purpose::STANDARD
+                    .decode(file["data"].as_str().unwrap())
+                    .unwrap()
             };
             assert_eq!(bytes, overlay[path]);
             assert_eq!(file["sha256"], durable::digest(&bytes));
