@@ -6359,7 +6359,7 @@ fn x7_plain_slot_matches_consumer_shape() {
 fn x7_request_environment_is_closed_and_names_the_refused_key() {
     let mut f = Fixture::new();
     f.request.environment.insert("UNRECOGNIZED_NAME".into(), "benign".into());
-    let frames = f.call(json!({"op":"prepare_intent","request":f.request,"owner":{"owner":f.intent.owner,"correlation":f.intent.correlation}}));
+    let frames = f.call(json!({"op":"prepare_intent","request":f.request,"owner":f.intent.owner,"correlation":f.intent.correlation}));
     let frame = frames.last().unwrap();
     assert_eq!(frame["kind"], "error", "{frame}");
     assert!(frame.to_string().contains("UNRECOGNIZED_NAME"), "{frame}");
@@ -6372,7 +6372,7 @@ fn x7_flux_uri_is_controller_owned_and_opt_in() {
         let f = Fixture::new();
         let mut request = serde_json::to_value(&f.request).unwrap();
         request["pass_flux_uri"] = json!(enabled);
-        let frames = f.call(json!({"op":"prepare_intent","request":request,"owner":{"owner":f.intent.owner,"correlation":f.intent.correlation}}));
+        let frames = f.call(json!({"op":"prepare_intent","request":request,"owner":f.intent.owner,"correlation":f.intent.correlation}));
         assert_ne!(frames.last().unwrap()["kind"], "error", "{frames:?}");
         let intent = frames.last().unwrap()["result"]["intent"].clone();
         let frames = f.call(json!({"op":"submit","request":request,"intent":intent}));
