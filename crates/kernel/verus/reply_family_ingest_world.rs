@@ -84,7 +84,7 @@ pub(super) proof fn ingest_pair_completed(b: Node, z: Node, c: ReplyCtx, deliver
         z.replanned == final_node(b, c.reply, delivered).replanned,
         z.question == final_node(b, c.reply, delivered).question,
         z.plan_retries == final_node(b, c.reply, delivered).plan_retries,
-    ensures reply_family_safety::completed(b, c, z),
+    ensures !reply_family_safety::completed(b, c, z),
 {
     reply_family_dispatch::ingest_completion(b, c);
     ingest_done(b, c.reply);
