@@ -211,7 +211,7 @@ pub(super) proof fn frame_fields(b: Node, n: Node)
 }
 
 pub(super) proof fn failed_round_frame(n: Node, nq: u64, fast: bool, step: ReviewStop)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires true, arithmetic_consistent(n), nq < u64::MAX,
     ensures facts_family_values::tail_frame(n,
         reply_family_values::finish(nq, reply_family_values::failed_round(n, fast, step))),
         reply_family_values::next_question(nq, reply_family_values::failed_round(n, fast, step))
