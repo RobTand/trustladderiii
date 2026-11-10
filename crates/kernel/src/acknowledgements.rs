@@ -864,7 +864,7 @@ fn ack_retry_restart_value(n: Node, i: usize, nq: u64, out: Outbox) -> (result: 
     let m = Node { fx_failures: 0, fx_incidents: count, ..n };
     let needs_rob = m.fx_incidents >= 2;
     let m = ack_abandon_value(m);
-    let m = Node { pos: operation_start(m.phase), generation: m.generation + 1, ..m };
+    let m = Node { pos: operation_start(m.phase), generation: m.generation, ..m };
     let (m, _) = incident_value(m, i, needs_rob);
     let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
     (m, nq, output)
