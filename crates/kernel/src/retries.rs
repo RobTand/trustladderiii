@@ -563,7 +563,7 @@ fn out_of_room_ask(node: Node) -> (result: ReplyChange) [
     ensures result == reply_family_values::room_ask(node),
 ] {
     ReplyChange::Ask { node, kind: QKind::OutOfCredit,
-        cont: Cont::Planning { must_split: true }, cost: 1, }
+        cont: Cont::Planning { must_split: true }, cost: 0, }
 }
 }
 
