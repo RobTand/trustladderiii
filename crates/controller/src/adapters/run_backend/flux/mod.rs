@@ -698,7 +698,12 @@ impl Flux {
         emit: &mut dyn FnMut(&Event) -> Result<()>,
     ) -> Result<Observation> {
         let record = self.journal.load(owner)?;
-        self.instance(&record)?;
+        if let Err(error) = self.instance(&record) {
+            return Ok(Observation::Unknown {
+                binding: record.binding,
+                reason: error.message,
+            });
+        }
         if let Some(terminal) = record.terminal {
             self.retire_scratch_debt(owner, &terminal)?;
             if terminal.ending == Ending::InfraLost {

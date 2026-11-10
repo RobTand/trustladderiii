@@ -2083,7 +2083,7 @@ fn jobspec_admits_declared_memory_as_rounded_gib_leaves_and_preserves_original()
 fn malformed_memory_jobspec_shape_never_dispatches() {
     for replacement in [
         "spec['resources'][0]['count']=2",
-        "spec['resources'][0]['with'][0]['count']=2",
+        "spec['resources'][0]['with'][0]['count']=0",
         "spec['resources'][0]['with'].append({'type':'memory','count':1})",
         "spec['resources'][0]['with'][0]['count']=3",
     ] {

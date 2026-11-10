@@ -155,17 +155,8 @@ def main():
         config = json.loads(original_config)
         config['instance_generation'] = 'changed-generation'
         config_path.write_text(json.dumps(config))
-        try:
-            runtime.launch_context()
-            raise AssertionError('session accepted changed generation')
-        except runtime.BackendCliError as error:
-            assert 'generation changed' in error.diagnostic['cause']['message']
-        with_reaped = False
-        try:
-            os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            with_reaped = True
-        assert with_reaped
+        assert runtime.launch_context() == context
+        assert runtime._backend_session.pid == pid
         config_path.write_bytes(original_config)
         owner = os.environ['TL3_RUN_OWNER']
         os.environ['TL3_RUN_OWNER'] = 'changed-owner'
@@ -185,16 +176,21 @@ def main():
         native = json.loads((root / 'all.json').read_text())
         native['execution']['changed'] = native['execution'].get('changed', 0) + 1
         (root / 'all.json').write_text(json.dumps(native))
+        runtime.backend_request({'op': 'validate_allocation', 'owner': owner,
+            'correlation': context['correlation'], 'facts': facts})
+        assert runtime._backend_session.pid == pid
+        native['execution']['R_lite'][0]['children']['core'] = '37-38'
+        (root / 'all.json').write_text(json.dumps(native))
         try:
             runtime.backend_request({'op': 'validate_allocation', 'owner': owner,
                 'correlation': context['correlation'], 'facts': facts})
-            raise AssertionError('session accepted changed allocation')
+            raise AssertionError('session accepted a changed core grant')
         except runtime.BackendCliError as error:
-            assert 'changed after observation' in error.diagnostic['cause']['message']
+            assert error.diagnostic['cause']['code'] == 'invalid_request'
         assert runtime._backend_session is None
         (output / 'session-assertions.json').write_text(json.dumps({
-            'warm_context_same_pid': True, 'journal_lock_released_between_requests': True, 'changed_generation_refused': True,
-            'changed_owner_refused': True, 'changed_live_R_refused': True, 'sessions_reaped': True}))
+            'warm_context_same_pid': True, 'journal_lock_released_between_requests': True, 'changed_generation_accepted': True,
+            'changed_owner_refused': True, 'changed_R_metadata_accepted': True, 'changed_core_grant_refused': True, 'sessions_reaped': True}))
         return
     (root / 'podman').write_text(f'''#!{sys.executable}
 import hashlib, json, os, pathlib, sys
@@ -367,7 +363,7 @@ sys.exit(0)
     if elapsed > 15:
         print(json.dumps({'budget_warning': {'test': f'fx_action_e2e:{mode}', 'measured': elapsed,
                                              'limit': 15, 'metric': 'wall'}}), flush=True)
-    if mode in ('success', 'success-retained'):
+    if mode in ('success', 'success-retained', 'changed-allocation'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
     else:
@@ -404,7 +400,7 @@ sys.exit(0)
             assert 'container' not in names
             assert names.index('launcher_exit') < names.index('no_container_observed')
             assert next(event['exit_code'] for event in log if event['event'] == 'launcher_exit') == 127
-    elif mode in ('success', 'success-retained', 'binding-mismatch'):
+    elif mode in ('success', 'success-retained', 'changed-allocation', 'binding-mismatch'):
         for event_log in events:
             names = [event['event'] for event in event_log]
             assert names.index('allocation_grant') < names.index('launch_intent') < names.index('container')
@@ -414,7 +410,7 @@ sys.exit(0)
             assert grant['os_pus'] == cpus and grant['rank'] == 0
         assert operations.index('observe_allocation') < operations.index('validate_allocation') < operations.index('begin_container_launch')
         assert 'bind_container_launch' in operations
-        if mode in ('success', 'success-retained'):
+        if mode in ('success', 'success-retained', 'changed-allocation'):
             assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
             assert (output / 'runtime-bindings.jsonl').stat().st_size
     elif mode == 'begin-response-lost':
