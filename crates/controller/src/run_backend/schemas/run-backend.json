@@ -2360,6 +2360,13 @@
       "description": "Host-runner plumbing, not scheduler attestation or own-cgroup qualification.",
       "type": "object",
       "properties": {
+        "coordinator_uri": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "correlation": {
           "type": "string"
         },
@@ -2841,6 +2848,13 @@
         },
         "executable": {
           "type": "string"
+        },
+        "instance_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "instance_generation": {
           "type": "string"
@@ -3770,6 +3784,10 @@
           ],
           "format": "uint32",
           "minimum": 1
+        },
+        "pass_flux_uri": {
+          "type": "boolean",
+          "default": false
         },
         "repo": {
           "type": "string"

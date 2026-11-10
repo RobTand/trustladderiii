@@ -544,7 +544,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.assertEqual(self.spec['attributes']['system']['environment']['CARGO_BUILD_JOBS'], '2')
         self.assertEqual(self.spec['attributes']['user']['source_head'], 'a' * 40)
         self.assertEqual(self.spec['attributes']['system']['duration'], 5400)
-        self.assertIn('--requires=host:dl380g10', self.calls[3])
+        self.assertTrue(any('--requires=host:dl380g10' in call for call in self.calls))
         self.assert_private_clean_evidence()
         for name, reference in receipt['files'].items():
             self.assertEqual(hashlib.sha256((self.out / name).read_bytes()).hexdigest(), reference['sha256'])

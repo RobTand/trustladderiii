@@ -4,6 +4,13 @@
   "description": "Host-runner plumbing, not scheduler attestation or own-cgroup qualification.",
   "type": "object",
   "properties": {
+    "coordinator_uri": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
     "correlation": {
       "type": "string"
     },

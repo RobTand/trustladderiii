@@ -157,7 +157,7 @@ fn execution_selection_validates_only_the_selected_backend() {
 }
 
 #[test]
-fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
+fn flux_access_requires_runtime_locator_shared_roots_and_immutable_image() {
     for (field, value) in [
         ("executable", "flux"),
         ("backend_cli", "tl3-run-backend"),
@@ -172,7 +172,7 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
         ("container_image", "registry.example/harness:latest"),
     ] {
         let mut document = flux_document();
-        document["flux"][field] = value.into();
+        document["flux"].as_table_mut().unwrap().insert(field.into(), value.into());
         assert!(
             Config::parse(&toml::to_string(&document).unwrap()).is_err(),
             "accepted invalid {field}"
