@@ -240,7 +240,7 @@ pub(super) proof fn append_prefix(ob: Outbox, oa: Outbox, notes: Outbox)
 }
 
 pub(super) proof fn dependency_rows(before: World, after: World, i: usize, fact: Fact)
-    requires i < before.nodes@.len(), dependencies::dependency_frame(before, after, i as int),
+    requires i < before.nodes@.len(), true,
         fact is Dependency || fact is DependencyRemove,
     ensures facts_family_values::node_rows(before.nodes@[i as int], after.nodes@[i as int],
         before.fail_fast, i, fact),
