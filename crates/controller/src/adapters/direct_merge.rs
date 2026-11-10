@@ -647,24 +647,54 @@ impl Adapter {
             })
             .and_then(|row| row.value["base_sha"].as_str())
             .filter(|base| head(base).is_ok());
-        let base_moved = if checked_base == Some(pull.base.sha.as_str()) {
-            None
-        } else {
-            let reason = match checked_base {
-                Some(base) => format!("base moved: checked {base}, current {}", pull.base.sha),
-                None => format!(
-                    "base moved: checked base unavailable for approved head {}, current {}",
-                    approved_sha,
-                    pull.base.sha
-                ),
+        let mut base_moved = None;
+        if pull.merged_at.is_none() && pull.state == "open" && head(&pull.head.sha)? == approved {
+            // Pull metadata is not a live branch-tip read. Read the second pull's base last.
+            let branch = match self.runtime.block_on(github.branch(&repo, &pull.base.branch)) {
+                Ok(branch) => branch,
+                Err(error) => {
+                    self.record_base_move(
+                        d,
+                        &serde_json::json!({
+                            "head": approved_sha,
+                            "checked_base": checked_base,
+                            "current_base": null,
+                            "pr_base_sha": pull.base.sha,
+                            "reason": format!(
+                                "base moved: live tip read failed for branch {}: {error}",
+                                pull.base.branch
+                            ),
+                        }),
+                    )?;
+                    return Err(error.into());
+                }
             };
-            Some(serde_json::json!({
-                "head": approved_sha,
-                "checked_base": checked_base,
-                "current_base": pull.base.sha,
-                "reason": reason,
-            }))
-        };
+            let current_base = branch
+                .as_ref()
+                .map(|branch| branch.commit.sha.as_str())
+                .filter(|base| head(base).is_ok());
+            if current_base.is_none() || checked_base != current_base {
+                let reason = match (checked_base, current_base) {
+                    (_, None) => format!(
+                        "base moved: live tip unavailable for branch {}",
+                        pull.base.branch
+                    ),
+                    (Some(base), Some(current)) => {
+                        format!("base moved: checked {base}, current {current}")
+                    }
+                    (None, Some(current)) => format!(
+                        "base moved: checked base unavailable for approved head {approved_sha}, current {current}"
+                    ),
+                };
+                base_moved = Some(serde_json::json!({
+                    "head": approved_sha,
+                    "checked_base": checked_base,
+                    "current_base": current_base,
+                    "pr_base_sha": pull.base.sha,
+                    "reason": reason,
+                }));
+            }
+        }
         Ok(Read {
             facts: Facts {
                 approved,
@@ -691,6 +721,13 @@ impl Adapter {
             method,
             base_moved,
         })
+    }
+    fn record_base_move(&self, d: &Delivery, record: &serde_json::Value) -> Result<()> {
+        self.write(
+            Write::Receipt,
+            &self.records.path(&d.key).with_extension("base-moved"),
+            &serde_json::to_vec(record)?,
+        )
     }
     fn fact(&self, d: &Delivery, outcome: DeliveryOutcome) -> Result<Completion> {
         let suffix = match &outcome {
@@ -768,11 +805,7 @@ impl Adapter {
             )?,
             Outcome::Conflict => {
                 if let Some(record) = &read.base_moved {
-                    self.write(
-                        Write::Receipt,
-                        &self.records.path(&d.key).with_extension("base-moved"),
-                        &serde_json::to_vec(record)?,
-                    )?;
+                    self.record_base_move(d, record)?;
                 }
                 self.fact(
                     d,
