@@ -117,6 +117,9 @@ pub(super) proof fn ingest_audit_rows(b: Node, reply: Reply, delivered: bool)
             z.phase == Phase::Stopping(Outcome::Stopped) && z.question.is_none()
                 && z.review_stop == Some(ReviewStop::AuditDisagreement) && z.credit == b.credit
         },
+        reply == Reply::AuditDisagrees ==> reply_family_values::ingest(b, reply)
+            == (ReplyChange::Done { node: port_t860_contracts::audit_node(b), note: None }),
+
 {
     reveal(final_node);
     if reply == Reply::AuditDisagrees {
