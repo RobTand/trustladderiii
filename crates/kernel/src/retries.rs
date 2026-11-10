@@ -300,7 +300,7 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
-        stop_for_review(m, step);
+        ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
         kernel_proof! {
             if !(before_room@.phase is Closed || before_room@.phase is Stopping) {
                 handler_safety::stop_ladder(before_room@, step, before_room_out@);
