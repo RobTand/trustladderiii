@@ -218,7 +218,7 @@ pub(super) proof fn empty_merge_notices(n: Node, notes: Outbox, i: usize,
 pub(super) proof fn ordinary_outputs(n: Node, notes: Outbox, i: usize, fact: Fact)
     requires matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
             | Fact::Conflict | Fact::IncidentCleared { .. }),
-        notes.len == ordinary_items(n, i, fact).len(),
+        true,
         notes.items@ =~= padded_notices(ordinary_items(n, i, fact)),
     ensures notices(notes, i, 1), retirement::notices_only(notes),
         fact is Priority || fact is Conflict || fact is IncidentCleared ==> notes.len == 0,
