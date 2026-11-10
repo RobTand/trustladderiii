@@ -6394,8 +6394,12 @@ fn x7_flux_uri_is_controller_owned_and_opt_in() {
         .unwrap();
         assert_eq!(
             spec["attributes"]["system"]["environment"].get("FLUX_URI"),
-            enabled.then(|| json!(f.options.uri)).as_ref()
+            None,
+            "the controller must leave URI injection to the stock job shell"
         );
+        let context = f.call(json!({"op":"launch_context", "owner":f.intent.owner,
+            "correlation":f.intent.correlation, "job":"fABC"}));
+        assert_eq!(context.last().unwrap()["result"]["context"]["pass_flux_uri"], json!(enabled), "{context:?}");
     }
 }
 
