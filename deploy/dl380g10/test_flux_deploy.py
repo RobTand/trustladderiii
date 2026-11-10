@@ -65,6 +65,22 @@ class FluxAdmissionTests(unittest.TestCase):
         self.drift = False
         patch.object(fx, 'native', self.native).start()
 
+    def test_x7_instance_access_uses_fleet_rank_and_socket_resolver(self):
+        locator = self.root / 'INSTANCE'
+        locator.write_text(str(self.root) + ' current-run\n')
+        helper = self.root / 'flux-uri.sh'
+        helper.write_text('#!/bin/sh\nprintf "local:///job-host/run/local-2\\n"\n')
+        helper.chmod(0o700)
+        with patch.object(fx, 'INSTANCE', locator), patch.object(
+                fx.socket, 'gethostname', side_effect=AssertionError('duplicate rank mapping')):
+            executable, environment = fx.instance_access()
+        self.assertEqual(executable, self.root / 'install/bin/flux')
+        self.assertEqual(environment['FLUX_URI'], 'local:///job-host/run/local-2')
+        helper.write_text('#!/bin/sh\nprintf "local:///bad,ro=false\\n"\n')
+        with patch.object(fx, 'INSTANCE', locator):
+            with self.assertRaisesRegex(RuntimeError, 'resolver refused'):
+                fx.instance_access()
+
     def native(self, *args, **kwargs):
         self.calls.append(args)
         if args[0] == 'getattr':

@@ -224,7 +224,11 @@ fn qualified_identity_and_exact_planned_deployment_pass_staging_boundary() {
     let raw = fs::read(&fixture.flux.activation.as_ref().unwrap().record).unwrap();
     let text = String::from_utf8(raw).unwrap();
     assert!(text.contains("planned_fresh_init"));
-    for private in ["local:///fixture", "runtime", "/usr/bin:/bin"] {
+    for private in [
+        "local:///fixture",
+        "\"instance_generation\"",
+        "/usr/bin:/bin",
+    ] {
         assert!(!text.contains(private));
     }
 }
