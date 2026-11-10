@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::start_unobstructed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::pool_grant": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::ready_unobstructed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::slot_grant": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::same": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -758,6 +760,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "ranks_advance_start_value": ("kernel::ranks#advance_start_value", 1),
+            "advance_family_post_start_item": ("kernel::advance_family_post#start_item", 1),
             "advance_family_post_slot_grant_from_value": ("kernel::advance_family_post#slot_grant_from_value", 1),
             "advance_family_post_ready_item": ("kernel::advance_family_post#ready_item", 1),
             "ranks_pending_rank_definition": ("kernel::ranks#pending_rank_definition", 1),
