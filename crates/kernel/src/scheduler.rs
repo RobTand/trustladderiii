@@ -96,7 +96,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
                 && slot_spec(*old(w), older)
                 && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
-                ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
+                ==> result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
