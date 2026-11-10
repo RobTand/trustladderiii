@@ -75,6 +75,9 @@ mod retirement_witness;
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/ack_family_safety.rs"]
+mod ack_family_safety;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_safety.rs"]
 mod apply_safety;
 #[cfg(verus_keep_ghost)]
