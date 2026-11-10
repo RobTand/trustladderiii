@@ -5,16 +5,56 @@ use serde_json::{Value, json};
 
 #[path = "before.rs"]
 mod before;
-#[path = "evidence-current.rs"]
-mod current;
 
 mod campaign_case;
 mod producer_cases;
 mod tessera_case;
 
+/// A fixture check run's controller identity, with no execution transport.
+#[derive(serde::Deserialize)]
+struct Job {
+    delivery: crate::executor::Delivery,
+    run: super::super::CheckRun,
+    changed_paths: Vec<String>,
+    selected_tests: Option<u32>,
+    always_tests: Vec<String>,
+}
+impl ReportJob for Job {
+    fn report_context(&self) -> ReportContext<'_> {
+        ReportContext {
+            delivery: &self.delivery,
+            run: &self.run,
+            changed_paths: &self.changed_paths,
+            selected_tests: self.selected_tests,
+            always_tests: &self.always_tests,
+        }
+    }
+}
+
+/// The verified-log ending that before.rs, the frozen pre-extraction judge, reads.
+/// Only that oracle uses it; the transport it modelled was removed with PrismaBuild.
+#[derive(serde::Deserialize)]
+struct Ending {
+    status: String,
+    succeeded: bool,
+    exit_code: Option<i32>,
+    result: Option<Evidence>,
+}
+#[derive(serde::Deserialize)]
+struct Evidence {
+    verified: bool,
+    receipt_sha256: Option<String>,
+    stdout: Log,
+}
+#[derive(serde::Deserialize)]
+struct Log {
+    path: std::path::PathBuf,
+    bytes: u64,
+    sha256: String,
+}
+
 fn fixture(base: &str, head: &str, passed: bool, pre_existing: bool) -> (Job, Value) {
     let job: Job = serde_json::from_value(json!({
-        "action": "a".repeat(64),
         "delivery": {"key": "checks:822", "epoch": 1,
             "output": {"Effect": {"node": 0, "kind": "SubmitChecks", "seq": 1, "head": null}},
             "generation": 1, "head_sha": "b".repeat(40),
@@ -40,15 +80,14 @@ fn raw(report: &Value) -> Vec<u8> {
 
 fn ending(raw: &[u8]) -> Ending {
     serde_json::from_value(json!({
-        "action_key": "a".repeat(64), "status": "executed", "succeeded": true, "exit_code": 0,
+        "status": "executed", "succeeded": true, "exit_code": 0,
         "result": {"verified": true, "receipt_sha256": "c".repeat(64), "stdout": {
             "path": "/recorded/stdout", "bytes": raw.len(), "sha256": format!("{:x}", Sha256::digest(raw))}},
     })).unwrap()
 }
 
 fn evaluate(job: &Job, report: &Value) -> CheckEvidence {
-    let raw = raw(report);
-    evidence_with_read(ending(&raw), job, |_| Ok(raw.clone())).unwrap()
+    judge_payload(&raw(report), &job.report_context(), true).unwrap()
 }
 
 /// FX / Q51: transport success requires a matching, semantically judged daytime report.
@@ -293,29 +332,27 @@ fn disagreement_uses_the_confirmed_harness_class() {
     assert_eq!(JUDGE_MISMATCH_CLASS, Some(HARNESS));
 }
 
+/// The completion the Flux daytime path builds from a verified successful run's report.
 async fn fixture_completion(job: &Job, bytes: &[u8]) -> Completion {
-    let directory = tempfile::tempdir().unwrap();
-    let log = directory.path().join("stdout");
-    std::fs::write(&log, bytes).unwrap();
-    let response = json!({"schema":"prismabuild.endings.v1","complete":true,
-        "endings":[{"action_key":job.action,"status":"executed","succeeded":true,"exit_code":0,
-            "result":{"verified":true,"receipt_sha256":"c".repeat(64),"stdout":{
-                "path":log,"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(bytes))}}}]});
-    let path = directory.path().join("endings.json");
-    std::fs::write(&path, serde_json::to_vec(&response).unwrap()).unwrap();
-    let tool = Tool {
-        program: "/bin/sh".into(),
-        args: vec![
-            "-c".into(),
-            "cat \"$1\"".into(),
-            "pbwait-fixture".into(),
-            path.into_os_string(),
-        ],
-    };
-    super::ending(&tool, job, false, &tl3_prismabuild::RecordRead::Absent)
-        .await
-        .unwrap()
-        .unwrap()
+    let context = job.report_context();
+    let action_key = "a".repeat(64);
+    let (report, pass, results, failed, class, diagnostic) =
+        judge_payload(bytes, &context, true).unwrap();
+    let mut completion =
+        completion_for(&context, &action_key, report, pass, results, failed).unwrap();
+    completion.failure_class = class.map(Into::into);
+    if let Some(diagnostic) = diagnostic {
+        completion.observations.insert(
+            0,
+            Observation::CheckExecutionFailure {
+                node: job.delivery.node(),
+                generation: job.delivery.generation,
+                action_key,
+                diagnostic,
+            },
+        );
+    }
+    completion
 }
 
 async fn mismatch_completion(base: &str, python_passed: bool) {
@@ -511,14 +548,11 @@ fn normalized(value: Result<CheckEvidence>) -> Value {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
-    /// #822 extraction: execute both production shells against per-call File schedules.
-    /// No clocks or durable writes occur here, so there is no persisted crash state.
+    /// #822 extraction, judgment only: once the transport has verified a report, the frozen
+    /// pre-extraction shell and the current judge agree on every report shape. The PB log
+    /// transport and its I/O schedule were removed with PrismaBuild.
     #[test]
-    fn evidence_io_schedule_matches_before_extraction(
-        shape in 0u8..6, opens in prop::collection::vec(any::<bool>(), 0..5),
-        reads in prop::collection::vec((0u8..5, prop::collection::vec(any::<u8>(), 0..96)), 0..8),
-        transport_valid in any::<bool>(), successful in any::<bool>(),
-    ) {
+    fn judgment_matches_before_extraction(shape in 0u8..6, successful in any::<bool>()) {
         let (job, mut report) = match shape {
             0 => fixture("error", "assertion", true, true),
             1 => fixture("passed", "passed", true, false),
@@ -531,15 +565,8 @@ proptest! {
             report["results"][0]["tests"][0]["phases"] = json!({"head": phases("passed", false)});
         }
         let original = raw(&report);
-        let schedule: Vec<_> = reads.into_iter().map(|(kind, bytes)| match kind {
-            0 | 1 => recorded_io::Step::Bytes(original.clone()),
-            2 => recorded_io::Step::Bytes(bytes),
-            3 => recorded_io::Step::Bytes(vec![]),
-            _ => recorded_io::Step::Fail,
-        }).collect();
         let make_ending = || {
             let mut ending = ending(&original);
-            if !transport_valid { ending.result.as_mut().unwrap().verified = false; }
             if !successful {
                 ending.status = "failed".into();
                 ending.succeeded = false;
@@ -548,17 +575,10 @@ proptest! {
             }
             ending
         };
-        let (mut old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
+        let (mut old, _) = recorded_io::run(vec![], vec![recorded_io::Step::Bytes(original.clone())],
             || normalized_before(before::run(make_ending(), &job)));
-        let (pinned, pinned_calls) = recorded_io::run(opens.clone(), schedule.clone(),
-            || normalized(current::run(make_ending(), &job)));
-        let (new, new_calls) = recorded_io::run(opens, schedule,
-            || normalized(evidence(make_ending(), &job)));
-        prop_assert_eq!(&pinned_calls, &new_calls);
-        prop_assert_eq!(&pinned, &new);
-        prop_assert_eq!(old_calls, new_calls);
-        // Q51/#849 changes the class only for successful PB with parsed no-report.
-        // All reads, findings, results and other outcomes still match the frozen shell.
+        let new = normalized(judge_payload(&original, &job.report_context(), successful));
+        // Q51/#849 changes the class only for a successful run with parsed no-report.
         if successful && shape == 2 && old["results"].as_array().is_some_and(|r| !r.is_empty()) {
             prop_assert_eq!(&old["class"], &Value::Null);
             old["class"] = json!(HARNESS);
@@ -688,7 +708,15 @@ fn tessera_1194_mismatch_keeps_the_real_failed_check() {
     let (job, report) = tessera();
     let (reported, passed, results, failed, class, diagnostic) = evaluate(&job, &report);
     assert!(diagnostic.is_none());
-    let completion = completion(&job, reported, passed, results.clone(), failed.clone()).unwrap();
+    let completion = completion_for(
+        &job.report_context(),
+        &"a".repeat(64),
+        reported,
+        passed,
+        results.clone(),
+        failed.clone(),
+    )
+    .unwrap();
     println!(
         "TESSERA_COMPLETION {}",
         serde_json::to_string(&completion).unwrap()
@@ -777,7 +805,7 @@ fn missing_and_truncated_reports_remain_unclassified() {
         b"TL3_CHECKS {\"schema\":\"future\"",
         b"\xff",
     ] {
-        let result = evidence_with_read(ending(raw), &job, |_| Ok(raw.to_vec())).unwrap();
+        let result = judge_payload(raw, &job.report_context(), true).unwrap();
         assert!(!result.0 && !result.1 && result.2.is_empty() && result.3.is_empty());
         assert_eq!(result.4, None);
     }
@@ -882,7 +910,15 @@ async fn review_848_syntax_failure_keeps_the_base_completion() {
             vec![recorded_io::Step::Bytes(bytes.to_vec())],
             || before::run(ending(bytes), &job).unwrap(),
         );
-        let mut base = completion(&job, reported, passed, results, failed).unwrap();
+        let mut base = completion_for(
+            &job.report_context(),
+            &"a".repeat(64),
+            reported,
+            passed,
+            results,
+            failed,
+        )
+        .unwrap();
         base.failure_class = class.map(Into::into);
         let current = fixture_completion(&job, bytes).await;
         assert_eq!(
@@ -900,37 +936,17 @@ async fn review_848_syntax_failure_keeps_the_base_completion() {
     assert_eq!(schema_failure.failure_class.as_deref(), Some(HARNESS));
 }
 
-/// #849 differential pin: preserve the frozen reference and pin today's evidence shell.
-#[test]
-fn current_evidence_shell_matches_production() {
-    let pin = include_str!("evidence-current.rs");
-    let body = pin
-        .split("// BEGIN BODY\n")
-        .nth(1)
-        .unwrap()
-        .split("\n// END BODY")
-        .next()
-        .unwrap();
-    assert!(include_str!("../../results.rs").contains(body));
-}
-
 /// #826/#849: stderr diagnostics do not replace the trusted NoReport classification.
 #[test]
 fn no_report_keeps_harness_class_and_operator_stderr() {
     let (job, report) = fixture("no-report", "passed", false, false);
     let mut bytes = raw(&report);
     bytes.extend_from_slice(b"TL3_EXECUTION_FAILURE {\"outcome\":\"setup_failure\",\"phase\":\"container_start\",\"termination_reason\":\"incomplete_report\",\"test_started\":false,\"stderr_tail\":\"container shim refused: pid limit reached\"}\n");
-    for status in ["executed", "cache_hit", "failed"] {
-        let mut terminal = ending(&bytes);
-        terminal.status = status.into();
-        if status == "failed" {
-            terminal.succeeded = false;
-            terminal.exit_code = Some(1);
-        }
+    for successful in [true, false] {
         let (reported, passed, results, failed, class, diagnostic) =
-            evidence_with_read(terminal, &job, |_| Ok(bytes.clone())).unwrap();
+            judge_payload(&bytes, &job.report_context(), successful).unwrap();
         assert!(!reported && !passed && !results.is_empty() && !failed.is_empty());
-        assert_eq!(class, (status != "failed").then_some(HARNESS));
+        assert_eq!(class, successful.then_some(HARNESS));
         assert_eq!(
             serde_json::to_value(diagnostic.unwrap()).unwrap()["stderr_tail"],
             "container shim refused: pid limit reached"

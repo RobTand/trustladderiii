@@ -311,7 +311,7 @@ def collect_binaries(manifest):
                              'command': [artifact['executable']], 'custom': custom})
     # Start the longest binaries first to avoid a serial tail at the end of the gate.
     longest = ['workers', 'github-flow', 'github-notices', 'publishing', 'direct_merge',
-               'prismabuild', 'crash_safety', 'simulation', 'looks', 'hindsight',
+               'crash_safety', 'simulation', 'looks', 'hindsight',
                'postgres', 'tl3_controller', 'worktrees', 'fixture_lifecycle']
     order = {name: index for index, name in enumerate(longest)}
     return sorted(binaries, key=lambda binary: (order.get(binary['name'].split('/')[-1], len(order)), binary['name']))

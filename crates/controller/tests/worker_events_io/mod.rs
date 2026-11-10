@@ -14,6 +14,22 @@ mod f2_compat;
 mod io;
 use f2_compat as pre_fix;
 mod reference;
+/// The frozen reference parses PrismaBuild action keys with the removed crate's
+/// exact rule: 64 lowercase hex characters.
+mod tl3_prismabuild {
+    pub struct ActionKey;
+    impl std::str::FromStr for ActionKey {
+        type Err = ();
+        fn from_str(value: &str) -> Result<Self, ()> {
+            (value.len() == 64
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+            .then_some(Self)
+            .ok_or(())
+        }
+    }
+}
 
 #[derive(Debug)]
 struct ParsedEvent {
@@ -42,13 +58,113 @@ fn outcome(result: Result<Observation>) -> Value {
         Err(e) => json!({"error":e.to_string(),"debug":format!("{e:?}")}),
     }
 }
+/// The one intended owner difference: the reference waits on PrismaBuild action keys,
+/// current accepts only Flux worker references. serde_json writes `{"key":K,"upstream":O}`;
+/// adding `worker:` (+7 bytes) while `prismabuild` becomes `flux` (-7 bytes) keeps every
+/// byte offset. The current side reads the same stream under its own owner, and its
+/// outcome compares under the reference's names. Escaped copies (in error text) swap too.
+pub(super) fn flux_names(bytes: &[u8]) -> Vec<u8> {
+    swap_names(bytes, true)
+}
+pub(super) fn reference_names(bytes: &[u8]) -> Vec<u8> {
+    swap_names(bytes, false)
+}
+/// Strings and recorded byte arrays (JSON arrays of byte values) swap names too.
+pub(super) fn reference_value(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => match items
+            .iter()
+            .map(|item| item.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+            .collect::<Option<Vec<u8>>>()
+        {
+            Some(raw) if !raw.is_empty() => json!(reference_names(&raw)),
+            _ => Value::Array(items.iter().map(reference_value).collect()),
+        },
+        Value::Object(map) => {
+            let mut map: serde_json::Map<_, _> = map
+                .iter()
+                .map(|(key, value)| (key.clone(), reference_value(value)))
+                .collect();
+            // A structured wait, as recorded by the store shim.
+            if map.get("upstream").and_then(Value::as_str) == Some("flux")
+                && let Some(key) = map
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .and_then(|key| key.strip_prefix("worker:"))
+                    .map(str::to_owned)
+            {
+                map.insert("upstream".into(), json!("prismabuild"));
+                map.insert("key".into(), json!(key));
+            }
+            Value::Object(map)
+        }
+        Value::String(text) => {
+            Value::String(String::from_utf8(reference_names(text.as_bytes())).unwrap())
+        }
+        other => other.clone(),
+    }
+}
+/// The current parser and the F2 shell (which delegates event parsing to production)
+/// read the stream under the Flux owner; their outcomes compare under the reference's.
+fn current_outcome(bytes: &[u8], d: &Delivery, inputs: &Value) -> Value {
+    reference_value(&outcome(current::parse_reply(
+        &flux_names(bytes),
+        d,
+        inputs,
+    )))
+}
+fn pre_fix_outcome(bytes: &[u8], d: &Delivery, inputs: &Value) -> Value {
+    reference_value(&outcome(pre_fix::parse_reply(
+        &flux_names(bytes),
+        d,
+        inputs,
+    )))
+}
+fn swap_names(bytes: &[u8], to_flux: bool) -> Vec<u8> {
+    let mut bytes = bytes.to_vec();
+    for quote in [r#"""#, r#"\""#, r#"\\\""#] {
+        let form = |text: &str| text.replace('"', quote).into_bytes();
+        let (pb_owner, flux_owner) = (
+            form(r#"","upstream":"prismabuild""#),
+            form(r#"","upstream":"flux""#),
+        );
+        let (pb_key, flux_key) = (form(r#""key":""#), form(r#""key":"worker:"#));
+        let (owner_from, key_from, owner_to, key_to) = if to_flux {
+            (pb_owner, pb_key, flux_owner, flux_key)
+        } else {
+            (flux_owner, flux_key, pb_owner, pb_key)
+        };
+        let find = |haystack: &[u8], needle: &[u8]| {
+            haystack.windows(needle.len()).position(|w| w == needle)
+        };
+        let rfind = |haystack: &[u8], needle: &[u8]| {
+            haystack.windows(needle.len()).rposition(|w| w == needle)
+        };
+        let mut out = Vec::with_capacity(bytes.len());
+        let (mut done, mut at) = (0, 0);
+        while let Some(owner) = find(&bytes[at..], &owner_from).map(|i| i + at) {
+            if let Some(key) = rfind(&bytes[done..owner], &key_from).map(|i| i + done) {
+                out.extend_from_slice(&bytes[done..key]);
+                out.extend_from_slice(&key_to);
+                out.extend_from_slice(&bytes[key + key_from.len()..owner]);
+                out.extend_from_slice(&owner_to);
+                done = owner + owner_from.len();
+            }
+            at = owner + owner_from.len();
+        }
+        out.extend_from_slice(&bytes[done..]);
+        assert_eq!(out.len(), bytes.len(), "owner names must keep offsets");
+        bytes = out;
+    }
+    bytes
+}
 fn parity(bytes: &[u8], postmortem: bool, inputs: &Value) -> Value {
     let d = delivery(postmortem);
     let old = outcome(reference::parse_reply(bytes, &d, inputs));
-    let new = outcome(current::parse_reply(bytes, &d, inputs));
+    let new = current_outcome(bytes, &d, inputs);
     assert_eq!(
         old,
-        outcome(pre_fix::parse_reply(bytes, &d, inputs)),
+        pre_fix_outcome(bytes, &d, inputs),
         "F1/F2 reference drift: stream={bytes:?}"
     );
     // The sole intended divergence: the old parser accepts a non-final quota
@@ -269,7 +385,7 @@ fn parser_roundtrip() {
         let (value, expected) = match kind {
             0 => (json!({"event":"progress","unit":"model_turn"}), WorkerEvent::Progress {unit:ProgressUnit::ModelTurn}),
             1 => (json!({"event":"progress","unit":"tool_result"}), WorkerEvent::Progress {unit:ProgressUnit::ToolResult}),
-            2 => (json!({"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":key}}), WorkerEvent::Progress {unit:ProgressUnit::ExternalWait}),
+            2 => (json!({"event":"progress","unit":"external_wait","wait":{"upstream":"flux","key":format!("worker:{key}")}}), WorkerEvent::Progress {unit:ProgressUnit::ExternalWait}),
             3 => (json!({"event":"reply","role":role,"reply":{"arbitrary":"payload"}}), WorkerEvent::Reply),
             4 => (json!({"event":"quota","role":role,"reset_ms":reset}), WorkerEvent::Quota {model:QuotaModel::Implicit,reset_ms:Some(reset),facts:None}),
             5 => (json!({"event":"quota","role":role,"reset_ms":reset,"model":"grade"}), WorkerEvent::Quota {model:if postmortem {QuotaModel::Grade} else {QuotaModel::Forbidden},reset_ms:Some(reset),facts:None}),
@@ -279,7 +395,7 @@ fn parser_roundtrip() {
         let parsed=super::parse_event(&bytes,Some(role),postmortem,&json!({"grade_model":"grade"})).unwrap();
         prop_assert_eq!(parsed.event,expected);
         prop_assert_eq!(&parsed.value,&value);
-        if kind==2 {prop_assert_eq!(&parsed.wait.as_ref().unwrap().key,&key);}
+        if kind==2 {prop_assert_eq!(&parsed.wait.as_ref().unwrap().key,&format!("worker:{key}"));}
         let encoded=serde_json::to_vec(&parsed.value).unwrap();
         let again=super::parse_event(&encoded,Some(role),postmortem,&json!({"grade_model":"grade"})).unwrap();
         prop_assert_eq!(again.event,parsed.event);prop_assert_eq!(again.wait,parsed.wait);
@@ -312,20 +428,14 @@ fn mandatory_valid_replies_and_after_reply() {
             .collect::<Vec<_>>();
         let old = outcome(reference::parse_reply(&bytes, &d, &case["inputs"]));
         assert!(old.get("ok").is_some(), "fixture {case}: {old}");
-        assert_eq!(
-            old,
-            outcome(current::parse_reply(&bytes, &d, &case["inputs"]))
-        );
+        assert_eq!(old, current_outcome(&bytes, &d, &case["inputs"]));
         valid += 1;
         if case["stdout"].as_array().unwrap().last().unwrap()["event"] == "reply" {
             let mut after = bytes;
             after.extend(line(0, false));
             let old = outcome(reference::parse_reply(&after, &d, &case["inputs"]));
             assert_eq!(old["error"], "event after worker reply");
-            assert_eq!(
-                old,
-                outcome(current::parse_reply(&after, &d, &case["inputs"]))
-            );
+            assert_eq!(old, current_outcome(&after, &d, &case["inputs"]));
         }
     }
     assert!(valid >= 25);
@@ -347,7 +457,7 @@ fn valid_reply_streams() {
         let mut bytes=prefix.into_iter().flat_map(|k|line(k,false)).collect::<Vec<_>>();
         for value in case["stdout"].as_array().unwrap() {bytes.extend(serde_json::to_vec(value).unwrap());bytes.push(b'\n');}
         match tail {1=>bytes.extend(line(0,false)),2=>bytes.extend(b"{\n"),3=>{bytes.pop();},4=>bytes.extend(b"\xff\n"),_=>()}
-        prop_assert_eq!(outcome(reference::parse_reply(&bytes,&d,&case["inputs"])),outcome(current::parse_reply(&bytes,&d,&case["inputs"])));
+        prop_assert_eq!(outcome(reference::parse_reply(&bytes,&d,&case["inputs"])),current_outcome(&bytes,&d,&case["inputs"]));
         Ok(())
     }).unwrap();
 }
@@ -401,7 +511,7 @@ fn mandatory_postmortem_model_and_reply() {
     bad.push(b'\n');
     assert_eq!(parity(&bad, true, &inputs)["error"], "invalid quota model");
     assert_eq!(
-        super::parse_event(&line(2, true), None, false, &Value::Null)
+        super::parse_event(&flux_names(&line(2, true)), None, false, &Value::Null)
             .unwrap()
             .event,
         WorkerEvent::Progress {

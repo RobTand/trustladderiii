@@ -349,7 +349,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
         registration.webhooks.address()
     );
     eprintln!(
-        "production adapters registered: GitHub, worktrees, PrismaBuild, Direct delivery, workers; looks and incidents enabled"
+        "production adapters registered: GitHub, worktrees, Flux, Direct delivery, workers; looks and incidents enabled"
     );
     let mut sources = crate::ingress::Sources::default();
     sources.register(registration.webhooks);

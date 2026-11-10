@@ -140,7 +140,6 @@ filegroup(
         "controller",
         "github",
         "kernel",
-        "prismabuild",
         "store",
         "worktrees",
     ]],

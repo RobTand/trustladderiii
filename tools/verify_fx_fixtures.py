@@ -131,7 +131,7 @@ def verify(root):
         staged = root / name
         staged.mkdir()
         shutil.copytree(SOURCE / 'harness/src/tl3_harness', staged / 'trusted/tl3_harness')
-        shutil.copyfile(SOURCE / 'crates/controller/src/adapters/prismabuild/action.py', staged / 'action.py')
+        shutil.copyfile(SOURCE / 'crates/controller/src/checks/action.py', staged / 'action.py')
         git(repo, 'bundle', 'create', str(staged / 'served.bundle'), '--all')
         request = {'effect_key': delivery['key'], 'base': checks['base_sha'], 'head': delivery['head_sha'],
                    'reviewed': checks['reviewed_sha'], 'plan': checks['plan'], 'image': 'sha256:' + '1' * 64,
@@ -200,11 +200,11 @@ def verify(root):
     changed = set(git(SOURCE, 'diff', '--name-only', BASE).decode().splitlines())
     metadata = {name for name in changed if re.fullmatch(r'\.pbrun-closure\.[0-9a-f]{16}\.json', name)}
     summary['changed_paths'] = sorted(changed - metadata)
-    summary['prismabuild_snapshot_metadata'] = sorted(metadata)
+    summary['snapshot_metadata'] = sorted(metadata)
     summary['original_fixture_source_sha256'] = hashlib.sha256(old_source.encode()).hexdigest()
     summary['production_sha256'] = {str(path.relative_to(SOURCE)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (SOURCE / 'harness/src/tl3_harness/model.py', SOURCE / 'crates/harness-core/src/judge.rs',
-                     SOURCE / 'crates/controller/src/adapters/prismabuild/action.py')}
+                     SOURCE / 'crates/controller/src/checks/action.py')}
     (evidence / 'summary.json').write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary), flush=True)
     print('FX_FIXTURE_EVIDENCE ' + json.dumps({str(path.relative_to(evidence)): hashlib.sha256(path.read_bytes()).hexdigest()

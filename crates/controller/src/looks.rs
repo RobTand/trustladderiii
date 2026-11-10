@@ -169,7 +169,7 @@ impl Cause {
             }
             Upstream::Worktrees => Cause::Tl3,
             // The trusted check harness is TL3's code, running inside a PrismaBuild action.
-            Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
+            Upstream::PrismaBuild if class == crate::checks::HARNESS => Cause::Tl3,
             Upstream::GitHub | Upstream::Delivery | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
@@ -550,7 +550,7 @@ impl Controller {
     pub(crate) fn allowance(&self, delivery: &Delivery) -> &tl3_config::Allowance {
         match upstream(delivery.output) {
             Upstream::Workers => &self.allowances.agent_worker,
-            Upstream::PrismaBuild => &self.allowances.prismabuild,
+            Upstream::PrismaBuild => &self.allowances.checks,
             Upstream::GitHub | Upstream::Delivery => &self.allowances.github_delivery,
             Upstream::Worktrees => &self.allowances.worktrees,
         }
@@ -974,7 +974,7 @@ impl Controller {
                     state.external_wait = Some(wait.clone());
                     state.wait_ended = false;
                 }
-                let record = if matches!(wait.upstream.as_str(), "prismabuild" | "flux") {
+                let record = if wait.upstream == "flux" {
                     self.adapters
                         .get(Upstream::PrismaBuild)?
                         .wait_record(&wait.key, &checkout)
@@ -2223,7 +2223,7 @@ pub(crate) fn incident_summary(
         {
             "TL3's publication validation"
         }
-        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
+        _ if signature.class == crate::checks::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",

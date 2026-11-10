@@ -79,4 +79,3 @@ urllib3==2.8.0
 wheel==0.48.0
 xxhash==3.7.0
 yarl==1.25.1
-prismabuild @ https://github.com/RobTand/prismabuild/archive/f3b5f81d32f473d219ff6276a853f98dbf53eec8.tar.gz

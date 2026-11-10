@@ -17,8 +17,9 @@ spec.loader.exec_module(prepare_image)
 ])
 def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profile, pytest_version, triton_version):
     commands = []
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', 'fixture')
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_MARKER', 'fixture')
+    monkeypatch.delenv('PRISMABUILD_CONTAINER_OWNER', raising=False)
+    monkeypatch.delenv('PRISMABUILD_CONTAINER_MARKER', raising=False)
+    monkeypatch.setenv('FLUX_JOB_ID', 'f123')
     monkeypatch.setattr(sys, 'argv', ['prepare_image.py', 'sha256:' + '1' * 64, '--profile', profile])
     monkeypatch.setattr(subprocess, 'run', lambda command, **kwargs: commands.append(command))
     monkeypatch.setattr(subprocess, 'check_output', lambda *args, **kwargs: 'sha256:' + '2' * 64)
@@ -31,6 +32,7 @@ def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profil
     requirements = Path(__file__).parents[1] / 'tools/images' / f'{profile}.txt'
     assert requirements.is_file(), 'keep the frozen dependency list reviewable'
     pins = requirements.read_text()
+    assert 'prismabuild @' not in pins, 'retired executor must not be installed in new images'
     assert f'pytest=={pytest_version}\n' in pins
     assert f'triton=={triton_version}\n' in pins
     assert 'torch==2.11.0+cpu\n' in pins
@@ -52,3 +54,23 @@ def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profil
             assert command[command.index('--index-url') + 1] == 'https://pypi.org/simple'
     assert '-e .' not in script and 'pip install .' not in script
     assert commands[-1][:3] == ['docker', 'rm', '--force']
+
+
+def test_retired_profile_is_refused_before_any_container_command(monkeypatch):
+    monkeypatch.setenv('FLUX_JOB_ID', 'f123')
+    monkeypatch.setattr(sys, 'argv', ['prepare_image.py', 'sha256:' + '1' * 64,
+                                     '--profile', 'prismabuild'])
+    monkeypatch.setattr(subprocess, 'run', lambda *args, **kwargs: pytest.fail('container command'))
+    with pytest.raises(SystemExit) as error:
+        prepare_image.main()
+    assert error.value.code == 2
+
+
+def test_retired_markers_do_not_authorize_image_preparation(monkeypatch):
+    monkeypatch.delenv('FLUX_JOB_ID', raising=False)
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', 'fixture')
+    monkeypatch.setenv('PRISMABUILD_CONTAINER_MARKER', 'fixture')
+    monkeypatch.setattr(sys, 'argv', ['prepare_image.py', 'sha256:' + '1' * 64])
+    monkeypatch.setattr(subprocess, 'run', lambda *args, **kwargs: pytest.fail('container command'))
+    with pytest.raises(RuntimeError, match='Flux job'):
+        prepare_image.main()

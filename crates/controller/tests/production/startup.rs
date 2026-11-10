@@ -69,7 +69,11 @@ fn pending_migrations_cannot_change_a_live_owners_database() {
             .get::<_, bool>(0)
     );
     let before = legacy_snapshot(&mut old_owner);
-    let contender = production::register(&config);
+    // The ownership claim and migration that production::register runs after its
+    // configuration and Flux activation checks.
+    let contender = Store::connect(&config.store)
+        .and_then(tl3_store::Ownership::claim)
+        .and_then(|mut owner| owner.migrate().map(|()| owner));
     assert_eq!(
         legacy_snapshot(&mut old_owner),
         before,
@@ -118,30 +122,6 @@ pub(super) fn terminate_claim(settings: &tl3_config::Store) {
     );
 }
 
-/// #785 review: a disconnected capability must not admit filesystem cleanup.
-#[test]
-fn lost_claim_prevents_prismabuild_cleanup() {
-    let root = tempfile::tempdir().unwrap();
-    let mut database = support::Database::start();
-    let settings = database.create("lost_pb_claim");
-    let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-    let (client, pb) = prismabuild_fixture::settings(root.path(), "done", "http://127.0.0.1:9/");
-    let staged = pb.records.join("active.input/harness/check.py");
-    fs::create_dir_all(staged.parent().unwrap()).unwrap();
-    fs::write(&staged, b"owner bytes").unwrap();
-    terminate_claim(&settings);
-    let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-    let result = adapters::prismabuild::Adapter::new(client, pb, &mut ownership);
-    assert_eq!(
-        fs::read(&staged).ok().as_deref(),
-        Some(b"owner bytes".as_slice()),
-        "cleanup ran after claim loss"
-    );
-    assert!(result.is_err(), "lost ownership must abort startup");
-    drop((result, successor, ownership));
-    database.stop();
-}
-
 /// #785 review: a disconnected capability must not seed or activate prompts.
 #[test]
 fn lost_claim_prevents_worker_initialization() {
@@ -168,7 +148,8 @@ pub(super) fn seed_shared_state(
     config: &tl3_config::Config,
     client: &mut Client,
 ) -> Vec<std::path::PathBuf> {
-    let records = config.workers.runs.join(".controller/prismabuild");
+    let records = config.workers.runs.join(".controller/owner");
+    fs::create_dir_all(records.join("0")).unwrap();
     let delivery: tl3_controller::executor::Delivery = serde_json::from_value(json!({
         "key":"worker-owner", "epoch":1, "output":{"Comment":{"node":0,"kind":"Classify"}},
         "generation":1,"repository":{"owner":"RobTand","name":"tl3-sandbox","installation":987},
@@ -188,7 +169,7 @@ pub(super) fn seed_shared_state(
     let attempt = config.workers.runs.join(&encoded).join("attempt-00000000");
     fs::create_dir_all(&attempt).unwrap();
     // Both absent markers must remain absent. A constructor inspection would create them.
-    let mut paths = vec![
+    vec![
         job_path,
         done,
         orphan,
@@ -196,18 +177,7 @@ pub(super) fn seed_shared_state(
         records.join("0").join(format!("{encoded}.done")),
         attempt.join("claim.json"),
         attempt.join("process.json"),
-    ];
-    for repo in &config.github.repos {
-        let journal = config
-            .worktrees_root
-            .join(".repositories")
-            .join(repo.owner.to_ascii_lowercase())
-            .join(format!("{}.git", repo.name.to_ascii_lowercase()))
-            .join("tl3-controller");
-        assert!(journal.join("repository.json").exists());
-        paths.extend([journal.join("repository.json"), journal.join("epoch.json")]);
-    }
-    paths
+    ]
 }
 
 pub(super) fn prompt_rows(client: &mut Client) -> Vec<String> {

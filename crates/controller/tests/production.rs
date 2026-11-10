@@ -2,7 +2,6 @@
 mod backend_watch;
 #[path = "production/flux_options.rs"]
 mod flux_options;
-mod prismabuild_fixture;
 #[path = "production/startup.rs"]
 mod startup;
 #[path = "../../store/tests/support/mod.rs"]
@@ -10,7 +9,7 @@ mod support;
 
 use serde_json::json;
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::Path};
-use tl3_controller::{executor::Upstream, production};
+use tl3_controller::production;
 
 fn config(root: &Path) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -70,8 +69,7 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
         for node in ["", "0"] {
             let root = tempfile::tempdir().unwrap();
             let mut config = config(root.path());
-            config.execution_backend = tl3_config::ExecutionBackend::Flux;
-            config.flux = Some(tl3_config::Flux {
+            config.flux = tl3_config::Flux {
                 instance_file: "/mnt/shared/flux-migration/INSTANCE".into(),
                 activation: None,
 
@@ -92,8 +90,8 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
                 ]),
                 staging_root: "/mnt/shared/tl3-inputs".into(),
                 output_root: "/mnt/shared/flux-out/tl3".into(),
-                container_image: config.prismabuild.container_image.clone(),
-            });
+                container_image: config.flux.container_image.clone(),
+            };
             let directory = config
                 .workers
                 .runs
@@ -115,48 +113,20 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
     }
 }
 
+/// PB-REMOVAL (D2): production startup composes Flux checks only, and refuses before the store
+/// when the deployment-owned Flux activation is absent. No PrismaBuild adapter is ever built.
+/// (Composing every adapter needs a sealed activation record, which only the PB-admitted
+/// activation fixtures in adapters::flux_checks::activation::tests can provide.)
 #[test]
-fn production_registers_every_real_adapter_and_source() {
+fn production_refuses_to_start_without_flux_activation() {
     let root = tempfile::tempdir().unwrap();
-    let mut config = config(root.path());
-    let mut database = support::Database::start();
-    config.store = database.create("production");
-    let registered = production::register(&config).unwrap();
-    let expected = BTreeMap::from([
-        (
-            Upstream::GitHub,
-            "tl3_controller::adapters::github::Adapter",
-        ),
-        (
-            Upstream::Delivery,
-            "tl3_controller::adapters::direct_merge::Adapter",
-        ),
-        (
-            Upstream::PrismaBuild,
-            "tl3_controller::adapters::prismabuild::Adapter",
-        ),
-        (
-            Upstream::Workers,
-            "tl3_controller::adapters::workers::Supervisor",
-        ),
-        (
-            Upstream::Worktrees,
-            "tl3_controller::adapters::worktrees::Real",
-        ),
-    ]);
-    assert_eq!(registered.adapters.registered_types(), expected);
-    assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
-    assert!(matches!(
-        registered.bell,
-        production::CheckSource::PrismaBuild(_)
-    ));
-    assert!(
-        std::any::type_name_of_val(&registered.delivery)
-            .ends_with("direct_merge::events::Translator")
-    );
-    assert!(registered.webhooks.address().ip().is_loopback());
-    drop(registered);
-    database.stop();
+    let config = config(root.path());
+    assert!(config.flux.activation.is_none());
+    let error = match production::register(&config) {
+        Ok(_) => panic!("production started without a Flux activation"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("flux.activation"), "{error}");
 }
 
 #[test]
@@ -224,40 +194,32 @@ print(json.dumps({'event':'reply','role':'writer','reply':{'text':'The requested
     ));
 }
 
-/// Encodes #785: the losing daemon must leave the owner's staging and harness
-/// publication intact, through the same registration/open path used by tl3d.
+/// Encodes #785: the losing daemon must leave the owner's staged files, journals and
+/// prompts intact. It runs the ownership claim and migration that production::register
+/// runs after its configuration and Flux activation checks.
 #[test]
 fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
-    use tl3_controller::{Bootstrap, Controller};
-
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
     let mut database = support::Database::start();
     config.store = database.create("startup_ownership");
-    // Sources are dropped after registration, releasing the webhook listener.
-    // Ownership must reject the contender. No upstream is contacted.
     let start = || {
-        let registration = production::register(&config)?;
-        let controller = Controller::open_owned(
-            registration.ownership,
-            registration.adapters,
-            Bootstrap::from_config(&config)?,
-        )?;
-        Ok::<_, tl3_controller::Error>(controller)
+        let mut ownership =
+            tl3_controller::Ownership::claim(tl3_store::Store::connect(&config.store)?)?;
+        ownership.migrate()?;
+        Ok::<_, tl3_controller::Error>(ownership)
     };
-    let owner = start().unwrap();
-    let records = config.workers.runs.join(".controller/prismabuild");
-    let paths = [
-        records.join("active.input/harness/check.py"),
-        records.join("0/active.input/harness/check.py"),
-        records
-            .with_file_name("prismabuild-harness")
-            .join("owner/check.py"),
-    ];
-    for path in &paths {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, b"owner's staged bytes").unwrap();
-    }
+    let mut owner = start().unwrap();
+    // The owner's first event: seeded rows reference a committed revision.
+    let snapshot = owner.store().load().unwrap();
+    owner
+        .store()
+        .commit(&tl3_store::Commit::new(
+            "owner-opened",
+            json!({}),
+            &snapshot,
+        ))
+        .unwrap();
     let mut client = startup::raw(&config.store);
     let shared_paths = startup::seed_shared_state(&config, &mut client);
     let before_files: Vec<_> = shared_paths.iter().map(|p| fs::read(p).ok()).collect();
@@ -270,14 +232,6 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
         "loser changed completion, job, cancellation, or journal state"
     );
     drop(client);
-    for path in &paths {
-        assert_eq!(
-            fs::read(path).ok().as_deref(),
-            Some(b"owner's staged bytes".as_slice()),
-            "the losing daemon damaged {}",
-            path.display()
-        );
-    }
     assert!(
         matches!(loser, Err(ref error) if error.to_string().contains("controller ownership is still held"))
     );
@@ -293,13 +247,10 @@ mod flux_checks;
 fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
     let mut flux = flux_options::flux(root.path());
     flux.staging_root = "/mnt/shared/tl3-inputs".into();
     flux.output_root = "/mnt/shared/flux-out/tl3".into();
-    config.flux = Some(flux);
-    config.prismabuild.tools_dir = Default::default();
-    config.prismabuild.container_image.clear();
+    config.flux = flux;
     let error = match production::register(&config) {
         Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
         Err(error) => error,
@@ -312,10 +263,7 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
 fn selected_flux_registration_refuses_absent_activation_without_pb_or_native_launch() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
-    config.flux = Some(flux_options::flux(root.path()));
-    config.prismabuild.tools_dir = Default::default();
-    config.prismabuild.container_image.clear();
+    config.flux = flux_options::flux(root.path());
     let mut database = support::Database::start();
     let settings = database.create("flux_construction");
     let mut ownership =

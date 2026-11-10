@@ -57,7 +57,7 @@ class GateTests(unittest.TestCase):
                                   'print("1 fixture scenarios passed", flush=True)\n')
             details = {}
             with patch.dict(os.environ, {'TMPDIR': temporary}):
-                rust_gate.execute_binary({'name': 'tl3-controller/prismabuild',
+                rust_gate.execute_binary({'name': 'tl3-controller/production',
                                           'command': [sys.executable, str(executable)]},
                                          True, cpu_details=details)
             self.assertEqual(details['cpu_fallbacks'], {})
@@ -166,7 +166,7 @@ class GateTests(unittest.TestCase):
 
     def test_cpu_floor_covers_recorded_short_scenario_noise(self):
         policy = {'seconds': 10, 'slow': {}, 'cpu': {'seconds': 1, 'slow': {}}}
-        name = 'tl3-controller/prismabuild::recorded_records_reach_kernel'
+        name = 'tl3-controller/production::recorded_records_reach_kernel'
         for measured in [1.08, 1.14, 1.5, 1.56, 5]:
             with self.subTest(measured=measured):
                 self.assertEqual(rust_gate.check_budget(

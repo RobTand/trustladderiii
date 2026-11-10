@@ -75,7 +75,7 @@ fn loom_worker_output_progress_wait_and_restart() {
             }
             loom::thread::yield_now();
             let _guard = writer_lock.lock().unwrap();
-            append(&output, format!("\"unit\":\"model_turn\"}}\n{{\"event\":\"progress\",\"unit\":\"external_wait\",\"wait\":{{\"upstream\":\"prismabuild\",\"key\":\"{}\"}}}}\n{{\"event\":\"progress\",\"unit\":\"external_wait\",\"wait\":{{\"upstream\":\"prismabuild\",\"key\":\"{}\"}}}}\n{{\"event\":\"progress\",\"unit\":\"tool_result\"}}\n", "a".repeat(64), "a".repeat(64)).as_bytes());
+            append(&output, format!("\"unit\":\"model_turn\"}}\n{{\"event\":\"progress\",\"unit\":\"external_wait\",\"wait\":{{\"upstream\":\"flux\",\"key\":\"worker:{}\"}}}}\n{{\"event\":\"progress\",\"unit\":\"external_wait\",\"wait\":{{\"upstream\":\"flux\",\"key\":\"worker:{}\"}}}}\n{{\"event\":\"progress\",\"unit\":\"tool_result\"}}\n", "a".repeat(64), "a".repeat(64)).as_bytes());
         });
         let active = ActiveRuns::default();
         let mut source = WorkerOutputSource::new(runs.clone(), settings.clone(), active.clone());

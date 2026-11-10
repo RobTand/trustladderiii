@@ -1,5 +1,6 @@
-"""Trusted dependency preparation. Submit this script through PrismaBuild."""
+"""Trusted dependency preparation. Run this script in an admitted Flux job."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,17 +10,16 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base", help="locally available Ubuntu 26.04 image")
-    parser.add_argument("--profile", choices=("sandbox", "prismabuild", "prismaquant", "tessera"), default="sandbox")
+    parser.add_argument("--profile", choices=("sandbox", "prismaquant", "tessera"), default="sandbox")
     parser.add_argument("--tag")
     args = parser.parse_args()
     args.tag = args.tag or ("tl3-harness:t5" if args.profile == "sandbox" else f"tl3-harness:{args.profile}")
-    owner = os.environ.get("PRISMABUILD_CONTAINER_OWNER")
-    if not owner or not os.environ.get("PRISMABUILD_CONTAINER_MARKER"):
-        raise RuntimeError("image preparation requires a PrismaBuild action")
-    name = "tl3-image-" + owner[:20]
-    system = "gcc libc6-dev bubblewrap" if args.profile == "prismabuild" else ""
-    packages = "pytest-xdist==3.8.0 PyYAML==6.0.3 setuptools==80.9.0" if args.profile == "prismabuild" else ""
-    pip_install = f"/opt/tl3/bin/python -m pip install --no-cache-dir pytest==9.0.2 {packages}"
+    owner = os.environ.get("FLUX_JOB_ID")
+    if not owner:
+        raise RuntimeError("image preparation requires an admitted Flux job")
+    name = "tl3-image-" + hashlib.sha256(owner.encode()).hexdigest()[:20]
+    system = ""
+    pip_install = "/opt/tl3/bin/python -m pip install --no-cache-dir pytest==9.0.2"
     if args.profile in ("prismaquant", "tessera"):
         system = "python3.14-dev gcc g++ make libgomp1 bubblewrap"
         requirements = (Path(__file__).with_name("images") / f"{args.profile}.txt").read_text()

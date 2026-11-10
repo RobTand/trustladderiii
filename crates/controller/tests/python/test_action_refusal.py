@@ -47,7 +47,7 @@ def stage(root, *, plan=PLAN, conftest="# shared fixtures\n", config=CONFIG, lin
     staged = root / "input"
     staged.mkdir()
     git(repo, "bundle", "create", str(staged / "served.bundle"), "HEAD", "refs/heads/tl3-base")
-    shutil.copyfile(ROOT / "crates/controller/src/adapters/prismabuild/action.py", staged / "action.py")
+    shutil.copyfile(ROOT / "crates/controller/src/checks/action.py", staged / "action.py")
     shutil.copytree(ROOT / "harness/src/tl3_harness", staged / "trusted/tl3_harness",
                     ignore=shutil.ignore_patterns("__pycache__"))
     (staged / "request.json").write_text(json.dumps({

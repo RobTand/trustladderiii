@@ -772,7 +772,7 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
         Upstream::PrismaBuild,
         support::workers::Workers::new(
             None,
-            adapters::prismabuild::Fake::new(&fakes),
+            adapters::flux_checks::Fake::new(&fakes),
             vec![],
             move |d: &Delivery, completion: &mut Completion| {
                 if source == Source::Checks
@@ -1152,15 +1152,15 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                         } else {
                             "why"
                         });
-                    let plan = adapters::prismabuild::CheckRun {
+                    let plan = tl3_controller::checks::CheckRun {
                         repository: "/fixture".into(),
                         base_sha: tl3_worktrees::CommitId::new("a".repeat(40))?,
                         reviewed_sha: None,
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
-                        plan: vec![adapters::prismabuild::Check {
+                        plan: vec![tl3_controller::checks::Check {
                             name: "forced-deep-path".into(),
-                            kind: adapters::prismabuild::Kind::Demonstrating,
+                            kind: tl3_controller::checks::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],
                             forcing: Some(serde_json::from_value(forcing())?),
                             proof: None,
@@ -1212,7 +1212,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
     }
     struct Checking {
         mode: &'static str,
-        fake: adapters::prismabuild::Fake,
+        fake: adapters::flux_checks::Fake,
     }
     impl Executor for Checking {
         fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
@@ -1284,7 +1284,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
             Upstream::PrismaBuild,
             Checking {
                 mode,
-                fake: adapters::prismabuild::Fake::new(&fakes),
+                fake: adapters::flux_checks::Fake::new(&fakes),
             },
         );
         registry.register(

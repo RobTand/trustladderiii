@@ -10,7 +10,6 @@ fn planner_protected_paths_follow_the_request_repository() {
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("repo_protection");
     config.workers.runs = f.root.path().join("runs");
-    crate::git_tests::select_flux(&mut config, f.root.path());
     config.planning.protected_paths.push("global/**".into());
     // The maker's retro deadline derives from this allowance (#648).
     config.allowances.agent_worker.silence_secs = 90;
@@ -168,7 +167,6 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
     config.workers.runs = f.root.path().join("runs");
-    crate::git_tests::select_flux(&mut config, f.root.path());
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
@@ -398,7 +396,6 @@ fn hostile_maker_head() {
             config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
             config.workers.runs = f.root.path().join("runs");
             config.worktrees_root = f.root.path().join("worktrees");
-            crate::git_tests::select_flux(&mut config, f.root.path());
             let supervisor = Supervisor::new(
                 &config,
                 &f.root.path().join("records"),
@@ -526,7 +523,6 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
-    crate::git_tests::select_flux(&mut config, f.root.path());
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),

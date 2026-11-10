@@ -654,19 +654,11 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
 
 fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
     let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
-    let owner_valid = matches!(wait.upstream.as_str(), "prismabuild" | "flux");
-    let key_valid =
-        !wait.key.is_empty() && wait.key.len() <= 256 && !wait.key.chars().any(char::is_control);
-    (owner_valid
-        && key_valid
-        && match wait.upstream.as_str() {
-            "prismabuild" => wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok(),
-            "flux" => wait
-                .key
-                .strip_prefix("worker:")
-                .is_some_and(|key| crate::run_backend::hex(key, 64)),
-            _ => false,
-        })
+    (wait.upstream == "flux"
+        && wait
+            .key
+            .strip_prefix("worker:")
+            .is_some_and(|key| crate::run_backend::hex(key, 64)))
     .then_some(wait)
 }
 
@@ -1011,13 +1003,14 @@ mod tests {
             )
         }
         let event = serde_json::json!({"event":"progress", "unit":"external_wait",
-            "wait":{"upstream":"prismabuild", "key":"a".repeat(64)}});
+            "wait":{"upstream":"flux", "key":format!("worker:{}", "a".repeat(64))}});
         assert!(progress(&event));
         let mut token = event.clone();
         token["wait"] = serde_json::json!({"upstream":"token_grant", "key":"request:7"});
         assert!(!progress(&token));
         for change in [
-            serde_json::json!({"upstream":"prismabuild", "key":"invalid"}),
+            serde_json::json!({"upstream":"prismabuild", "key":"a".repeat(64)}),
+            serde_json::json!({"upstream":"flux", "key":"invalid"}),
             serde_json::json!({"upstream":"token_grant", "key":""}),
             serde_json::json!({"upstream":"token_grant", "key":"valid", "extra":1}),
         ] {

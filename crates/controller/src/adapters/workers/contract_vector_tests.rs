@@ -3,7 +3,7 @@
 //! reached production because a new receipt key only failed here, at review setup.
 
 use super::*;
-use crate::adapters::prismabuild::contract_vectors;
+use crate::checks::contract_vectors;
 use crate::findings;
 use crate::git_tests::{Repo, documents, support::Database};
 

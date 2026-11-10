@@ -301,7 +301,7 @@ fn execute(schedule: &Schedule, new: bool, cut: Option<Cut>) -> Outcome {
         }));
     });
     RECORDING.with(|r|*r.borrow_mut()=Some(Recording{schedule:schedule.clone(),trace:vec![],sends:vec![],
-        persisted:json!({"offset":schedule.recorded,"wait":if schedule.previous_wait {json!({"upstream":"prismabuild","key":"a".repeat(64)})}else{Value::Null}}),
+        persisted:json!({"offset":schedule.recorded,"wait":if schedule.previous_wait {if new {json!({"upstream":"flux","key":format!("worker:{}", "a".repeat(64))})} else {json!({"upstream":"prismabuild","key":"a".repeat(64)})}}else{Value::Null}}),
         files:BTreeMap::new(),reads:0,writes:0,cut,call:0}));
     let mut source = WorkerOutputSource {
         watches: BTreeMap::new(),
@@ -324,7 +324,11 @@ fn execute(schedule: &Schedule, new: bool, cut: Option<Cut>) -> Outcome {
             r.files
                 .entry(PathBuf::from("run/attempt-00000001/stdout.jsonl"))
                 .or_default()
-                .extend(chunk)
+                .extend(if new {
+                    super::flux_names(chunk)
+                } else {
+                    chunk.clone()
+                })
         });
         let result = catch_unwind(AssertUnwindSafe(|| {
             if new {
@@ -348,12 +352,30 @@ fn execute(schedule: &Schedule, new: bool, cut: Option<Cut>) -> Outcome {
     }
     RECORDING.with(|r| {
         let r = r.borrow_mut().take().unwrap();
+        let names = |value: &Value| {
+            if new {
+                super::reference_value(value)
+            } else {
+                value.clone()
+            }
+        };
         Outcome {
-            trace: r.trace,
-            sends: r.sends,
-            persisted: r.persisted,
-            files: r.files,
-            result: results,
+            trace: r.trace.iter().map(names).collect(),
+            sends: r.sends.iter().map(names).collect(),
+            persisted: names(&r.persisted),
+            files: r
+                .files
+                .into_iter()
+                .map(|(path, bytes)| {
+                    let bytes = if new {
+                        super::reference_names(&bytes)
+                    } else {
+                        bytes
+                    };
+                    (path, bytes)
+                })
+                .collect(),
+            result: results.iter().map(names).collect(),
             offset: run.offset,
             ended: source.ended,
             active: source.active.values,

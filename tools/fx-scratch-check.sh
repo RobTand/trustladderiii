@@ -45,7 +45,7 @@ if [ "${FX_SCRATCH_FINAL:-0}" = 1 ] || [ "${FX_SCRATCH_REVIEW:-0}" = 1 ]; then
  fx_lint=$(mktemp -d)
  check lint-venv /home/rob/venvs/pb-cpu/bin/python -m venv "$fx_lint"
  check lint-install "$fx_lint/bin/python" -m pip install --disable-pip-version-check ruff==0.14.14
- check ruff "$fx_lint/bin/ruff" check --isolated --select E9,F crates/controller/src/adapters/prismabuild/action.py harness/src/tl3_harness/runtime.py harness/src/tl3_harness/execution.py harness/tests/fx_action_e2e.py harness/tests/test_launch_failure.py harness/tests/test_scratch_cleanup.py crates/controller/tests/python/fx_native_scratch_helper.py crates/controller/tests/python/fx_scratch_helper.py tools/fx-scratch-requirements.py
+ check ruff "$fx_lint/bin/ruff" check --isolated --select E9,F crates/controller/src/checks/action.py harness/src/tl3_harness/runtime.py harness/src/tl3_harness/execution.py harness/tests/fx_action_e2e.py harness/tests/test_launch_failure.py harness/tests/test_scratch_cleanup.py crates/controller/tests/python/fx_native_scratch_helper.py crates/controller/tests/python/fx_scratch_helper.py tools/fx-scratch-requirements.py
  if [ "${FX_SCRATCH_FINAL:-0}" = 1 ]; then
  check mirror /home/rob/venvs/pb-cpu/bin/python tools/ci/mirror_lint.py
  check rust-builds /home/rob/venvs/pb-cpu/bin/python tools/bazel/rust_builds.py --check
