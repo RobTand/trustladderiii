@@ -948,7 +948,7 @@ mod assembly_entry_witnesses {
 
     fn aggregate() {
         let w = assembly_witness_world::world(0);
-        let event = Event::Command { node: NodeId(0), id: 1, command: Command::Resume };
+        let event = Event::Command { node: NodeId(0), id: 1, command: Command::Answer { question: 0, answer: Answer::Stop } };
         let _ = aggregate_command_assembly::apply_non_answer_step(w, event, Outbox::new(), Report::new());
     }
 
