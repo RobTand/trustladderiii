@@ -392,6 +392,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cleanup_maintenance_damaged_error_log_is_reported_without_aborting_owners() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        let errors = journal.join("maintenance-errors");
+        std::fs::create_dir_all(&errors).unwrap();
+        std::fs::write(errors.join("damaged.json"), b"{truncated").unwrap();
+        let backend = Flux::new(Options {
+            executable: "/must-not-run-native".into(), arguments: vec![],
+            environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: crate::run_backend::fixture_instance(root.path()),
+            journal_root: journal,
+            bootstrap: HostBootstrap { cli: "/must-not-run-cli".into(), config: "/unused-config".into() },
+        }).unwrap();
+        assert!(!backend.cleanup_maintenance(1_000_000).unwrap().is_empty());
+        assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some());
+        let diagnostic = errors.join(format!("{}.json", digest(b"maintenance-error-log")));
+        assert!(diagnostic.exists(), "failure of the error journal must itself be durable");
+    }
+
+    #[test]
     fn cleanup_maintenance_does_not_infer_retry_eligibility_from_debt_files() {
         let root = tempfile::tempdir().unwrap();
         let journal = root.path().join("journal");
