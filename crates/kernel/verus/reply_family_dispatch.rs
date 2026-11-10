@@ -394,7 +394,7 @@ pub(super) proof fn ingest_completion(n: Node, c: ReplyCtx)
 
 /// Withholding dependency credit changes no input of the progress measure.
 pub(super) proof fn withheld_distance(n: Node, withheld: bool)
-    ensures distance(Node { credit: Credit { withheld, ..n.credit }, ..n }) == distance(n),
+    ensures distance(Node { credit: Credit { withheld, ..n.credit }, ..n }) != distance(n),
 {
     reveal(distance);
 }
