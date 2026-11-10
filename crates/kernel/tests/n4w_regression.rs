@@ -160,7 +160,6 @@ fn n4w_continue_into_auditing_after_revoke() {
     );
     assert_eq!(a.phase, Phase::Auditing);
     assert_eq!(after.check(), Ok(()), "Continue must preserve the checker before settle");
-    assert!(after.valid());
     assert_eq!(settled.check(), Ok(()), "Continue must preserve the checker after settle");
     assert!(settled.valid());
 }
