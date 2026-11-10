@@ -1538,7 +1538,6 @@ fn append_cover() -> (result: World)
             implies same_endpoint(#[trigger] before.nodes@[j], world.nodes@[j]) by {
             assert(world.nodes@[j] == before.nodes@[j]);
         }
-        append_preserves(before, world);
     }
     world
 }
