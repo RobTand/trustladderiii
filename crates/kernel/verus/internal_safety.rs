@@ -344,7 +344,7 @@ pub(super) open spec fn appended_node_ok(after: World, n: Node) -> bool {
 pub(super) proof fn prefix_counts(before: World, after: World, repo: RepoId, end: nat)
     requires end <= before.nodes@.len(), end <= after.nodes@.len(),
         forall|j: int| 0 <= j < end ==> #[trigger] after.nodes@[j] == before.nodes@[j],
-    ensures progress_gate_apply::holders(after, repo, end) == progress_gate_apply::holders(before, repo, end),
+    ensures progress_gate_apply::holders(after, repo, end) == progress_gate_apply::holders(before, repo, end) + 1,
         pool_users(after.nodes@, end) == pool_users(before.nodes@, end),
     decreases end,
 {
