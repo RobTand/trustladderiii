@@ -12,10 +12,6 @@
     "CheckResult": {
       "additionalProperties": false,
       "properties": {
-        "coverage_note": {
-          "minLength": 1,
-          "type": "string"
-        },
         "custody": {
           "$ref": "#/$defs/Custody"
         },

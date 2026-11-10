@@ -72,13 +72,6 @@ pub struct CheckResult {
     pub verdict: Verdict,
     pub custody: Custody,
     pub tests: List<TestResult, 1, UNBOUNDED>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Text<1, UNBOUNDED>")]
-    pub coverage_note: Option<Text<1, UNBOUNDED>>,
     // Complete-unit admission and the unchecked suffix, retained for review (#591).
     #[serde(
         default,

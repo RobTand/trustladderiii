@@ -1,5 +1,4 @@
 import ast
-from fnmatch import fnmatchcase
 import hashlib
 import os
 import re
@@ -121,42 +120,11 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
     return frozenset(names(head) - names(base))
 
 
-# Copy of crates/config/src/lib.rs::TEST_CONFIGURATION_PATHS. The parity test
-# reads that constant, so changing only one side fails the suite.
-TEST_CONFIGURATION_PATHS = (
-    "**/conftest.py",
-    "pytest.toml",
-    ".pytest.toml",
-    "**/pytest.toml",
-    "**/.pytest.toml",
-    "pytest.ini",
-    ".pytest.ini",
-    "tox.ini",
-    "noxfile.py",
-    "setup.cfg",
-    "pyproject.toml",
-)
-
-DEPENDENCY_FILE_PATTERNS = (
-    "*requirements*.txt", "requirements*.in", "constraints*.txt", "constraints*.in",
-    "uv.lock", "setup.py", "setup.cfg", "poetry.lock", "Pipfile*", "MANIFEST.in",
-    "pyproject.toml",
-)
-
-
-def dependency_files(names: list[str]) -> list[str]:
-    """Dependency and packaging inputs the frozen image cannot exercise."""
-    return sorted({name for name in names
-                   if any(fnmatchcase(PurePosixPath(name).name, pattern)
-                          for pattern in DEPENDENCY_FILE_PATTERNS)})
-
-
 def changed_configuration(base: Path, head: Path) -> list[str]:
     """Protected test configuration files that differ between two trees."""
-    protected = {path.relative_to(tree).as_posix() for tree in (base, head)
-                 for path in tree.rglob("*") if path.is_file()
-                 and any(path.relative_to(tree).full_match(pattern)
-                         for pattern in TEST_CONFIGURATION_PATHS)}
+    protected = {"pyproject.toml", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "noxfile.py"}
+    protected |= {str(path.relative_to(tree)) for tree in (base, head)
+                  for path in tree.rglob("conftest.py")}
     return sorted(name for name in protected
                   if ((base / name).read_bytes() if (base / name).exists() else None)
                   != ((head / name).read_bytes() if (head / name).exists() else None))

@@ -186,17 +186,6 @@ repository's patterns. Other repositories do not inherit that entry's additions.
 Both lists require valid repository-relative globs without parent traversal,
 backslashes or control characters. Empty patterns are rejected.
 
-The mandatory test-configuration filenames come from
-`TEST_CONFIGURATION_PATHS` in `src/lib.rs`. A harness parity test checks its
-Python copy. `pytest.toml`, `.pytest.toml` and `conftest.py` are protected at the
-repository root and in subdirectories. Names are case-sensitive.
-
-The defaults apply even when the live file lists its own `protected_paths`.
-An owner retaining an older controller that replaces defaults must add
-`"pytest.toml", ".pytest.toml", "**/pytest.toml", "**/.pytest.toml"` to
-`[planning].protected_paths` in the live `tl3.toml`. This release needs no live
-configuration edit to enforce those paths.
-
 ## Repository generators
 
 Each `[[github.repos]]` entry accepts optional `generated_files` globs and a
