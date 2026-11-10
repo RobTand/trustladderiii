@@ -1,10 +1,20 @@
 {
-  "source_head": "96e6a59b0a52eb978ec72be288baba63576379bd",
+  "source_head": "667cbc9b2de08621964bfd643e95c4e490c83ea7",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "931306316f3b65defcb9c75bb421d747d488658ff340a9104fd629e5eb3ab9f3",
-  "groups": 537,
-  "obligations": 735,
+  "source_sha256": "2628307a24018833d03225fb7a7a5c779d5457f5f6b58993077d018eef9050be",
+  "groups": 539,
+  "obligations": 737,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_emit_value",
+      "selector": "kernel::acknowledgements#ack_retry_emit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_incident_value",
+      "selector": "kernel::acknowledgements#ack_retry_incident_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_acknowledgements_ack_phase_value",
       "selector": "kernel::acknowledgements#ack_phase_value",
