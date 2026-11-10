@@ -153,8 +153,13 @@ pub(super) proof fn answer_pair_intro(b: Node, answered: Node, n: Node, question
         } else { b.credit.withheld }),
     ensures answer_pair(b, n, true, question, answer, table, node),
 {
+    let u = unwithheld(n, b.credit.withheld);
+    assert(command_step(b, u)) by {
+        reveal(command_step);
+        assert(u.question == answered.question);
+        assert(transition_safety::asks_cant_meet(b, u) == transition_safety::asks_cant_meet(b, answered));
+    }
     reveal(answer_pair);
-    reveal(command_step);
 }
 
 /// K5-L1: answer_command records the command id before on_answer; the pair
