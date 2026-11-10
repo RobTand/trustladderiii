@@ -1,10 +1,20 @@
 {
-  "source_head": "036c1c3afceeea82ee2dd31191ba0751d5497035",
+  "source_head": "da48d4dc71b49c1f38662f7ac7177bfa2bfcc01c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "d0d5a28b5a44f864bf1e03bb4f441b92f06f0d3bd125789f3d6b6fa0b98565a6",
-  "groups": 536,
-  "obligations": 740,
+  "source_sha256": "681d1de8616e295df8c4abec26b81d608541d3e58dbb308d27a1288656a3b541",
+  "groups": 538,
+  "obligations": 742,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_checker_new_world_accepted",
+      "selector": "kernel::dependency_start_exports#new_world_accepted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checker_intern_footprint_accepted",
+      "selector": "kernel::dependency_start_exports#intern_footprint_preserves_accepted",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_ranks_pending_rank_definition",
       "selector": "kernel::ranks#pending_rank_definition",
