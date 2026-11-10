@@ -102,6 +102,16 @@ pub(super) proof fn c1_healthy(b: World, a: World)
     assert forall|j: int| 0 <= j < a.nodes@.len() implies settle_shape(#[trigger] a.nodes@[j]) by {
         if j != 1 { assert(a.nodes@[j] == b.nodes@[j]); }
     }
+    assert(a.nodes@.len() == b.nodes@.len());
+    assert(checking::accepted(a));
+    assert(footprint::ordered_table(a)) by {
+        assert forall|k: int| 0 <= k < a.file_sets@.len()
+            implies footprint::ordered(a.file_sets@[k]@) by {
+            assert(a.file_sets@[k] == b.file_sets@[k]);
+        }
+    }
+    assert(open_prefix(a.nodes@, a.nodes@.len()) <= u32::MAX as int);
+    assert(scheduling_safe(a));
 }
 
 /// `on_command(&mut w, 1, 1, Command::Stop, ..)`: E11.1 starts the teardown at position 0.
