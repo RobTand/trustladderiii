@@ -764,6 +764,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "dependency_owner_waiting_ok": ("kernel::dependency_owner_exports#waiting_owner_ok", 1),
             "ranks_pending_rank_definition": ("kernel::ranks#pending_rank_definition", 1),
             "ranks_slot_paused_v": ("kernel::ranks#slot_paused_v", 1),
             "ranks_slot_issue_v": ("kernel::ranks#slot_issue_v", 1),
