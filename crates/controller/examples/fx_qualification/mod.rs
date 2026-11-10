@@ -108,7 +108,10 @@ fn collect_lifecycle(
             return Err("lifecycle job not terminal; slot B retained".into());
         }
     }
-    if lifecycle_canaries(&state.canaries)?.iter().any(|result| result.status != "PASS") {
+    if lifecycle_canaries(&state.canaries)?
+        .iter()
+        .any(|result| result.status != "PASS")
+    {
         return Err("lifecycle canaries did not pass; no D8 inputs generated".into());
     }
     Ok(())

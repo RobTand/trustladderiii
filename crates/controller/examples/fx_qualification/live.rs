@@ -402,7 +402,13 @@ fn collect_inner(
         let (binding, interpreter, absent, mut proofs) =
             absent_binding.ok_or("missing absent interpreter binding")?;
         cause &= binding;
-        proofs.push(receipt.report.as_ref().ok_or("launch failure report missing")?.clone());
+        proofs.push(
+            receipt
+                .report
+                .as_ref()
+                .ok_or("launch failure report missing")?
+                .clone(),
+        );
         proofs.extend(report.payload.iter().cloned());
         for failure in &report.launch_failures {
             let events = flushed_events(&durable::checked_blob(
