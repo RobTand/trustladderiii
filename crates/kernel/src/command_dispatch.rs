@@ -77,11 +77,8 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident),
             _ => true,
         }),
-        (match command {
-            Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
-            _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
-                ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
-        }),
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
 

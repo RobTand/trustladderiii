@@ -408,6 +408,9 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         old(w).next_question <= final(w).next_question,
+        // N1 for Answer (restored 11-10): node rules on the answered node.
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
         // R28-Answer (E2 framing addition, 11-10): the incident row of node_rules, on the answered node.
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident)),
@@ -425,6 +428,8 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         apply_command_safety::r19_bridge(before_command_world@.nodes@[i as int],
             after_answer@.nodes@[i as int], w.nodes@[i as int]);
         apply_command_safety::rules_incident(after_answer@, after_answer@.nodes@[i as int]);
+        apply_command_safety::rules_after_last_cmd(after_answer@, *w, after_answer@.nodes@[i as int],
+            w.nodes@[i as int]);
     }
 }
 }
