@@ -309,9 +309,9 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
 fn failure_verdict(inputs: &Inputs, state: &State, error: &str) -> Value {
     let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
         .into_iter()
-        .filter_map(|name| admission::retained(&inputs, name))
+        .filter_map(|name| admission::retained(inputs, name))
         .collect();
-    let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
+    let verification_jobs: Vec<_> = admission::retained(inputs, "verification-job")
         .into_iter()
         .collect();
     json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
