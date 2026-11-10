@@ -229,13 +229,12 @@ impl Shared {
             .map(|job| format!("watch:{}", job.intent.correlation))
             .collect();
         for failure in previous {
-            if failure.key.starts_with("watch:") && !active_watches.contains(&failure.key) {
-                durable::clear_maintenance_failure(&self.root, &failure.key)
-                    .map_err(adapter_error)?;
-            } else if failure.key != "backend"
+            let retired_watch =
+                failure.key.starts_with("watch:") && !active_watches.contains(&failure.key);
+            let retired_job = failure.key != "backend"
                 && !failure.key.starts_with("watch:")
-                && !seen.contains(&failure.key)
-            {
+                && !seen.contains(&failure.key);
+            if retired_watch || retired_job {
                 durable::clear_maintenance_failure(&self.root, &failure.key)
                     .map_err(adapter_error)?;
             }
