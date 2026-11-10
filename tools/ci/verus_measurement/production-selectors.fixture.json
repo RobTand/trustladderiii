@@ -1,10 +1,20 @@
 {
-  "source_head": "e327bb2c2f8743e74974b8ab5464d7f796971e0c",
+  "source_head": "fa94adb1df247b0eac7cf34cb17ff8b289ad3677",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "a61ea731e48030cb90d8ab1738843e1f0350120d21e80104baa6f1c9c0d96fa7",
-  "groups": 921,
-  "obligations": 1130,
+  "source_sha256": "dcd0d2e9006a6f085501a42630258c737386b1a6e5bcf1837f4fb1d6c0e3632a",
+  "groups": 923,
+  "obligations": 1132,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_first_line_assembly",
+      "selector": "kernel::special_safety::gate_first_line_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_first_line_assembly",
+      "selector": "kernel::special_safety::first_line_assembly",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_stop_frames_stop_owner_waiting_frame",
       "selector": "kernel::stop_frames#stop_owner_waiting_frame",
