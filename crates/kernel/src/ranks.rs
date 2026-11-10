@@ -861,7 +861,9 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            advance_family_post::slot(*old(node), *final(node),
+    *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out), result),
+    ] proof [reveal(advance_post); reveal(distance); reveal(advance_family_post::slot);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         let Phase::Ready(r) = n.phase else {
