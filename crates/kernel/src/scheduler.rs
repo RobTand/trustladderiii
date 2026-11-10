@@ -134,7 +134,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             ==> final(w).nodes@[i as int].phase == resumed_phase(
                 match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
                 && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
-    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds)
+    (old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some() && final(w).nodes@[i as int].holds)
         ==> forall|older: int| 0 <= older < old(w).nodes@.len()
             && old(w).nodes@[older].phase is Ready
             && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
