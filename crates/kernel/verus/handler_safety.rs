@@ -116,6 +116,20 @@ pub(super) open spec fn answer_pair(b: Node, n: Node, fresh: bool, question: u64
         } else { b.credit.withheld })
 }
 
+/// R23 in plain form (CONTRACTS.md v2.6, form rule 1 amended): the withheld rule inside the opaque
+/// answer_pair, stated with open/closed dependency predicates only. answer_pair stays opaque.
+pub(super) proof fn answer_pair_withheld(b: Node, n: Node, fresh: bool, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires answer_pair(b, n, fresh, question, answer, table, node),
+    ensures n.credit.withheld == (if fresh && answer_withholds(b, question, answer) {
+            b.credit.withheld || (!dependencies::delivered(table, node) && !n.planning_started
+                && dependencies::early(n.phase) && n.credit.ready)
+        } else { b.credit.withheld }),
+{
+    reveal(answer_pair);
+    reveal(dependencies::withheld_after);
+}
+
 /// K5-L1: a command step keeps the dependency-credit flag.
 pub(super) proof fn step_withheld(b: Node, n: Node)
     requires command_step(b, n),
@@ -647,6 +661,263 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
     } by {
         assert(k == ob.len);
     }
+}
+
+
+pub(super) open spec fn handled_resources_node(b: Node, kind: EffectKind) -> Node {
+    Node {
+        run: if kind == EffectKind::StopRun { None } else { b.run },
+        pool: if kind == EffectKind::StopRun { false } else { b.pool },
+        job: if kind == EffectKind::WithdrawJob { None } else { b.job },
+        pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open },
+        worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree },
+        ..b
+    }
+}
+
+pub(super) open spec fn handled_node(b: Node) -> Node {
+    match current_item(b) {
+        Some(Item::Teardown(kind)) => Node {
+            pos: (b.pos + 1) as u8,
+            ..handled_resources_node(b, kind)
+        },
+        _ => b,
+    }
+}
+
+// OPEN N4-W: owner-waiting preservation for Continue into an early phase is
+// excluded by the K5 brief. node_rules_v does not assert that obligation.
+#[verifier::opaque]
+pub(super) open spec fn node_rules_v(n: Node, nq: u64) -> bool {
+    node_ok(n, nq)
+        && (n.review_stop.is_some() ==> n.phase is Stopping || n.phase is Closed)
+        && (n.incident_needs_rob ==> n.waiting_incident)
+        && match n.question {
+            None => true,
+            Some(q) => (q.cost > 0 ==> n.credit.ready)
+                && (n.phase == Phase::AwaitingRob ==> {
+                    (match q.cont { Cont::Ready(r) => ready_checked(n, r), _ => true })
+                    && (matches!(q.cont, Cont::Auditing | Cont::Unplanned | Cont::Planning { .. }) ==> n.credit.ready)
+                }),
+        }
+        && (n.credit.withheld ==> n.credit.ready
+            && matches!(n.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+                | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
+            && match n.question { None => true, Some(q) => matches!(q.cont,
+                Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere) })
+        && (!n.credit.ready ==> n.credit.start == 0 && n.credit.earned == 0
+            && n.credit.added == 0 && n.credit.spent == 0 && !n.credit.merge_credited)
+        && (holding(n.phase) || n.phase is Ready || matches!(n.phase,
+            Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }) || n.had_pr ==> n.credit.ready)
+        && (n.phase == Phase::AwaitingDelivery ==> n.pr_open)
+        && (n.phase == Phase::Publishing && (n.pos >= 3 || (n.pos == 2
+            && match n.effect { Some(e) => !e.cancelling && e.kind == EffectKind::OpenPr, None => false })) ==> n.pr_open)
+        && (n.pr_open ==> n.had_pr)
+        && (n.phase is Stopping ==> (n.pos > 2 ==> !n.pr_open) && (n.pos > 4 ==> !n.worktree))
+        && (n.merged.is_some() ==> n.had_pr && !n.pr_open
+            && matches!(n.phase, Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)))
+        && (matches!(n.phase, Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged)) ==> n.merged.is_some())
+        && (n.phase == Phase::Closed(Outcome::Merged) ==> n.credit.merge_credited)
+}
+
+pub(super) proof fn rules_to_v(w: World, n: Node)
+    requires retirement::node_rules(w, n),
+    ensures node_rules_v(n, w.next_question),
+{
+    reveal(retirement::node_rules);
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn rules_from_v(w: World, n: Node)
+    requires node_rules_v(n, w.next_question),
+        n.repo.0 < w.gates@.len(),
+        footprint::valid_footprint(w, n.footprint),
+        match n.ticket { None => true, Some(t) => t < w.next_ticket },
+    ensures retirement::node_rules(w, n),
+{
+    reveal(node_rules_v);
+    reveal(retirement::node_rules);
+}
+
+pub(super) proof fn rules_v_nq_grow(n: Node, nq: u64, after_nq: u64)
+    requires node_rules_v(n, nq), nq <= after_nq,
+    ensures node_rules_v(n, after_nq),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn last_cmd_rules_v(n: Node, nq: u64, id: u64)
+    requires node_rules_v(n, nq),
+    ensures node_rules_v(Node { last_cmd: id, ..n }, nq),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn field_rules_v(n: Node, nq: u64, paused: bool)
+    requires node_rules_v(n, nq),
+    ensures node_rules_v(Node { paused, ..n }, nq),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn stopped_rules_v(n: Node, outcome: Outcome, nq: u64)
+    requires node_rules_v(n, nq), outcome != Outcome::Merged,
+    ensures node_rules_v(retirement::stopped(n, outcome), nq),
+{
+    reveal(node_rules_v);
+    reveal(retirement::stopped);
+}
+
+pub(super) proof fn initial_rules(w: World, n: Node, repo: RepoId)
+    requires initial_node(Node { priority: Priority::Unranked, proposed: None, ..n }, repo),
+        repo.0 < w.gates@.len(),
+    ensures retirement::node_rules(w, n),
+{
+    reveal(initial_node);
+    reveal(retirement::node_rules);
+    footprint::inline_is_valid(w, 0);
+}
+
+pub(super) proof fn rules_v_without_question(n: Node, nq: u64, after_nq: u64)
+    requires node_rules_v(n, nq), n.question.is_none(),
+    ensures node_rules_v(n, after_nq),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn clear_cleanup_rules_v(n: Node, nq: u64)
+    requires node_rules_v(n, nq), n.phase is Stopping,
+    ensures node_rules_v(Node { question: None, ..n }, nq),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn handled_rules_v(n: Node, nq: u64)
+    requires node_rules_v(n, nq), n.phase is Stopping, n.question.is_none(),
+        match n.effect { None => true, Some(e) => e.cancelling },
+    ensures node_rules_v(handled_node(n), nq),
+{
+    reveal(node_rules_v);
+    match current_item(n) {
+        Some(Item::Teardown(kind)) => {
+            match kind {
+                EffectKind::StopRun => {},
+                EffectKind::WithdrawJob => {},
+                EffectKind::ClosePr => {},
+                EffectKind::RemoveWorktree => {},
+                _ => {},
+            }
+        },
+        _ => {},
+    }
+}
+
+pub(super) proof fn cleanup_handled_rules_v(n: Node, nq: u64)
+    requires node_rules_v(n, nq), n.phase is Stopping, n.question.is_some(),
+    ensures node_rules_v(Node { question: None, ..n }, nq),
+        node_rules_v(handled_node(Node { question: None, ..n }), nq),
+{
+    reveal(node_rules_v);
+    clear_cleanup_rules_v(n, nq);
+    handled_rules_v(Node { question: None, ..n }, nq);
+}
+
+pub(super) proof fn stopped_no_grants(n: Node, outcome: Outcome)
+    ensures (retirement::stopped(n, outcome).holds ==> n.holds),
+        (retirement::stopped(n, outcome).pool ==> n.pool),
+        retirement::stopped(n, outcome).ticket == n.ticket
+            || retirement::stopped(n, outcome).ticket.is_none(),
+        retirement::stopped(n, outcome).credit.withheld == n.credit.withheld,
+{
+    reveal(retirement::stopped);
+}
+
+pub(super) open spec fn paid_credit(c: Credit, deposit: u8, cost: u8) -> Credit {
+    Credit {
+        added: (c.added as int + deposit as int
+            + if cost as int > c.start as int + c.earned as int + c.added as int
+                + deposit as int - c.spent as int {
+                cost as int - (c.start as int + c.earned as int + c.added as int
+                    + deposit as int - c.spent as int)
+            } else { 0int }) as u64,
+        spent: (c.spent as int + cost as int) as u64,
+        ..c
+    }
+}
+
+#[verifier::opaque]
+pub(super) open spec fn continued_node(n: Node, q: Question, deposit: u8) -> Node {
+    let paid = Node { credit: paid_credit(n.credit, deposit, q.cost), question: None, ..n };
+    match q.cont {
+        Cont::Ingesting => retirement::phased(paid, Phase::Ingesting),
+        Cont::Auditing => retirement::phased(paid, Phase::Auditing),
+        Cont::Unplanned => retirement::phased(paid, Phase::Unplanned),
+        Cont::Planning { must_split } => retirement::phased(Node { plan_retries: 0, ..paid },
+            Phase::Planning { must_split }),
+        Cont::Ready(r) => retirement::phased(paid, Phase::Ready(r)),
+        Cont::Stop(o) => retirement::stopped(paid, o),
+        Cont::Nowhere => retirement::stopped(paid, Outcome::Stopped),
+    }
+}
+
+pub(super) proof fn continued_rules_v(n: Node, q: Question, deposit: u8, nq: u64)
+    requires node_rules_v(n, nq), n.phase == Phase::AwaitingRob, n.question == Some(q),
+        deposit == 0 || q.kind == QKind::OutOfCredit,
+        q.cost <= 1, n.generation < u64::MAX,
+        n.credit.added as int + 255 <= u64::MAX as int, n.credit.spent < u64::MAX,
+    ensures node_rules_v(continued_node(n, q, deposit), nq),
+{
+    reveal(continued_node);
+    reveal(node_rules_v);
+    reveal(retirement::stopped);
+    match q.cont {
+        Cont::Ingesting => {},
+        Cont::Auditing => {},
+        Cont::Unplanned => {},
+        Cont::Planning { must_split } => {},
+        Cont::Ready(r) => {},
+        Cont::Stop(o) => {},
+        Cont::Nowhere => {},
+    }
+}
+
+pub(super) proof fn retry_rules_v(n: Node, q: Question, nq: u64)
+    requires node_rules_v(n, nq), n.phase == Phase::AwaitingRob,
+        n.question == Some(q), q.kind == QKind::CantMeet,
+    ensures node_rules_v(answers::try_again_node(n), nq), q.cost == 1,
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn clarified_rules_v(n: Node, nq: u64, q: Question)
+    requires node_rules_v(n, nq), n.phase == Phase::AwaitingRob, n.question == Some(q),
+        nq < u64::MAX,
+    ensures node_rules_v(Node { question: Some(Question { id: nq, clarified: true, ..q }), ..n },
+        (nq + 1) as u64),
+{
+    reveal(node_rules_v);
+}
+
+pub(super) proof fn rules_world_update(before: World, after: World, b: Node, n: Node)
+    requires retirement::node_rules(before, b), node_rules_v(n, after.next_question),
+        n.repo == b.repo, n.footprint == b.footprint,
+        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
+        after.next_ticket == before.next_ticket,
+        n.ticket == b.ticket || n.ticket.is_none(),
+    ensures retirement::node_rules(after, n),
+{
+    reveal(retirement::node_rules);
+    footprint::storage_frame(before, after, b.footprint, n.footprint);
+    rules_from_v(after, n);
+}
+
+
+/// MarkHandled on a cleanup question keeps every command_step row; proved once
+/// here so the answer dispatcher never unfolds handled_node's fields.
+pub(super) proof fn handled_cleanup_step(b: Node)
+    ensures command_step(b, handled_node(Node { question: None, ..b })),
+{
+    reveal(command_step);
 }
 
 }
