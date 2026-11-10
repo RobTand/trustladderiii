@@ -892,8 +892,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 if node_checked(before_apply@, before_apply@.nodes@[i as int]) {
                     handler_safety::command_node_safety(before_apply@, *w, (Event::Command { node, id, command }), i as int,
                         before_apply_out@, *out);
-                    transition_safety::lift_apply(before_apply@, *w, (Event::Command { node, id, command }), i as int,
-                        before_apply_out@, *out);
+                    transition_safety::lift_apply_none(before_apply@, *w, (Event::Command { node, id, command }), before_apply_out@, *out);
                 }
                 if command == Command::Resume {
                     progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
