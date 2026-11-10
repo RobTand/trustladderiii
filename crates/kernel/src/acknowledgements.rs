@@ -809,7 +809,7 @@ fn ack_stopped_value(n: Node) -> (result: Node) [
 kernel_fn! {
 fn ack_cancel_value(n: Node, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     ensures ack_view(result) == ack_cancel_spec(n, nq, out), result.2 == out,
-] proof [reveal(ack_cancel_spec);] { (n, nq, out) }
+] proof [reveal(ack_cancel_spec);] { (Node { head: None, ..n }, nq, out) }
 }
 
 kernel_fn! {
