@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from tl3_harness.execution import result_json
-from tl3_harness.model import Check, FailureNotes, Kind, Outcome, Verdict, judge
+from tl3_harness.model import ALWAYS_CHECK, Check, FailureNotes, Kind, Outcome, Verdict, judge
 from tl3_harness.report import decode, parse
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
@@ -97,6 +97,6 @@ def test_parametrized_failures_compare_case_ids(tmp_path, selector):
             '    if case == "b": {second}\n')
     before, base_notes = observe(tmp_path / 'base', code.format(second='raise TypeError("old")'), selector)
     after, head_notes = observe(tmp_path / 'head', code.format(second='raise RuntimeError("new")'), selector)
-    result = judge(Check('parameters', Kind.REGRESSION, (selector,)), before, after,
+    result = judge(Check(ALWAYS_CHECK, Kind.REGRESSION, (selector,)), before, after,
                    base_notes=base_notes, messages=head_notes)
     assert result.verdict == (Verdict.PASS if '[' in selector else Verdict.FAIL), result
