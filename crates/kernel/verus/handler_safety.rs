@@ -511,4 +511,26 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
     }
 }
 
+
+pub(super) open spec fn handled_resources_node(b: Node, kind: EffectKind) -> Node {
+    Node {
+        run: if kind == EffectKind::StopRun { None } else { b.run },
+        pool: if kind == EffectKind::StopRun { false } else { b.pool },
+        job: if kind == EffectKind::WithdrawJob { None } else { b.job },
+        pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open },
+        worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree },
+        ..b
+    }
+}
+
+pub(super) open spec fn handled_node(b: Node) -> Node {
+    match current_item(b) {
+        Some(Item::Teardown(kind)) => Node {
+            pos: (b.pos + 1) as u8,
+            ..handled_resources_node(b, kind)
+        },
+        _ => b,
+    }
+}
+
 }
