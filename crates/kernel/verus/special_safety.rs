@@ -338,6 +338,20 @@ mod gate_projection {
     }
 }
 
+mod gate_ticket_projection {
+    use super::*;
+
+    verus! {
+    /// E5.8 is consumed verbatim; a Ready node had no slot before the step.
+    pub(super) proof fn ticketed_grant(b: Node, n: Node)
+        requires !b.holds,
+            !b.holds && n.holds ==> b.phase is Ready && b.ticket.is_some(),
+        ensures n.holds ==> b.ticket.is_some(),
+    {
+    }
+    }
+}
+
 mod gate_assembly {
     use super::*;
 
@@ -373,8 +387,16 @@ mod gate_assembly {
                 && result.0.nodes@[i as int].ticket.is_none()
                 && result.0.nodes@[i as int].pool == w.nodes@[i as int].pool
                 && result.0.nodes@[i as int].run == w.nodes@[i as int].run,
-            result.0.nodes@[i as int].holds && w.nodes@[i as int].ticket.is_some()
-                ==> !overlapped_by_older(w, i as int, w.nodes@[i as int].ticket.unwrap()),
+            // E5.8 removes the old-ticket side condition from grant fairness.
+            result.0.nodes@[i as int].holds ==> w.nodes@[i as int].ticket.is_some()
+                && !overlapped_by_older(w, i as int, w.nodes@[i as int].ticket.unwrap()),
+            result.0.nodes@[i as int].holds
+                ==> forall|older: int| 0 <= older < w.nodes@.len()
+                    && w.nodes@[older].phase is Ready && w.nodes@[older].repo == w.nodes@[i as int].repo
+                    && w.nodes@[older].ticket.is_some()
+                    && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+                    ==> !(slot_spec(w, older)
+                        && !overlapped_by_older(w, older, w.nodes@[older].ticket.unwrap())),
             !result.0.nodes@[i as int].holds && w.nodes@[i as int].ticket.is_some()
                 && !w.nodes@[i as int].paused ==> result.0.nodes@[i as int].ticket == w.nodes@[i as int].ticket,
             result.3 ==> 4 * node_distance(result.0.nodes@[i as int]) + pending_rank(result.0.nodes@[i as int])
@@ -387,6 +409,10 @@ mod gate_assembly {
             let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
             proof {
                 checking::accepted_node(before, i as int);
+                gate_ticket_projection::ticketed_grant(before.nodes@[i as int], w.nodes@[i as int]);
+                if w.nodes@[i as int].holds {
+                    assert(advance_family_post::ready_unobstructed(before.nodes@[i as int]));
+                }
                 advance_family_frames::step_premises_lift(before, w, i as int);
                 internal_safety::step_preserves_accepted_full(before, w, i as int);
                 checking::accepted_node(w, i as int);
