@@ -802,6 +802,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_dispatch_ingest_deposit_bounds": ("kernel::reply_family_dispatch#ingest_deposit_bounds", 1),
+            "reply_dispatch_ingest_agrees_bounds": ("kernel::reply_family_dispatch#ingest_agrees_bounds", 1),
+            "reply_dispatch_ingest_disagrees_bounds": ("kernel::reply_family_dispatch#ingest_disagrees_bounds", 1),
+            "reply_dispatch_ingest_protected_bounds": ("kernel::reply_family_dispatch#ingest_protected_bounds", 1),
+            "reply_dispatch_withheld_distance": ("kernel::reply_family_dispatch#withheld_distance", 1),
             "reply_dispatch_plan_leaf_v": ("kernel::work_replies#plan_leaf_v", 1),
             "reply_dispatch_finish_ingest_v": ("kernel::ingest#finish_ingest_v", 1),
             "reply_dispatch_audit_disagreement_v": ("kernel::ingest#audit_disagreement_v", 1),
