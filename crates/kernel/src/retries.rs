@@ -657,7 +657,7 @@ pub(super) fn spend_v(c: Credit, cost: u64) -> (result: Credit) [
     ensures result == (Credit { spent: (c.spent + cost) as u64, ..c }),
 ] {
     let mut m = c;
-    m.spend(cost);
+    m.spend(0);
     m
 }
 }
