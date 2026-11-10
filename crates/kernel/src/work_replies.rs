@@ -67,10 +67,23 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         handler_safety::fail_fast_reply(reply) && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast,
             handler_safety::work_retry(old(w).nodes@[i as int], reply), old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_snapshot! { before_work_node = w.nodes@[i as int] }
+    kernel_snapshot! { before_work_out = *out }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
     let change = reply_work_node(w.nodes[i], c, report);
     resolve_reply_change(w, i, change, out);
+    kernel_proof! {
+        match reply {
+            Reply::MakerOutOfRoom => reply_family_posts::room_posts(before_work_node@, c.fast,
+                c.next_question, ReviewStop::MakerOutOfRoom, i as int, before_work_out@, *out),
+            Reply::ReviewerOutOfRoom => if before_work_node@.review_restarted {
+                reply_family_posts::room_posts(before_work_node@, c.fast, c.next_question,
+                    ReviewStop::ReviewerOutOfRoom, i as int, before_work_out@, *out)
+            },
+            _ => {},
+        }
+    }
     kernel_proof! {
         reveal(retirement::stopped); reveal(handler_safety::ladder);
         reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
