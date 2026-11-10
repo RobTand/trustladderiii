@@ -309,7 +309,7 @@ mod change_assembly {
                 on_command(&mut w, i, id, Command::ChangeRequest, &mut out);
                 proof {
                     checking::accepted_node(before, i as int);
-                    handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
+
                     internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
                 }
             },
