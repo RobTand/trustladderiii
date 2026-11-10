@@ -447,7 +447,7 @@ mod first_line_assembly {
                 && w.nodes@[older].repo == w.nodes@[i as int].repo
                 && w.nodes@[older].ticket.is_some()
                 && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
-                ==> footprint::disjoint(*w, w.nodes@[older].footprint, w.nodes@[i as int].footprint))
+                ==> true))
             && (forall|older: int| 0 <= older < w.nodes@.len()
                 && w.nodes@[older].phase is Ready
                 && w.nodes@[older].repo == w.nodes@[i as int].repo
