@@ -88,6 +88,12 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             Reply::ReviewerOutOfRoom => if before_work_node@.review_restarted {
                 reply_family_posts::room_posts(before_work_node@, c.fast, c.next_question,
                     ReviewStop::ReviewerOutOfRoom, i as int, before_work_out@, *out)
+            } else {
+                reply_family_posts::recheck_posts(Node { review_restarted: true, ..before_work_node@ },
+                    c.next_question, Phase::Reviewing, i as int, before_work_out@, *out);
+                handler_safety::kept_ladder(c.fast, before_work_node@,
+                    Node { review_restarted: true, ..before_work_node@ }, w.nodes@[i as int],
+                    before_work_out@, *out);
             },
             _ => {},
         }
