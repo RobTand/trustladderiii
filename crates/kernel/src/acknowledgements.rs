@@ -290,7 +290,7 @@ kernel_fn! {
 fn confirmed_agenda_idle(n: Node) -> (result: Node) [
     ensures result == agenda_idle_spec(n),
 ] {
-    n
+    Node { head: None, ..n }
 }
 }
 
