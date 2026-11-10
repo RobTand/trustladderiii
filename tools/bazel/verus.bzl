@@ -443,6 +443,9 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::handler_safety::answer_withholds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::handler_safety::unwithheld": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::handler_safety::answer_pair": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -743,6 +746,13 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "handler_safety_step_withheld": ("kernel::handler_safety#step_withheld", 1),
+            "handler_safety_distance_withheld": ("kernel::handler_safety#distance_withheld", 1),
+            "handler_safety_unwithheld_same": ("kernel::handler_safety#unwithheld_same", 1),
+            "handler_safety_answer_pair_intro": ("kernel::handler_safety#answer_pair_intro", 1),
+            "handler_safety_answer_pair_rebase": ("kernel::handler_safety#answer_pair_rebase", 1),
+            "handler_safety_answer_pair_same": ("kernel::handler_safety#answer_pair_same", 1),
+            "handler_safety_answer_pair_rows": ("kernel::handler_safety#answer_pair_rows", 1),
             "events_apply_new_request": ("kernel::events#apply_new_request", 1),
             "events_apply_reply": ("kernel::events#apply_reply", 1),
             "events_apply_ack": ("kernel::events#apply_ack", 1),
