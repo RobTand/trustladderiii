@@ -67,11 +67,13 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         handler_safety::fail_fast_reply(reply) && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast,
             handler_safety::work_retry(old(w).nodes@[i as int], reply), old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_proof! { reveal(reply_family_values::work); reveal(reply_family_values::rebase); }
     kernel_snapshot! { before_work_node = w.nodes@[i as int] }
     kernel_snapshot! { before_work_out = *out }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
     let change = reply_work_node(w.nodes[i], c, report);
+    kernel_proof! { reply_family_dispatch::work_value_posts(w.nodes@[i as int], c); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         match reply {
@@ -122,9 +124,11 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_proof! { reveal(reply_family_values::work); reveal(reply_family_values::rebase); }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
     let change = reply_rebase_node(w.nodes[i], c);
+    kernel_proof! { reply_family_dispatch::rebase_value_posts(w.nodes@[i as int], c); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         reveal(retirement::stopped); reveal(handler_safety::ladder);
@@ -212,13 +216,10 @@ pub(super) fn reply_work_node(n: Node, c: ReplyCtx, report: &mut Report) -> (res
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures result == reply_family_values::work(n, c.fast, c.reply),
-        reply_family_values::reply_bound(n, c.next_question, result),
-        reply_family_safety::rows(n, c, result),
-        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, result)) < distance(n)),
-        reply_family_values::finish(c.next_question, result).footprint == n.footprint,
+        reply_family_values::callable(result),
         report::forwards(old(report).entries@, final(report).entries@,
             report::round_entries(NodeId(c.node as u64), report::work_failure(c.reply))),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+] proof [reveal(reply_family_values::work);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     let i = c.node;
@@ -226,72 +227,71 @@ pub(super) fn reply_work_node(n: Node, c: ReplyCtx, report: &mut Report) -> (res
     kernel_snapshot! { before_report = report.entries@ }
 match reply {
         Reply::MakerDone { head } => {
-            let m = &mut node;
-            m.head = Some(head);
-            m.checked = None;
-            set_phase(m, Phase::Checking);
+            let value = work_made_v(node, head);
+            kernel_proof! { report::lemmas::work_kind(reply);
+                report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply)); }
+            return value;
         }
         Reply::MakerCantMeet => {
             { let value = next_rung_node(node, i, c.fast, c.next_question, ReviewStop::MakerCantMeet, report); kernel_proof! { reply_family_posts::rung_value_posts(node, c.fast, c.next_question, ReviewStop::MakerCantMeet); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::round_delta(before_report@, report.entries@, NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet));
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
+             } return value; }
 
         }
-        Reply::MakerOutOfRoom => { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); kernel_proof! { reply_family_posts::room_bound(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); } kernel_proof! { report::lemmas::work_kind(reply);
+        Reply::MakerOutOfRoom => { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; },
+             } return value; },
         Reply::ChecksDone {
             pass, in_footprint, ..
         } => {
             if pass && in_footprint {
-                let m = &mut node;
-                m.checked = m.head;
-                set_phase(m, Phase::Reviewing);
+                let value = work_checked_v(node);
+                kernel_proof! { report::lemmas::work_kind(reply);
+                    report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply)); }
+                return value;
 
             } else {
                 { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChecksFailed, report); kernel_proof! { reply_family_posts::failed_round_value_posts(node, c.fast, c.next_question, ReviewStop::ChecksFailed); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::failure_kind(ReviewStop::ChecksFailed);
             report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChecksFailed);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
+             } return value; }
 
             }
         }
         Reply::Approved { head } => {
-            let m = &mut node;
-            m.approved = Some(head);
-            set_phase(m, Phase::Publishing);
+            let value = work_approved_v(node, head);
+            kernel_proof! { report::lemmas::work_kind(reply);
+                report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply)); }
+            return value;
         }
         Reply::ChangesRequested => {
             { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChangesRequested, report); kernel_proof! { reply_family_posts::failed_round_value_posts(node, c.fast, c.next_question, ReviewStop::ChangesRequested); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::failure_kind(ReviewStop::ChangesRequested);
             report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChangesRequested);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
+             } return value; }
 
         }
         Reply::ReviewerOutOfRoom => {
             if node.review_restarted {
-                { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); kernel_proof! { reply_family_posts::room_bound(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); } kernel_proof! { report::lemmas::work_kind(reply);
+                { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
+             } return value; }
             } else {
-                node.review_restarted = true;
+                node = review_restart_v(node);
 
                 { let value = recheck_node(node, c.next_question, Phase::Reviewing); kernel_proof! { reply_family_posts::recheck_value_posts(node, c.next_question, Phase::Reviewing); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
+             } return value; }
 
             }
         }
         _ => { let value = reply_rebase_node(node, c); kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; },
+             } return value; },
     }
-    { let value = ReplyChange::Done { node, note }; kernel_proof! { report::lemmas::work_kind(reply);
-            report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
-            reply_family_safety::work_rows(n, c, value); } return value; }
 }
 }
 
@@ -301,32 +301,108 @@ pub(super) fn reply_rebase_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed),
     ensures result == reply_family_values::rebase(n, c.reply),
-        reply_family_values::reply_bound(n, c.next_question, result),
-        reply_family_safety::rows(n, c, result),
-        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, result)) < distance(n)),
-        reply_family_values::finish(c.next_question, result).footprint == n.footprint,
-] {
-    kernel_proof! { reply_family_posts::rebase_value_posts(n, c.next_question, c.reply); }
+        reply_family_values::callable(result),
+] proof [reveal(reply_family_values::rebase);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     let i = c.node;
     let reply = c.reply;
 match reply {
         Reply::RebaseClean { head } => {
-            update_recheck_head(&mut node, head);
-            { let value = recheck_node(node, c.next_question, Phase::Checking); kernel_proof! { reply_family_posts::recheck_value_posts(node, c.next_question, Phase::Checking); } kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
+            node = rebase_head_v(node, head);
+            { let value = recheck_node(node, c.next_question, Phase::Checking); kernel_proof! { reply_family_posts::recheck_value_posts(node, c.next_question, Phase::Checking); } return value; }
         }
         Reply::RebaseNeedsChanges => {
-            let m = &mut node;
-            if m.credit.can_spend(1) {
-                m.credit = spend_v(m.credit, 1);
-                set_phase(m, Phase::Making);
-            } else {
-                { let value = ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1, }; kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
-            }
+            if node.credit.can_spend(1) { return rebase_paid_v(node); }
+            else { return rebase_ask_v(node); }
         }
         _ => {}
     }
-    { let value = ReplyChange::Done { node, note }; kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
+    ReplyChange::Done { node, note }
+}
+}
+
+kernel_fn! {
+fn work_made_v(n: Node, head: HeadId) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::work_made(n, head), reply_family_values::callable(result),
+] {
+    let mut m = n;
+    m.head = Some(head);
+    m.checked = None;
+    m = set_phase_v(m, Phase::Checking);
+    ReplyChange::Done { node: m, note: None }
+}
+}
+
+
+kernel_fn! {
+fn work_checked_v(n: Node) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::work_checked(n), reply_family_values::callable(result),
+] {
+    let mut m = n;
+    m.checked = m.head;
+    m = set_phase_v(m, Phase::Reviewing);
+    ReplyChange::Done { node: m, note: None }
+}
+}
+
+
+kernel_fn! {
+fn work_approved_v(n: Node, head: HeadId) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::work_approved(n, head), reply_family_values::callable(result),
+] {
+    let mut m = n;
+    m.approved = Some(head);
+    m = set_phase_v(m, Phase::Publishing);
+    ReplyChange::Done { node: m, note: None }
+}
+}
+
+
+kernel_fn! {
+fn rebase_paid_v(n: Node) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::rebase_paid(n), reply_family_values::callable(result),
+] {
+    let mut m = n;
+    m.credit = spend_v(m.credit, 1);
+    m = set_phase_v(m, Phase::Making);
+    ReplyChange::Done { node: m, note: None }
+}
+}
+
+
+kernel_fn! {
+fn rebase_ask_v(n: Node) -> (result: ReplyChange) [
+    requires n.generation < u64::MAX,
+    ensures result == reply_family_values::rebase_ask(n), reply_family_values::callable(result),
+] {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
+}
+}
+
+kernel_fn! {
+fn rebase_head_v(n: Node, head: HeadId) -> (result: Node) [
+    ensures result == (Node { head: Some(head), checked: None,
+        review_restarted: n.head == Some(head) && n.review_restarted, ..n }),
+        result.credit == n.credit, result.generation == n.generation, result.next_seq == n.next_seq,
+] {
+    let mut m = n;
+    update_recheck_head(&mut m, head);
+    m
+}
+}
+
+kernel_fn! {
+fn review_restart_v(n: Node) -> (result: Node) [
+    ensures result == (Node { review_restarted: true, ..n }),
+        result.credit == n.credit, result.generation == n.generation, result.next_seq == n.next_seq,
+] {
+    let mut m = n;
+    m.review_restarted = true;
+    m
 }
 }

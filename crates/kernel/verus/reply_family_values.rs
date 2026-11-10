@@ -204,33 +204,30 @@ pub(super) open spec fn plan(n: Node, fast: bool, reply: Reply) -> ReplyChange {
     }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn rebase(n: Node, reply: Reply) -> ReplyChange {
     match reply {
         Reply::RebaseClean { head } => recheck(Node { head: Some(head), checked: None,
             review_restarted: n.head == Some(head) && n.review_restarted, ..n }, Phase::Checking),
         Reply::RebaseNeedsChanges => {
-            if transition_safety::can_spend_one(n) { ReplyChange::Done {
-                node: retirement::phased(spent(n), Phase::Making), note: None } }
-            else { ReplyChange::Ask { node: n, kind: QKind::OutOfCredit,
-                cont: Cont::Ready(Resume::Making), cost: 1 } }
+            if transition_safety::can_spend_one(n) { rebase_paid(n) }
+            else { rebase_ask(n) }
         },
         _ => ReplyChange::Done { node: n, note: None },
     }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn work(n: Node, fast: bool, reply: Reply) -> ReplyChange {
     match reply {
-        Reply::MakerDone { head } => ReplyChange::Done { node: retirement::phased(
-            Node { head: Some(head), checked: None, ..n }, Phase::Checking), note: None },
+        Reply::MakerDone { head } => work_made(n, head),
         Reply::MakerCantMeet => rung(n, fast, ReviewStop::MakerCantMeet),
         Reply::MakerOutOfRoom => room(n, fast, ReviewStop::MakerOutOfRoom),
         Reply::ChecksDone { pass, in_footprint, .. } => {
-            if pass && in_footprint { ReplyChange::Done { node: retirement::phased(
-                Node { checked: n.head, ..n }, Phase::Reviewing), note: None } }
+            if pass && in_footprint { work_checked(n) }
             else { failed_round(n, fast, ReviewStop::ChecksFailed) }
         },
-        Reply::Approved { head } => ReplyChange::Done { node: retirement::phased(
-            Node { approved: Some(head), ..n }, Phase::Publishing), note: None },
+        Reply::Approved { head } => work_approved(n, head),
         Reply::ChangesRequested => failed_round(n, fast, ReviewStop::ChangesRequested),
         Reply::ReviewerOutOfRoom => {
             if n.review_restarted { room(n, fast, ReviewStop::ReviewerOutOfRoom) }
@@ -359,4 +356,20 @@ pub(super) open spec fn unheld(n: Node) -> Node { Node { holds: false, ..n } }
 pub(super) open spec fn held(n: Node, target: Phase) -> Node {
     if holding(target) { n } else { Node { holds: false, ..n } }
 }
+pub(super) open spec fn work_made(n: Node, head: HeadId) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { head: Some(head), checked: None, ..n }, Phase::Checking), note: None }
+}
+pub(super) open spec fn work_checked(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { checked: n.head, ..n }, Phase::Reviewing), note: None }
+}
+pub(super) open spec fn work_approved(n: Node, head: HeadId) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { approved: Some(head), ..n }, Phase::Publishing), note: None }
+}
+pub(super) open spec fn rebase_paid(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(spent(n), Phase::Making), note: None }
+}
+pub(super) open spec fn rebase_ask(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
+}
+
 }
