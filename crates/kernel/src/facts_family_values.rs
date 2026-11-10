@@ -728,7 +728,7 @@ pub(super) fn infrastructure_incident_arm(n: Node) -> (result: (Node, Option<boo
 ] {
     let mut value = n;
     value.run_failures += 1;
-    value.run_failures = 0;
+    value.run_failures = 1;
     value.run_incidents = infrastructure_incident_count(value.run_incidents);
     let needs_rob = value.run_incidents >= 2;
     (value, Some(needs_rob))
