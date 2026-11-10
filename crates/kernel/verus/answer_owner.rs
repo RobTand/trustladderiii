@@ -115,6 +115,34 @@ pub(super) proof fn awaiting_owner(n: Node, nq: u64, id: u64, answer: Answer, q:
     }
 }
 
+/// on_answer's N4c post (design 4, form rule 2): the whole implication behind one atom, so on_answer's goal
+/// holds no node_rules implication. Revealed only in n4c_after_last_cmd.
+#[verifier::opaque]
+pub(super) open spec fn owner_post(world: World, b: Node, n: Node, id: u64, answer: Answer) -> bool {
+    (retirement::node_rules(world, b) && dependencies::owner_waiting_ok(b)) ==> owner_rows(n, b, id, answer)
+}
+
+/// Intro (rule 7): the premise is answer_node's atom verbatim, with nq = world.next_question.
+pub(super) proof fn owner_post_intro(world: World, b: Node, n: Node, id: u64, answer: Answer)
+    ensures ((handler_safety::node_rules_v(b, world.next_question) && dependencies::owner_waiting_ok(b))
+            ==> owner_rows(n, b, id, answer))
+        ==> owner_post(world, b, n, id, answer),
+{
+    reveal(owner_post);
+    if retirement::node_rules(world, b) {
+        handler_safety::rules_to_v(world, b);
+    }
+}
+
+/// The withhold step over on_answer's fact n == unwithheld(a, n.credit.withheld).
+pub(super) proof fn owner_post_unwithheld(world: World, b: Node, a: Node, x: bool, id: u64, answer: Answer)
+    ensures (owner_post(world, b, a, id, answer) && (a.credit.withheld ==> x))
+        ==> owner_post(world, b, handler_safety::unwithheld(a, x), id, answer),
+{
+    reveal(owner_post);
+    owner_rows_unwithheld(a, x, b, id, answer);
+}
+
 /// on_answer's withhold step (rule 7): over on_answer's own fact n == unwithheld(continued, n.credit.withheld);
 /// withholding only grows zero_credit.
 pub(super) proof fn owner_rows_unwithheld(a: Node, x: bool, b: Node, id: u64, answer: Answer)
@@ -130,8 +158,7 @@ pub(super) proof fn owner_rows_unwithheld(a: Node, x: bool, b: Node, id: u64, an
 pub(super) proof fn n4c_after_last_cmd(before: World, b: Node, a: Node, n: Node, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires
-        (retirement::node_rules(before, b) && dependencies::owner_waiting_ok(b))
-            ==> owner_rows(a, b, question, answer),
+        owner_post(before, b, a, question, answer),
         handler_safety::answer_pair(b, a, true, question, answer, table, node),
         table == before.dependencies@,
         n.phase == a.phase,
@@ -146,6 +173,7 @@ pub(super) proof fn n4c_after_last_cmd(before: World, b: Node, a: Node, n: Node,
         ==> dependencies::prerequisites_delivered(before, node) || dependencies::owner_waiting_ok(n),
 {
     if retirement::node_rules(before, b) && dependencies::owner_waiting_ok(b) {
+        reveal(owner_post);
         reveal(owner_rows);
         reveal(dependencies::zero_credit);
         handler_safety::answer_pair_withheld(b, a, true, question, answer, table, node);

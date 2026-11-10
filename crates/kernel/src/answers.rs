@@ -60,8 +60,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
-            ==> answer_owner::owner_rows(final(w).nodes@[i as int], old(w).nodes@[i as int], id, answer)),
+        answer_owner::owner_post(*old(w), old(w).nodes@[i as int], final(w).nodes@[i as int], id, answer),
 ] {
     kernel_snapshot! { before_answer_rules = *w }
     kernel_proof! {
@@ -85,6 +84,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
     }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
+    kernel_proof! { answer_owner::owner_post_intro(before_answer_rules@, before_answer@, n1, id, answer); }
     kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
     w.nodes[i] = n1;
     if withhold {
@@ -93,7 +93,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         kernel_proof! {
             let n = w.nodes@[i as int];
             assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
-            answer_owner::owner_rows_unwithheld(continued@, n.credit.withheld, before_answer@, id, answer);
+            answer_owner::owner_post_unwithheld(before_answer_rules@, before_answer@, continued@,
+                n.credit.withheld, id, answer);
             handler_safety::distance_withheld(continued@, n.credit.withheld);
             if continued@ == before_answer@ {
                 // An answer that left the node AwaitingRob withholds nothing.
