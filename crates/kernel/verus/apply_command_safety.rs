@@ -942,6 +942,19 @@ pub(super) proof fn answer_pair_fields(b: Node, a: Node, n: Node, id: u64, quest
     ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
 {
     reveal(handler_safety::answer_pair);
+    command_step_fields(b, handler_safety::unwithheld(a, b.credit.withheld),
+        handler_safety::unwithheld(n, b.credit.withheld));
+}
+
+/// SPLIT: command_step reads only these fields of its second node.
+pub(super) proof fn command_step_fields(b: Node, x: Node, y: Node)
+    requires handler_safety::command_step(b, x),
+        y.proposed == x.proposed, y.adopted == x.adopted, y.phase == x.phase,
+        y.review_stop == x.review_stop, y.attempt == x.attempt, y.replanned == x.replanned,
+        y.question == x.question, y.credit.merge_credited == x.credit.merge_credited,
+        y.credit.withheld == x.credit.withheld,
+    ensures handler_safety::command_step(b, y),
+{
     reveal(handler_safety::command_step);
 }
 
