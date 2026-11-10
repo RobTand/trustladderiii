@@ -27,8 +27,12 @@ pub fn select_flux_text(text: &str) -> String {
         if line.starts_with("# execution_backend = \"flux\"") || line.starts_with("# [flux]") {
             in_flux = line.starts_with("# [flux]");
             selected.push_str(&line[2..]);
-        } else if in_flux && line.starts_with("# ") && line[2..].contains(" = ") {
-            selected.push_str(&line[2..]);
+        } else if in_flux && line.starts_with("# ") {
+            if line[2..].contains(" = ") {
+                selected.push_str(&line[2..]);
+            } else {
+                selected.push_str(line);
+            }
         } else {
             in_flux = false;
             selected.push_str(line);

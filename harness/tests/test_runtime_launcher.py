@@ -1302,7 +1302,6 @@ def test_backend_cli_scrubs_structured_cause_and_each_stream_before_retention(ba
 @pytest.mark.parametrize('generator', [False, True])
 def test_x7_native_target_and_descendants_get_only_opted_in_flux_uri(tmp_path, monkeypatch, opt_in, generator):
     import os
-    from tl3_harness import runtime
 
     uri = 'local:///job-owned/run/local-1'
     for name in ('FLUX_URI', 'FLUX_JOB_ID', 'FLUX_KVS_NAMESPACE', 'FLUX_JOB_TMPDIR'):
@@ -1335,10 +1334,10 @@ def test_x7_container_uses_job_uri_and_readonly_socket_mount(tmp_path, monkeypat
         monkeypatch.setattr(runtime, 'check_rootless_directory', lambda env: None)
         import shutil
         monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/' + name)
-        context = flux_context(monkeypatch, pass_flux_uri=opt_in, native_threads=1,
-                               coordinator_uri='local:///controller-submit-time',
-                               runtime={'image': 'sha256:' + '1' * 64, 'mode': 'in_job',
-                                        'executable': 'podman', 'trusted_root': '/harness', 'interpreter': 'python3'})
+        flux_context(monkeypatch, pass_flux_uri=opt_in, native_threads=1,
+                     coordinator_uri='local:///controller-submit-time',
+                     runtime={'image': 'sha256:' + '1' * 64, 'mode': 'in_job',
+                              'executable': 'podman', 'trusted_root': '/harness', 'interpreter': 'python3'})
         argv = runtime.command(tmp_path / 'checkout', tmp_path / 'scratch')
         env = [argv[i + 1] for i, value in enumerate(argv) if value == '--env' and argv[i + 1].startswith('FLUX_')]
         mounts = [argv[i + 1] for i, value in enumerate(argv) if value == '--mount']
