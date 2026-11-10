@@ -439,6 +439,8 @@ fn answer_command(w: &mut World, i: usize, id: u64, question: u64, answer: Answe
     kernel_proof! {
         apply_command_safety::nodes_rewrite_frame(before_rules_world@.nodes@, i as int, m,
             w.nodes@[i as int]);
+        apply_command_safety::answered_parts(before_rules_world@.nodes@[i as int],
+            before_rules_world@.next_question, id, question, answer);
         apply_command_safety::answer_world(before_rules_world@, *w, i, id, question, answer,
             before_out@, *out);
     }
