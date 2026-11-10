@@ -1829,6 +1829,10 @@ def verus_proofs():
             "special_safety_advance_rank": ("kernel::special_safety::advance_projection", 1),
             "special_safety_pause_projection": ("kernel::special_safety::pause_projection", 1),
             "special_safety_gate_ticket_projection": ("kernel::special_safety::gate_ticket_projection", 1),
+            "special_safety_aggregate_command_rows": ("kernel::special_safety::aggregate_command_rows", 1),
+            "special_safety_resume_apply_projection": ("kernel::special_safety::resume_apply_projection", 1),
+            "special_safety_invalid_command_assembly": ("kernel::special_safety::invalid_command_assembly", 1),
+            "special_safety_aggregate_command_assembly": ("kernel::special_safety::aggregate_command_assembly", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
