@@ -275,7 +275,7 @@ fn withhold_ingest_v(n: Node, delivered: bool) -> (result: Node) [
     if !delivered && !node.planning_started
         && matches!(node.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
     {
-        if node.credit.ready { node.credit.withheld = true; }
+        if node.credit.ready { node.credit.withheld = false; }
     }
     node
 }
