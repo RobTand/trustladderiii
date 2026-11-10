@@ -362,7 +362,7 @@ mod gate_assembly {
     use super::*;
 
     verus! {
-    fn gate_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
+    pub(super) fn gate_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
         -> (result: (World, Outbox, Report, bool))
         requires checking::accepted(w), scheduling_safe(w),
             w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
@@ -430,6 +430,58 @@ mod gate_assembly {
             }
             (w, out, report, changed)
         }
+    }
+}
+
+mod first_line_assembly {
+    use super::*;
+
+    verus! {
+    /// E5.9 supplies sufficiency; the query's existing rows supply necessity.
+    pub(super) fn full_first_in_line(w: &World, i: usize) -> (result: bool)
+        requires i < w.nodes@.len(), scheduling_safe(*w),
+        ensures w.nodes@[i as int].phase is Ready ==> result == (
+            w.nodes@[i as int].ticket.is_some()
+            && (forall|older: int| 0 <= older < w.nodes@.len()
+                && w.nodes@[older].phase is Ready
+                && w.nodes@[older].repo == w.nodes@[i as int].repo
+                && w.nodes@[older].ticket.is_some()
+                && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+                ==> footprint::disjoint(*w, w.nodes@[older].footprint, w.nodes@[i as int].footprint))
+            && (forall|older: int| 0 <= older < w.nodes@.len()
+                && w.nodes@[older].phase is Ready
+                && w.nodes@[older].repo == w.nodes@[i as int].repo
+                && w.nodes@[older].ticket.is_some()
+                && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+                ==> !(slot_spec(*w, older)
+                    && !overlapped_by_older(*w, older, w.nodes@[older].ticket.unwrap())))),
+            !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
+    {
+        scheduler::first_in_line(w, i)
+    }
+    }
+}
+
+mod gate_first_line_assembly {
+    use super::*;
+
+    verus! {
+    /// Observe the executable query before the real advance step.
+    fn gate_first_in_line_step(mut w: World, i: usize, out: Outbox, report: Report)
+        -> (result: (World, Outbox, Report, bool, bool))
+        requires checking::accepted(w), scheduling_safe(w),
+            w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
+            i < w.nodes@.len(), i <= u64::MAX as int,
+            advance_pre(w.nodes@[i as int], w.next_ticket, out.len),
+            w.nodes@[i as int].phase is Ready,
+        ensures checking::accepted(result.0),
+            // H59/H60: a slot grant requires the actual pre-step first_in_line result.
+            result.0.nodes@[i as int].holds ==> result.4,
+    {
+        let first = first_line_assembly::full_first_in_line(&w, i);
+        let (after, out, report, changed) = gate_assembly::gate_grant_step(w, i, out, report);
+        (after, out, report, changed, first)
+    }
     }
 }
 
