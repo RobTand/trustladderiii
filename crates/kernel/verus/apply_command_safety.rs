@@ -848,7 +848,7 @@ pub(super) proof fn command_stutter(before: World, after: World, i: usize, id: u
 /// word; the post is on_command's ensures word for word with command fixed to Command::Stop.
 pub(super) proof fn dispatch_stop(before: World, after: World, i: usize, id: u64, command: Command,
     ob: Outbox, oa: Outbox)
-    requires command == Command::Stop,
+    requires command == (Command::Stop),
         oa == ob,
         (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
@@ -955,7 +955,7 @@ pub(super) proof fn dispatch_stop(before: World, after: World, i: usize, id: u64
 /// word; the post is on_command's ensures word for word with command fixed to Command::ChangeRequest.
 pub(super) proof fn dispatch_change_request(before: World, after: World, i: usize, id: u64, command: Command,
     ob: Outbox, oa: Outbox)
-    requires command == Command::ChangeRequest,
+    requires command == (Command::ChangeRequest),
         oa == ob,
         (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
@@ -1062,7 +1062,7 @@ pub(super) proof fn dispatch_change_request(before: World, after: World, i: usiz
 /// word; the post is on_command's ensures word for word with command fixed to Command::Pause.
 pub(super) proof fn dispatch_pause(before: World, after: World, i: usize, id: u64, command: Command,
     ob: Outbox, oa: Outbox)
-    requires command == Command::Pause,
+    requires command == (Command::Pause),
         oa == ob,
         (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
@@ -1169,7 +1169,7 @@ pub(super) proof fn dispatch_pause(before: World, after: World, i: usize, id: u6
 /// word; the post is on_command's ensures word for word with command fixed to Command::Resume.
 pub(super) proof fn dispatch_resume(before: World, after: World, i: usize, id: u64, command: Command,
     ob: Outbox, oa: Outbox)
-    requires command == Command::Resume,
+    requires command == (Command::Resume),
         oa == ob,
         (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
@@ -1276,7 +1276,7 @@ pub(super) proof fn dispatch_resume(before: World, after: World, i: usize, id: u
 /// word; the post is on_command's ensures word for word with command fixed to Command::Answer { question, answer }.
 pub(super) proof fn dispatch_answer(before: World, after: World, i: usize, id: u64, command: Command, question: u64, answer: Answer,
     ob: Outbox, oa: Outbox)
-    requires command == Command::Answer { question, answer },
+    requires command == (Command::Answer { question, answer }),
         (node_checked(before, before.nodes@[i as int])
             && id > before.nodes@[i as int].last_cmd
             && command_progress_input(before.nodes@[i as int], (Command::Answer { question, answer }))
