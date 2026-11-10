@@ -236,12 +236,9 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
         fact_node(n, fact).ticket.is_none() || fact_node(n, fact).ticket == n.ticket,
         fact_node(n, fact).repo == n.repo, fact_node(n, fact).footprint == n.footprint,
 {
-    reveal(node_rules); reveal(fact_node); reveal(stopped);
+    reveal(node_rules); reveal(fact_node);
     match fact {
-        Fact::IncidentCleared { .. } => {},
-        Fact::CiFailed { infra: true } => {},
-        Fact::PrMerged { .. } => {},
-        Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict => {},
+        Fact::PrMerged { .. } | Fact::PrClosedByPerson => { reveal(stopped); },
         _ => {},
     }
 }
