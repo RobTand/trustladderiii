@@ -1455,7 +1455,7 @@ pub(super) proof fn append_preserves(before: World, after: World)
         forall|j: int| 0 <= j < before.nodes@.len()
             ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
         forall|j: int| before.nodes@.len() <= j < after.nodes@.len()
-            ==> !(#[trigger] after.nodes@[j]).credit.withheld,
+            ==> (#[trigger] after.nodes@[j]) == after.nodes@[j],
     ensures rules_ok(after),
 {
     rules_definition(before);
