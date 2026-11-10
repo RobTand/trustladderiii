@@ -7041,31 +7041,49 @@ fn cleanup_maintenance_time_budget_stops_between_executions() {
     f.cleanup_facts(&first, false);
     f.cleanup_facts(&second, false);
     f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
+    let mut later = Fixture::new();
+    later.podman(ContainerMode::OwnScope, true);
+    later.submit();
+    let later_owned = later.cleanup_execution("budget-later-owner", 'd');
+    later.cleanup_facts(&later_owned, false);
+    later.call(json!({"op":"cleanup_runtime","owner":later_owned.owner.owner,"correlation":later_owned.owner.correlation}));
+    // Sort this owner after the two-execution owner in the shared journal.
+    let mut state = later.state();
+    state.intent.correlation = format!("{}-later", f.intent.correlation);
+    let dir = f.options.journal_root.join(&state.intent.correlation);
+    fs::create_dir(&dir).unwrap();
+    api::durable::save(&dir, &state).unwrap();
+    fs::remove_file(later.intent.output_dir.join("helper-called-budget-later-owner")).unwrap();
     for owned in [&first, &second] {
         fs::remove_file(
-            f.intent
-                .output_dir
-                .join(format!("helper-called-{}", owned.execution)),
-        )
-        .unwrap();
-        f.cleanup_control(&owned.execution, 2);
+            f.intent.output_dir.join(format!("helper-called-{}", owned.execution)),
+        ).unwrap();
+        f.cleanup_facts(owned, true);
     }
+    f.cleanup_control(&first.execution, 2);
+    let before = cleanup_debts(&f);
+    assert_eq!(before.len(), 2);
+    let due = maintenance_due(&f).max(state.cleanup_retry_ms.unwrap());
     let backend =
         maintenance_backend(&f).with_cleanup_maintenance_limits(4, Duration::from_millis(500));
     let started = Instant::now();
-    backend.cleanup_maintenance(maintenance_due(&f)).unwrap();
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "maintenance native calls share the pass deadline"
-    );
-    assert!(
-        !f.intent
-            .output_dir
-            .join("helper-called-budget-second")
-            .exists(),
-        "budget exhaustion must not start another helper"
-    );
-    assert!(!cleanup_debts(&f).is_empty());
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(started.elapsed() >= Duration::from_secs(2),
+        "a started helper keeps its own budget even after the pass budget expires");
+    assert!(f.state().cleanup_evidence.contains_key(&first.execution),
+        "the running helper must finish and retain positive stop evidence");
+    assert_eq!(cleanup_debts(&f).len(), 1,
+        "the completed execution must retire its own debt");
+    assert!(!f.state().cleanup_evidence.contains_key(&second.execution));
+    assert!(!f.intent.output_dir.join("helper-called-budget-second").exists(),
+        "budget exhaustion must not start another execution");
+    assert!(!later.intent.output_dir.join("helper-called-budget-later-owner").exists(),
+        "budget exhaustion must not start another owner");
+    let untouched = serde_json::from_slice::<api::durable::Record>(
+        &fs::read(dir.join("state.json")).unwrap()).unwrap();
+    assert_eq!(untouched.cleanup_retry_ms, state.cleanup_retry_ms,
+        "an unstarted owner must remain due without a claim");
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next <= due));
 }
 
 fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
