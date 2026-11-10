@@ -128,7 +128,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
                 && old(w).nodes@[older].ticket.is_some()
                 && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
-                ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint,
+                ==> !footprint::disjoint(*old(w), old(w).nodes@[older].footprint,
                     old(w).nodes@[i as int].footprint),
         (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
             ==> final(w).nodes@[i as int].phase == resumed_phase(
