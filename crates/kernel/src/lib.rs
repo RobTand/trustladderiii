@@ -84,6 +84,9 @@ mod facts_family_lemmas;
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_out_of_range.rs"]
+mod apply_out_of_range;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/ack_family_safety.rs"]
 mod ack_family_safety;
 #[cfg(verus_keep_ghost)]
