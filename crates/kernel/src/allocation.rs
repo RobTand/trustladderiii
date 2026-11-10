@@ -418,7 +418,7 @@ fn incident_notes(i: usize, needs_rob: bool) -> (result: Outbox) [
             reveal(empty_outbox);
         }
     }
-    notice(&mut notes, i, Notice::Incident { needs_rob });
+    notice(&mut notes, i, Notice::Incident { needs_rob: !needs_rob });
     kernel_proof! {
         assert(notes.items@ == Seq::new(OUTBOX as nat, |k: int| None::<Out>).update(0,
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } })));
