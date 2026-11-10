@@ -1,10 +1,40 @@
 {
-  "source_head": "35f8e11b5d1742b24599a56ace3c17f7c47174bd",
+  "source_head": "e96c9c1bbac4c21a3d32a4f8ca580a85e4d27b3a",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "f3f4c2bd8f9eb747a0631a22e08466f2c9e29f22dbbb7dcc7d19cf8b824b4c82",
-  "groups": 898,
-  "obligations": 1106,
+  "source_sha256": "6667d57b03f46b3e58361c6e625c9a842d7f82ca344e22cc4d526e736431e05d",
+  "groups": 902,
+  "obligations": 1110,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_stop_frames_stop_e11_frames",
+      "selector": "kernel::stop_frames#stop_e11_frames",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frames_stop_post_intro",
+      "selector": "kernel::stop_frames#stop_post_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frame_reveal_stop_frames_reveal",
+      "selector": "kernel::stop_frame_reveal#stop_frames_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_stop_frame_reveal_stop_post_rows",
+      "selector": "kernel::stop_frame_reveal#stop_post_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_rules_rules_incident",
+      "selector": "kernel::answer_rules#rules_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_rules_rules_after_last_cmd",
+      "selector": "kernel::answer_rules#rules_after_last_cmd",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_command_frames_reveal_r24_stop",
       "selector": "kernel::command_frames_reveal#r24_stop",
@@ -18,16 +48,6 @@
     {
       "target": "//crates/kernel:verus_advance_family_post_slot_grant_rows",
       "selector": "kernel::advance_family_post#slot_grant_rows",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_apply_command_safety_rules_after_last_cmd",
-      "selector": "kernel::apply_command_safety#rules_after_last_cmd",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_apply_command_safety_rules_incident",
-      "selector": "kernel::apply_command_safety#rules_incident",
       "expected": 1
     },
     {
