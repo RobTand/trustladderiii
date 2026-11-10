@@ -743,7 +743,7 @@ pub(super) fn infrastructure_retry_value(n: Node) -> (result: (Node, Option<bool
         result == retirement::infrastructure_retry(n),
         result.0.generation as int <= n.generation as int + 1,
 ] {
-    let result = if n.run_failures == 0 {
+    let result = if n.run_failures != 0 {
         infrastructure_retry_arm(n)
     } else {
         infrastructure_incident_arm(n)
