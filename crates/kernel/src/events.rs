@@ -334,7 +334,7 @@ fn apply_new_adoption(w: &mut World, repo: RepoId, head: HeadId, priority: Prior
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *_out }
     kernel_proof! { report_projection(*w, (Event::NewAdoption { repo, head, priority })); events_lemmas::selected_input(before_apply@, (Event::NewAdoption { repo, head, priority })); }
-        kernel_proof! { assert(w.gates@ == before_apply@.gates@); assert(w.nodes@ == before_apply@.nodes@); }
+        kernel_proof! { assert(w.gates@ == before_apply@.gates@); assert(w.nodes@ == before_apply@.nodes@); assert(w.gates@.len() <= usize::MAX); }
         if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
             let mut node = Node::new(repo);
             node.proposed = Some(head);
