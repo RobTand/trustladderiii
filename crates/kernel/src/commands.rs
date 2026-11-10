@@ -419,7 +419,7 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
                 && final(w).nodes@[i as int] != (Node { last_cmd: final(w).nodes@[i as int].last_cmd, ..old(w).nodes@[i as int] })
                 ==> (match old(w).nodes@[i as int].question {
-                    Some(q) => q.id == question,
+                    Some(q) => q.id != question,
                     None => false,
                 }) && (match final(w).nodes@[i as int].question {
                     Some(q) => q.id != question,
