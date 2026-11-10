@@ -277,9 +277,38 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
         final(w).dependencies@ == old(w).dependencies@,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    let id = w.next_question;
-    w.next_question += 1;
-    let m = &mut w.nodes[i];
+    let (node, next_question, notes) = ask_value(w.nodes[i], w.next_question,
+        i, kind, cont, cost);
+    w.nodes[i] = node;
+    w.next_question = next_question;
+    if let Some(item) = notes.items[0] {
+        out.push(item);
+    }
+}
+}
+
+kernel_fn! {
+/// The canonical Ask node update, question counter and single notice.
+pub(super) fn ask_value(n: Node, nq: u64, i: usize, kind: QKind, cont: Cont,
+    cost: u8) -> (result: (Node, u64, Outbox)) [
+    requires n.generation < u64::MAX, nq < u64::MAX,
+    ensures result.0 == retirement::phased(Node {
+            holds: false,
+            question: Some(Question { id: nq, kind, cont, cost, clarified: false }),
+            ..n
+        }, Phase::AwaitingRob),
+        result.1 as int == nq as int + 1,
+        result.2.len == 1,
+        result.2.items@[0] == Some(Out::Notice {
+            node: NodeId(i as u64), notice: Notice::Ask { question: nq } }),
+        forall|k: int| 1 <= k < OUTBOX ==> (#[trigger] result.2.items@[k]).is_none(),
+] {
+    let mut notes = Outbox::new();
+    kernel_proof! { reveal(empty_outbox); }
+    let mut next_question = nq;
+    let id = next_question;
+    next_question += 1;
+    let mut m = n;
     m.holds = false;
     m.question = Some(Question {
         id,
@@ -288,8 +317,10 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
         cost,
         clarified: false,
     });
-    set_phase(m, Phase::AwaitingRob);
-    notice(out, i, Notice::Ask { question: id });
+    set_phase(&mut m, Phase::AwaitingRob);
+    notice(&mut notes, i, Notice::Ask { question: id });
+    kernel_proof! { reveal(retirement::phased); }
+    (m, next_question, notes)
 }
 }
 
