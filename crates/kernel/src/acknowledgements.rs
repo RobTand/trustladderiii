@@ -53,7 +53,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         && (final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents)
         && (final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures)
         && (final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents)),
-        (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && !e.cancelling && transition_safety::teardown_kind(e.kind) && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)), None => false })) ==> ((final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
+        (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect { Some(e) => e.seq != seq && !e.cancelling && transition_safety::teardown_kind(e.kind) && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)), None => false })) ==> ((final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase)
         && (final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds)
         && (final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq)
         && (final(w).nodes@[i as int].question == old(w).nodes@[i as int].question)
