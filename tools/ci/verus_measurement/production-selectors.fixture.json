@@ -1,10 +1,35 @@
 {
-  "source_head": "0809df150ff9962e5ab050ebfe462417a3cf3a99",
+  "source_head": "19a0544b1f5c0cfdfa07e7c3fca573d62dc80da8",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4928106a51a13e011b8587825c64550625416598e49b11657132056e4d246812",
-  "groups": 497,
-  "obligations": 689,
+  "source_sha256": "2d67821ef0deb21fa654322e43593a0d4d47a2c730cab6812eb47fea0e4d7878",
+  "groups": 502,
+  "obligations": 694,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_live",
+      "selector": "kernel::acknowledgements#ack_live",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_node_safety",
+      "selector": "kernel::ack_family_safety#ack_node_safety",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_adoption_facts",
+      "selector": "kernel::ack_family_safety#adoption_facts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_equiv",
+      "selector": "kernel::ack_family_safety#bpr_equiv",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_open_pr_quiet",
+      "selector": "kernel::ack_family_safety#bpr_open_pr_quiet",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_allocation_incident_value",
       "selector": "kernel::allocation#incident_value",
