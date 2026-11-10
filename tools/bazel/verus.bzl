@@ -443,6 +443,9 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::liveness_bounds::small": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_bounds::context": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_teardown::clean": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::apply_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::command_dispatch::on_command": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.1), external_body; calls the verified on_command_proved; never lands.",
             "kernel::acknowledgements::on_ack": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.2), external_body; calls the verified on_ack_proved; never lands.",
@@ -879,6 +882,14 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "liveness_bounds_reserves": ("kernel::liveness_bounds#reserves", 1),
+            "liveness_bounds_advance_bounds": ("kernel::liveness_bounds#advance_bounds", 1),
+            "liveness_bounds_advance_accepts": ("kernel::liveness_bounds#advance_accepts", 1),
+            "liveness_bounds_event_accepts": ("kernel::liveness_bounds#event_accepts", 1),
+            "liveness_bounds_context_frame": ("kernel::liveness_bounds#context_frame", 1),
+            "liveness_teardown_advance_guard": ("kernel::liveness_teardown#advance_guard", 1),
+            "liveness_teardown_ack_guard": ("kernel::liveness_teardown#ack_guard", 1),
+            "liveness_teardown_round": ("kernel::liveness_teardown#round", 1),
             "transition_safety_apply_exports_rows": ("kernel::transition_safety#apply_exports_rows", 1),
             "advance_family_post_step_rows_intro": ("kernel::advance_family_post#step_rows_intro", 1),
             "advance_family_frames": ("kernel::advance_family_frames", 1),
