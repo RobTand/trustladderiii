@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::handler_safety::handled_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::handler_safety::handled_resources_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
