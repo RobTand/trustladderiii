@@ -111,7 +111,7 @@ def test_wrong_executing_uid_rejects_before_scratch_authority(scratch, monkeypat
 
 @pytest.mark.parametrize('case', ['ordinary', 'symlink-root', 'symlink-child', 'wrong-owner',
                                  'cross-filesystem', 'unreadable', 'failed-removal', 'over-bound', 'over-bytes',
-                                 'generation-before', 'generation-pre-removal', 'foreign-host'])
+                                 'foreign-host'])
 def test_guards_never_certify_failed_or_unsafe_removal(scratch, monkeypatch, case):
     request, root, output, guards = scratch
     original_stat = runtime.os.stat
@@ -144,12 +144,6 @@ def test_guards_never_certify_failed_or_unsafe_removal(scratch, monkeypatch, cas
     elif case == 'over-bound':
         for index in range(4097):
             (root / f'entry-{index}').touch()
-    elif case in ('generation-before', 'generation-pre-removal'):
-        def wrong(systemctl, instance, deadline):
-            guards.append(True)
-            bad = len(guards) == (1 if case == 'generation-before' else 2)
-            return {'exit_code': 0, 'stdout': 'wrong' if bad else 'a' * 32, 'stderr': ''}
-        monkeypatch.setattr(runtime, '_external_generation', wrong)
     elif case == 'foreign-host':
         monkeypatch.setattr(runtime.os, 'uname', lambda: SimpleNamespace(nodename='foreign'))
     result = observe(request, output)
@@ -157,7 +151,7 @@ def test_guards_never_certify_failed_or_unsafe_removal(scratch, monkeypatch, cas
     assert result['observation']['kind'] == ('present' if case == 'ordinary' else 'unknown')
     assert result['attribution'] is None
     assert root.exists() and not (output / 'scratch-reclamation.complete.json').exists()
-    if case not in ('failed-removal', 'generation-pre-removal'):
+    if case != 'failed-removal':
         assert not (output / 'scratch-reclamation.manifest.json').exists()
     retain(case, result, output)
 
@@ -214,3 +208,13 @@ def test_caller_cannot_supply_a_deletion_root_or_change_retained_binding(scratch
     with pytest.raises(ValueError, match='retained Rust authority'):
         runtime.scratch_cleanup(request, systemctl='/never-called')
     assert not guards and root.exists()
+
+
+def test_broker_metadata_changes_do_not_change_scratch_ownership(scratch, monkeypatch):
+    request, root, output, guards = scratch
+    monkeypatch.setattr(runtime, '_external_generation', lambda *args: {
+        'exit_code': 0, 'stdout': 'after-reboot', 'stderr': ''})
+    result = observe(request, output)
+    assert result['observation']['kind'] == 'absent'
+    assert result['attribution'] == request['reclamation']
+    assert not root.exists()

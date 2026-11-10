@@ -106,11 +106,6 @@ impl Flux {
         facts: &AllocationInput,
     ) -> Result<()> {
         let raw = self.live_allocation(record, &facts.run)?;
-        if raw != checked_blob(&facts.allocation, &record.intent.output_dir)? {
-            return Err(BackendError::invalid(
-                "native allocation changed after observation",
-            ));
-        }
         let observed = observed_allocation(
             record,
             &AllocationObservation {

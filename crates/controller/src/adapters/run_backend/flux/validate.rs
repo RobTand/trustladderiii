@@ -16,7 +16,7 @@ pub(super) fn options(options: &Options) -> Result<()> {
         || !options.environment.contains_key("PATH")
     {
         return Err(BackendError::invalid(
-            "explicit executable, PATH, generation and journal root required",
+            "explicit executable, PATH, runtime locator and journal root required",
         ));
     }
     for (name, value) in &options.environment {
@@ -62,7 +62,7 @@ pub(super) fn reservation(reservation: &Reservation) -> Result<()> {
         ));
     }
     if reservation.cpus.get() > 10 || reservation.memory_bytes.get() > (24_u64 << 30) {
-        return Err(BackendError::invalid("request exceeds dl380g10 plain limit of 10 cores / 24 GiB and no GPU"));
+        return Err(BackendError::invalid("request exceeds dl380g10 plain limit of 10 cores / 24 GiB"));
     }
     Ok(())
 }
@@ -169,6 +169,10 @@ pub(super) fn request(
         ));
     }
     validate_request_environment(&request.environment)?;
+    if request.pass_flux_uri && !request.repo.rsplit('/').next().is_some_and(|name| name.eq_ignore_ascii_case("prismaquant")) {
+        return Err(BackendError::invalid("pass_flux_uri is supported only for PrismaQuant"));
+    }
+
     if request.runner.arguments.iter().any(|s| {
         s.len() > 16_384 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)
     }) {

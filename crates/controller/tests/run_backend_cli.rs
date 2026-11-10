@@ -709,7 +709,6 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
         .join(format!("{}.scratch", f.intent.correlation));
     assert!(debt.exists());
     fs::remove_dir_all(&root).unwrap(); // Remove only this admitted fixture's injected tree.
-    let bad_generation = json!({"exit_code":0,"stdout":"wrong-generation","stderr":""});
     for (name, replacement) in [
         ("host", json!({"host":"foreign"})),
         (
@@ -724,14 +723,6 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
         ("nonce", json!({"nonce":"d".repeat(64)})),
         ("path", json!({"path":"/tmp/foreign"})),
         ("uid", json!({"uid":0})),
-        (
-            "generation-before",
-            json!({"generation_before":bad_generation}),
-        ),
-        (
-            "generation-after",
-            json!({"generation_after":bad_generation}),
-        ),
         (
             "stale",
             json!({"started_monotonic_ns":0,"finished_monotonic_ns":0}),
@@ -759,7 +750,10 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
         );
         assert!(debt.exists() && !f.intent.output_dir.join("receipt.json").exists());
     }
-    fs::remove_file(f.intent.output_dir.join("scratch-control.json")).unwrap();
+    fs::write(f.intent.output_dir.join("scratch-control.json"), json!({"replace":{
+        "generation_before":{"exit_code":0,"stdout":"after-reboot","stderr":""},
+        "generation_after":{"exit_code":0,"stdout":"after-reboot","stderr":""}
+    }}).to_string()).unwrap();
     let frames = f.attach();
     assert_eq!(
         frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
@@ -1125,18 +1119,6 @@ fn launch_failure_acceptance_matrix(f: &Fixture) {
             json!({"observation":{"kind":"present","populated":0}}),
         ),
         ("wrong-host", json!({"host":"foreign-host"})),
-        (
-            "generation-before",
-            json!({"generation_before":{"exit_code":0,"stdout":"wrong\n","stderr":""}}),
-        ),
-        (
-            "generation-after",
-            json!({"generation_after":{"exit_code":0,"stdout":"wrong\n","stderr":""}}),
-        ),
-        (
-            "generation-nonzero",
-            json!({"generation_before":{"exit_code":1,"stdout":"fixture-generation\n","stderr":""}}),
-        ),
         (
             "sibling-unit",
             json!({"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABD:sys.service"}),
@@ -6375,6 +6357,7 @@ fn x7_flux_uri_is_controller_owned_and_opt_in() {
         let f = Fixture::new();
         let mut request = serde_json::to_value(&f.request).unwrap();
         request["pass_flux_uri"] = json!(enabled);
+        request["repo"] = json!(if enabled { "RobTand/prismaquant" } else { "RobTand/tessera" });
         let frames = f.call(json!({"op":"prepare_intent","request":request,"owner":f.intent.owner,"correlation":f.intent.correlation}));
         assert_ne!(frames.last().unwrap()["kind"], "error", "{frames:?}");
         let intent = frames.last().unwrap()["result"]["intent"].clone();

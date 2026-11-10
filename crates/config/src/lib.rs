@@ -1165,6 +1165,9 @@ impl Config {
                     ));
                 }
             }
+            if repo.pass_flux_uri && !repo.name.eq_ignore_ascii_case("prismaquant") {
+                return Err(invalid(format!("{field}.pass_flux_uri"), format!("repository {}/{}: pass_flux_uri is supported only for PrismaQuant", repo.owner, repo.name)));
+            }
             if self.execution_backend == ExecutionBackend::Flux {
                 let demand = repo.test_demand.unwrap_or_default();
                 if demand.cpus.checked_mul(4).is_none_or(|cpus| cpus > 10)
