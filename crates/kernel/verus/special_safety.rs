@@ -613,7 +613,6 @@ mod aggregate_command_rows {
             if !dependencies::prerequisites_delivered(before, node) {
                 dependency_owner_exports::waiting_owner_ok(before, i);
             }
-            handler_safety::step_withheld(before.nodes@[i], after.nodes@[i]);
             internal_safety::apply_step_preserves_accepted_full(before, after, i);
         }
     }
