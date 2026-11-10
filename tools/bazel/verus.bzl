@@ -443,6 +443,18 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::liveness_gate_domain::healthy": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::waiter_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::younger_holder": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::younger_waiter": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::younger_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::gate_start": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::pre_inv": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_domain::post_inv": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_steps::advanced": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_steps::advanced_grants": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_steps::advanced_requested": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_gate_steps::torn_down": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::step_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::events::apply": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified apply_proved; never lands.",
             "kernel::settling::settle": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper, external_body; calls the verified settle_proved; never lands.",
@@ -875,6 +887,14 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "liveness_gate_visit_frames": ("kernel::liveness_gate_visit#visit_frames", 1),
+            "liveness_gate_before_visit": ("kernel::liveness_gate_visit#before_visit", 1),
+            "liveness_gate_start_inv": ("kernel::liveness_gate_release#start_inv", 1),
+            "liveness_gate_reserved": ("kernel::liveness_gate_release#reserved", 1),
+            "liveness_gate_released": ("kernel::liveness_gate_release#released", 1),
+            "liveness_gate_after_visit": ("kernel::liveness_gate_grant#after_visit", 1),
+            "liveness_gate_waiter_granted": ("kernel::liveness_gate_grant#waiter_granted", 1),
+            "liveness_gate_leaf_progress": ("kernel::liveness_gate_trace#gate_leaf_progress", 1),
             "advance_family_post_step_rows_intro": ("kernel::advance_family_post#step_rows_intro", 1),
             "advance_family_frames": ("kernel::advance_family_frames", 1),
             "apply_command_safety_held_withheld": ("kernel::apply_command_safety#held_withheld", 1),
