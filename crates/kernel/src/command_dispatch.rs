@@ -71,11 +71,14 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
-            Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
-            _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
-                ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+            Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])
+                ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident),
+            _ => true,
         }),
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
 
@@ -85,8 +88,11 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
             handler_safety::same_step(w.nodes@[i as int]);
             handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
             match command {
-                Command::Answer { question, answer } => handler_safety::answer_pair_same(
-                    w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64)),
+                Command::Answer { question, answer } => {
+                    handler_safety::answer_pair_same(
+                        w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64));
+                    apply_command_safety::rules_incident(*w, w.nodes@[i as int]);
+                }
                 _ => {}
             }
         }

@@ -5,6 +5,7 @@ kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
 /// K5: the world entry for answer_node; one node write-back, one next-question
 /// write and at most one notice, so the world frame is proved once here.
+#[allow(clippy::single_match)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
 pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -229,6 +230,7 @@ kernel_fn! {
 /// TryAgain rows / #771: restart the first attempt, then continue with at least
 /// one credit, as a value function (K5); the continuation is continue_node, then
 /// go_on's replanned note (never due here: replanned was just cleared).
+#[allow(dead_code)] // lint (B1 S1): callers moved to the value-form helpers; kept for its verified proof group
 fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
@@ -281,6 +283,7 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
 }
 
 kernel_fn! {
+#[allow(clippy::collapsible_match, clippy::single_match)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
 fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
     requires q.cost <= 1,
         n.generation < u64::MAX,
@@ -321,6 +324,7 @@ fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) 
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals)] // lint (B1 S1): shape kept from the pre-extraction body (exec audit)
 pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n),
@@ -374,6 +378,7 @@ fn cleanup_handled_v(n: Node) -> (result: Node) [
 
 kernel_fn! {
 /// Cleanup-question answers (answer_value's Stopping arm, unchanged statements).
+#[allow(unused_variables)] // lint (B1 S1): parameters read only by the Verus contract
 fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
     -> (result: (Node, u64, Option<Notice>)) [
     requires n.phase is Stopping,
@@ -428,6 +433,7 @@ fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
 }
 
 kernel_fn! {
+#[allow(unused_variables)] // lint (B1 S1): parameters read only by the Verus contract
 fn awaiting_unclear_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -448,21 +454,23 @@ fn awaiting_unclear_v(n: Node, nq: u64, id: u64, q: Question)
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_denied_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
     ensures result == ((n, nq, None)),
 ] {
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+    let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
 
     (m, nq, note)
 }
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -471,7 +479,7 @@ fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
     ensures result == ({ let r = apply_answer_values::continued_answer(n, q, 0); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
-    let mut nq = nq;
+    let nq = nq;
     let mut note: Option<Notice> = None;
     let (m1, x) = go_on_exact(m, q, 0);
     m = m1;
@@ -481,6 +489,7 @@ fn awaiting_continue_v(n: Node, nq: u64, id: u64, q: Question)
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -489,7 +498,7 @@ fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
     ensures result == ({ let r = apply_answer_values::retried_answer(n, q); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
-    let mut nq = nq;
+    let nq = nq;
     let mut note: Option<Notice> = None;
     let (m1, x) = retry_answer_exact(m, q);
     m = m1;
@@ -499,6 +508,7 @@ fn awaiting_retry_v(n: Node, nq: u64, id: u64, q: Question)
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_assignments, unused_variables)] // lint (B1 S1): placeholder initial value kept from the pre-extraction body; parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -507,7 +517,7 @@ fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
     ensures result == ({ let r = apply_answer_values::continued_answer(n, q, k); (r.0, nq, r.1) }),
 ] {
     let mut m = n;
-    let mut nq = nq;
+    let nq = nq;
     let mut note: Option<Notice> = None;
     let (m1, x) = go_on_exact(m, q, k);
     m = m1;
@@ -517,6 +527,7 @@ fn awaiting_credit_v(n: Node, nq: u64, id: u64, q: Question, k: u8)
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_replace_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -524,14 +535,15 @@ fn awaiting_replace_v(n: Node, nq: u64, id: u64, q: Question)
     ensures result == ((retirement::stopped(n, Outcome::Replaced), nq, None)),
 ] {
     let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+    let nq = nq;
+    let note: Option<Notice> = None;
     m = stopped_v(m, Outcome::Replaced);
     (m, nq, note)
 }
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_stop_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
@@ -539,23 +551,24 @@ fn awaiting_stop_v(n: Node, nq: u64, id: u64, q: Question)
     ensures result == ((retirement::stopped(n, Outcome::Stopped), nq, None)),
 ] {
     let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+    let nq = nq;
+    let note: Option<Notice> = None;
     m = stopped_v(m, Outcome::Stopped);
     (m, nq, note)
 }
 }
 
 kernel_fn! {
+#[allow(clippy::redundant_locals, unused_variables)] // lint (B1 S1): parameters read only by the Verus contract; shape kept from the pre-extraction body (exec audit)
 fn awaiting_other_v(n: Node, nq: u64, id: u64, q: Question)
     -> (result: (Node, u64, Option<Notice>)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
     ensures result == ((n, nq, None)),
 ] {
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
+    let m = n;
+    let nq = nq;
+    let note: Option<Notice> = None;
 
     (m, nq, note)
 }

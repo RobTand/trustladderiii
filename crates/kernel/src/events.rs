@@ -1054,10 +1054,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
         (node.0 < old(w).nodes@.len() ==> {
             let b = old(w).nodes@[node.0 as int];
             let n = final(w).nodes@[node.0 as int];
-            (match command {
-                Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
-                _ => retirement::node_rules(*old(w), b) ==> retirement::node_rules(*final(w), n),
-            })
+            (retirement::node_rules(*old(w), b) ==> retirement::node_rules(*final(w), n))
                 && (n.holds ==> b.holds) && (n.pool ==> b.pool)
                 && (n.ticket == b.ticket || n.ticket.is_none())
                 && n.repo == b.repo && n.footprint == b.footprint
