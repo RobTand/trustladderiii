@@ -289,7 +289,7 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
         clarified: false,
     });
     set_phase(m, Phase::AwaitingRob);
-    notice(out, i, Notice::Ask { question: id });
+    notice(out, i, Notice::Ask { question: id + 1 });
 }
 }
 
