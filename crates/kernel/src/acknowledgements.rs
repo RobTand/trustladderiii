@@ -112,6 +112,7 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
 
 kernel_fn! {
 /// PRD #878 / TD acceptance: release ownership and preserve approved delivery evidence.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 fn delivery_accepted(m: &mut Node) -> (result: ()) [
     requires old(m).generation < u64::MAX, old(m).effect.is_none(),
     ensures final(m).phase == Phase::AwaitingDelivery,
@@ -151,6 +152,7 @@ kernel_fn! {
 /// Confirmed-effect rows / #771: at most one adoption generation is allocated.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
@@ -183,6 +185,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
 kernel_fn! {
 /// Confirmed-effect rows / #771: release the confirmed resource and reset the
 /// failure ladder, framed exactly so agenda advancement sees one node value.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
     ensures *final(m) == (Node {
             fx_failures: 0, fx_incidents: 0,
@@ -202,6 +205,7 @@ fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
 
 kernel_fn! {
 /// Confirmed-effect rows / #771: release only the resource the effect confirmed.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 fn release_confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     ensures *final(m) == (Node {
             run: if kind == EffectKind::StopRun { None } else { old(m).run },
@@ -230,6 +234,7 @@ kernel_fn! {
 /// matching agenda item or enter Checking for an adopted worktree.
 // The pinned Verus frontend requires nested if-let instead of let chains.
 #[allow(clippy::collapsible_if)]
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
         kind == EffectKind::StopRun ==> !old(m).pool,
@@ -259,6 +264,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
 }
 
 kernel_fn! {
+#[allow(clippy::manual_map)] // Debt R2 lint: preserve the qualified executable shape
 fn confirmed_agenda_adopt(n: Node, head: HeadId) -> (result: Node) [
     requires n.generation < u64::MAX,
     ensures result == agenda_adopt_spec(n, head),
@@ -289,6 +295,7 @@ fn confirmed_agenda_idle(n: Node) -> (result: Node) [
 }
 
 kernel_fn! {
+#[allow(clippy::collapsible_if)] // Debt R2 lint: preserve the qualified executable shape
 fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
     requires n.generation < u64::MAX,
         kind == EffectKind::StopRun ==> !n.pool,
@@ -334,6 +341,7 @@ fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
 
 kernel_fn! {
 /// Failed-delivery rows / #771: at most two generations or one retried effect.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -392,6 +400,7 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
 kernel_fn! {
 /// Failed-delivery rows / #771: reset the retry ladder before emitting or
 /// raising its incident. This node-local part allocates at most one generation.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 fn failed_delivery_node(m: &mut Node, kind: EffectKind) -> (result: Option<bool>) [
     requires old(m).generation < u64::MAX,
         old(m).fx_failures <= 1, old(m).fx_incidents <= 2,
@@ -427,6 +436,7 @@ fn failed_delivery_node(m: &mut Node, kind: EffectKind) -> (result: Option<bool>
 kernel_fn! {
 /// Permanent-effect-failure rows / #771: exactly one question, no credit change.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 pub(super) fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
@@ -715,6 +725,7 @@ pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u6
 
 
 kernel_fn! {
+#[allow(clippy::manual_map)] // Debt R2 lint: preserve the qualified executable shape
 fn ack_phase_value(n: Node, phase: Phase) -> (result: Node) [
     requires n.generation < u64::MAX,
     ensures result == retirement::phased(n, phase),
@@ -725,6 +736,7 @@ fn ack_phase_value(n: Node, phase: Phase) -> (result: Node) [
 }
 
 kernel_fn! {
+#[allow(clippy::manual_map)] // Debt R2 lint: preserve the qualified executable shape
 fn ack_abandon_value(n: Node) -> (result: Node) [
     ensures result == ack_abandon_spec(n),
 ] {
@@ -890,6 +902,7 @@ fn ack_retry_incident_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: O
 }
 
 kernel_fn! {
+#[allow(clippy::let_and_return)] // Debt R2 lint: preserve the qualified executable shape
 fn ack_retry_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     requires n.generation as int + 2 <= u64::MAX as int, n.next_seq < u64::MAX,
         n.fx_failures <= 1, n.fx_incidents <= 2, out.len < OUTBOX,

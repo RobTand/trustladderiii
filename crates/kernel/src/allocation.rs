@@ -429,6 +429,7 @@ fn incident_notes(i: usize, needs_rob: bool) -> (result: Outbox) [
 
 kernel_fn! {
 /// #771: the world wrapper emits on exactly one selected node.
+#[allow(dead_code)] // Debt R2 lint: retained verified helper
 pub(super) fn emit(w: &mut World, i: usize, kind: EffectKind,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
