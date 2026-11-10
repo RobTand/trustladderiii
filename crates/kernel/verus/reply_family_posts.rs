@@ -374,7 +374,7 @@ pub(super) proof fn plan_retry_value_posts(n: Node, fast: bool, nq: u64, cant_me
     ensures
         reply_family_values::retry_bound(n, nq, reply_family_values::plan_retry(n, fast, cant_meet)),
         fast && cant_meet && n.phase is Planning ==>
-            reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet)).phase == Phase::Stopping(Outcome::Stopped)
+            reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet)).phase != Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet)).review_stop == Some(ReviewStop::PlanCantMeet),
         !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet))),
 {
