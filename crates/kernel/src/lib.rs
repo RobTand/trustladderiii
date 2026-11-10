@@ -768,6 +768,7 @@ pub closed spec fn initial_node(n: Node, repo: RepoId) -> bool {
 kernel_fn! {
 impl Node {
     /// #771: new requests begin with zero ledger counters and an inline empty set.
+    #[verifier::external_body]
     pub fn new(repo: RepoId) -> (result: Node) [
         ensures initial_node(result, repo),
     ] {
