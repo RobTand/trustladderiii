@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::answer_rules::owner_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::held_answer": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_held": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -771,6 +772,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "answer_rules_owner_without_withhold": ("kernel::answer_rules#owner_without_withhold", 1),
             "answer_rules_answer_owner_rows": ("kernel::answer_rules#answer_owner_rows", 1),
             "answer_rules_owner_after_withhold": ("kernel::answer_rules#owner_after_withhold", 1),
             "answer_rules_rules_incident": ("kernel::answer_rules#rules_incident", 1),
