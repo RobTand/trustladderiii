@@ -915,6 +915,7 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
         if let Some(i) = w.index(node) {
             on_command(w, i, id, command, out);
             kernel_proof! {
+                apply_command_safety::ncut_open(before_apply@, *w, i as int);
                 if node_checked(before_apply@, before_apply@.nodes@[i as int]) {
                     handler_safety::command_node_safety(before_apply@, *w, (Event::Command { node, id, command }), i as int,
                         before_apply_out@, *out);
