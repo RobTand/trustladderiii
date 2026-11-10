@@ -1,9 +1,12 @@
-
 mod world_identity {
     struct WorldClock;
     impl tl3_controller::clock::Clock for WorldClock {
-        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
-        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+        fn now(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+            Ok([0; 16])
+        }
     }
     pub(super) fn open(
         store: tl3_store::Store,
@@ -1065,7 +1068,11 @@ fn retry_uses_the_kernels_new_key(settings: &tl3_config::Store) {
     drain(&mut controller);
     assert_finished(&mut controller, root.path(), settings);
     assert_eq!(
-        controller.effect("w00000000000000000000000000000000:effect:0:0").unwrap().unwrap().state,
+        controller
+            .effect("w00000000000000000000000000000000:effect:0:0")
+            .unwrap()
+            .unwrap()
+            .state,
         EffectState::Cancelled
     );
     assert!(calls.borrow().values().all(|count| *count == 1));
@@ -1623,7 +1630,11 @@ fn adapter_errors_are_isolated(settings: &tl3_config::Store) {
         Phase::Closed(Outcome::Merged)
     );
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:0:0"
+        )
+        .state,
         EffectState::Uncertain
     );
     assert!(
@@ -1644,7 +1655,11 @@ fn lost_response_keeps_the_key(settings: &tl3_config::Store) {
     controller.intake(labelled()).unwrap();
     assert!(controller.drive_once().unwrap());
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:0:0"
+        )
+        .state,
         EffectState::Sent
     );
     assert!(
@@ -1860,11 +1875,18 @@ fn reconciled_failure(settings: &tl3_config::Store) {
         controller.drive_once().unwrap();
         controller.drive_once().unwrap();
         assert_eq!(
-            controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0").state,
+            controller_effect(
+                &mut controller,
+                "w00000000000000000000000000000000:effect:0:0"
+            )
+            .state,
             EffectState::Uncertain
         );
         assert!(controller.drive_once().unwrap());
-        let effect = controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0");
+        let effect = controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:0:0",
+        );
         let world = controller.world().unwrap();
         match ack {
             Ack::Retryable => {
@@ -1935,7 +1957,10 @@ fn upgrade_with_inflight_effects(settings: &tl3_config::Store) {
     for effect in upgraded.pending_effects {
         assert_eq!(epochs[&effect.key], [1]);
     }
-    let old_effect = controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0");
+    let old_effect = controller_effect(
+        &mut controller,
+        "w00000000000000000000000000000000:effect:0:0",
+    );
     let mut stale: Delivery = serde_json::from_value(old_effect.payload).unwrap();
     stale.key = "refused-old-epoch".into();
     let mut restarted_fake = adapters::workers::Fake::new(root.path());
@@ -1975,7 +2000,11 @@ fn cancelled_absence(settings: &tl3_config::Store) {
     controller.drive_once().unwrap();
     controller.drive_once().unwrap();
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:0:0"
+        )
+        .state,
         EffectState::Cancelling
     );
     let before = controller.snapshot().unwrap();
@@ -1992,7 +2021,11 @@ fn cancelled_absence(settings: &tl3_config::Store) {
     fault.set(Fault::Healthy);
     controller.drive_once().unwrap();
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:0:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:0:0"
+        )
+        .state,
         EffectState::Cancelled
     );
     let events = Reader::open(settings)
@@ -2031,7 +2064,11 @@ fn cancelled_absence(settings: &tl3_config::Store) {
     controller.drive_once().unwrap();
     drain(&mut controller);
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:1:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:1:0"
+        )
+        .state,
         EffectState::Cancelled
     );
     assert!(
@@ -2051,7 +2088,8 @@ fn stale_epoch_effects(settings: &tl3_config::Store) {
     registry.register(Upstream::Workers, adapters::workers::Fake::new(root.path()));
     let mut boot = bootstrap();
     boot.pool = 3;
-    let mut controller = world_identity::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    let mut controller =
+        world_identity::open(Store::open(settings).unwrap(), registry, boot).unwrap();
     for i in 0..3 {
         let mut issue = labelled();
         issue.delivery = format!("stale-{i}");
@@ -2060,7 +2098,10 @@ fn stale_epoch_effects(settings: &tl3_config::Store) {
     }
     let mut store = Store::open(settings).unwrap();
     for (key, states) in [
-        ("w00000000000000000000000000000000:effect:1:0", vec![EffectState::Sent]),
+        (
+            "w00000000000000000000000000000000:effect:1:0",
+            vec![EffectState::Sent],
+        ),
         (
             "w00000000000000000000000000000000:effect:2:0",
             vec![EffectState::Sent, EffectState::Uncertain],
@@ -2083,7 +2124,10 @@ fn stale_epoch_effects(settings: &tl3_config::Store) {
             from = to;
         }
     }
-    let found = store.effect("w00000000000000000000000000000000:effect:2:0").unwrap().unwrap();
+    let found = store
+        .effect("w00000000000000000000000000000000:effect:2:0")
+        .unwrap()
+        .unwrap();
     let delivery: Delivery = serde_json::from_value(found.payload).unwrap();
     adapters::workers::Fake::new(root.path())
         .execute(&delivery)
@@ -2102,7 +2146,10 @@ fn stale_epoch_effects(settings: &tl3_config::Store) {
             .iter()
             .all(|n| n.phase == Phase::Closed(Outcome::Merged))
     );
-    for key in ["w00000000000000000000000000000000:effect:0:0", "w00000000000000000000000000000000:effect:1:0"] {
+    for key in [
+        "w00000000000000000000000000000000:effect:0:0",
+        "w00000000000000000000000000000000:effect:1:0",
+    ] {
         assert_eq!(
             controller_effect(&mut controller, key).state,
             EffectState::Cancelled
@@ -2114,7 +2161,11 @@ fn stale_epoch_effects(settings: &tl3_config::Store) {
         );
     }
     assert_eq!(
-        controller_effect(&mut controller, "w00000000000000000000000000000000:effect:2:0").state,
+        controller_effect(
+            &mut controller,
+            "w00000000000000000000000000000000:effect:2:0"
+        )
+        .state,
         EffectState::Confirmed
     );
     let epochs = adapters::delivery_epochs(root.path()).unwrap();

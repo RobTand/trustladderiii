@@ -15,11 +15,16 @@ impl Writer for WriterFault {
         let f = self.0.lock().unwrap();
         let targeted = match f.kind.as_str() {
             "question" | "cleanup" => input.kind == MessageKind::Question,
-            "note" => input.kind == MessageKind::Note && !key.starts_with("w00000000000000000000000000000000:incident:"),
+            "note" => {
+                input.kind == MessageKind::Note
+                    && !key.starts_with("w00000000000000000000000000000000:incident:")
+            }
             "dropped" => input.facts["change_quote"].is_string(),
             _ => false,
         };
-        if (f.reject && targeted) || (f.incident && key.starts_with("w00000000000000000000000000000000:incident:")) {
+        if (f.reject && targeted)
+            || (f.incident && key.starts_with("w00000000000000000000000000000000:incident:"))
+        {
             return Ok(WriterReply::Text(adapters::workers::writer::TextDraft {
                 text: "The leaf in workers/src/private.rs failed.".into(),
             }));
@@ -350,7 +355,9 @@ fn scenario(settings: &tl3_config::Store, name: &str, point: &str) {
         .find(|e| {
             e.state == tl3_store::EffectState::Failed
                 && e.payload["output"]["Effect"].is_null()
-                && !e.key.starts_with("w00000000000000000000000000000000:incident:")
+                && !e
+                    .key
+                    .starts_with("w00000000000000000000000000000000:incident:")
         });
     assert!(
         failed.is_some(),

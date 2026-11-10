@@ -49,7 +49,8 @@ fn acknowledged_wait(node: &Node) -> bool {
 fn key(snapshot: &Snapshot, id: NodeId, node: &Node) -> Result<Option<String>> {
     node.next_seq
         .checked_sub(1)
-        .map(|seq| snapshot::effect_key(snapshot, id, seq)).transpose()
+        .map(|seq| snapshot::effect_key(snapshot, id, seq))
+        .transpose()
 }
 
 struct Coverage<'a> {
@@ -109,7 +110,8 @@ impl<'a> Coverage<'a> {
 
     fn covered(&self, id: NodeId, node: &Node, epoch: i64) -> Result<bool> {
         Ok(self.tracked(id, node, epoch)?
-            && key(self.snapshot, id, node)?.is_some_and(|key| self.allowances.contains(key.as_str())))
+            && key(self.snapshot, id, node)?
+                .is_some_and(|key| self.allowances.contains(key.as_str())))
     }
 }
 
@@ -134,7 +136,11 @@ fn blocked(snapshot: &Snapshot, world: &World, scan: &mut impl FnMut()) -> Optio
     if crate::input_errors::kernel_backlog(snapshot) {
         return Some(Deferral::Inputs);
     }
-    if snapshot.rows.iter().any(crate::input_errors::kernel_incident) {
+    if snapshot
+        .rows
+        .iter()
+        .any(crate::input_errors::kernel_incident)
+    {
         return Some(Deferral::Incident);
     }
     scan();
@@ -431,8 +437,7 @@ impl Controller {
             incident: snapshot.rows.iter().any(|r| {
                 r.table == "incidents"
                     && r.value["open"] == true
-                    && (r.value["node"] == json!(id)
-                        || crate::input_errors::kernel_incident(r))
+                    && (r.value["node"] == json!(id) || crate::input_errors::kernel_incident(r))
             }),
             paused: node.paused,
             ticket: node.ticket.is_some(),

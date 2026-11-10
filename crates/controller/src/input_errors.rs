@@ -54,7 +54,9 @@ pub(crate) fn kernel_backlog(snapshot: &Snapshot) -> bool {
 pub(crate) fn kernel_incident(row: &tl3_store::WorldRow) -> bool {
     row.table == "incidents"
         && row.value["open"] == true
-        && row.value["signature"]["class"].as_str().is_some_and(kernel_halt)
+        && row.value["signature"]["class"]
+            .as_str()
+            .is_some_and(kernel_halt)
 }
 
 fn retain_input(commit: &mut Commit) {
@@ -156,7 +158,12 @@ impl InputFailure {
 pub(crate) fn recoverable(error: &Error) -> bool {
     !matches!(
         error,
-        Error::Store(_) | Error::Config(_) | Error::StoredJson(_) | Error::InvalidStoredKernelWorld | Error::MissingWorldId | Error::InvalidWorldId
+        Error::Store(_)
+            | Error::Config(_)
+            | Error::StoredJson(_)
+            | Error::InvalidStoredKernelWorld
+            | Error::MissingWorldId
+            | Error::InvalidWorldId
     )
 }
 
@@ -719,10 +726,12 @@ impl Controller {
             })
             .count() as u64
             + 1;
-        let needs_rob = matches!(error, Error::CounterExhausted(_) | Error::InvalidKernelResult)
-            || crate::looks::incident_needs_rob(crate::looks::IncidentCause::ReadFailure {
-                incidents: count,
-            });
+        let needs_rob = matches!(
+            error,
+            Error::CounterExhausted(_) | Error::InvalidKernelResult
+        ) || crate::looks::incident_needs_rob(
+            crate::looks::IncidentCause::ReadFailure { incidents: count },
+        );
         let signature = IncidentSignature {
             upstream,
             class: class.into(),
@@ -748,7 +757,10 @@ impl Controller {
             summary,
             signature,
             effect: None,
-            post_key: Some(crate::snapshot::world_key(snapshot, &format!("incident:{id}"))?),
+            post_key: Some(crate::snapshot::world_key(
+                snapshot,
+                &format!("incident:{id}"),
+            )?),
             // Reading or translating upstream input failed.
             cause: Some(
                 if matches!(

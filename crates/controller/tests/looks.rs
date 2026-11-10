@@ -1,9 +1,12 @@
-
 mod world_identity {
     struct WorldClock;
     impl tl3_controller::clock::Clock for WorldClock {
-        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
-        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+        fn now(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+            Ok([0; 16])
+        }
     }
     pub(super) fn open(
         store: tl3_store::Store,
@@ -47,7 +50,9 @@ impl FakeClock {
     }
 }
 impl Clock for FakeClock {
-    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+        Ok([0; 16])
+    }
 
     fn now(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(self.0.get())
@@ -232,7 +237,10 @@ fn stalled_runs_and_incident_controls(settings: &tl3_config::Store) {
     assert!(!node.incident_needs_rob);
     let id = incident(&mut c);
     let message = c
-        .effect(&format!("w00000000000000000000000000000000:notice:{}", id.replace('.', ":")))
+        .effect(&format!(
+            "w00000000000000000000000000000000:notice:{}",
+            id.replace('.', ":")
+        ))
         .unwrap()
         .unwrap();
     assert_eq!(message.payload["repository"]["name"], "tl3");
@@ -817,7 +825,10 @@ fn read_outages_keep_looking(settings: &tl3_config::Store, fail_probe: bool) {
     }
     let id = incident(&mut c);
     let snapshot = c.snapshot().unwrap();
-    let message = c.effect(&format!("w00000000000000000000000000000000:incident:{id}")).unwrap().unwrap();
+    let message = c
+        .effect(&format!("w00000000000000000000000000000000:incident:{id}"))
+        .unwrap()
+        .unwrap();
     assert_incident_request(&message.payload);
     assert!(
         snapshot

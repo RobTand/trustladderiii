@@ -213,7 +213,10 @@ impl Controller {
             }
         }
         retry.marker_key = Some(retry.marker_key().into());
-        retry.key = snapshot::world_key(snapshot, &format!("notice-retry:{}", snapshot.revision.get() + 1))?;
+        retry.key = snapshot::world_key(
+            snapshot,
+            &format!("notice-retry:{}", snapshot.revision.get() + 1),
+        )?;
         retry.epoch = snapshot.epoch.get();
         commit.rows.push(self.allowance_row(retry.clone()));
         commit.effects.push(retry.into_effect());

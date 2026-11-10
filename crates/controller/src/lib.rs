@@ -427,8 +427,14 @@ impl Controller {
             );
             let mut commit = Commit::new("controller:init", json!({"initialize": 1}), &snapshot);
             commit.rows = snapshot::changes(&snapshot::Rows::new(), snapshot::encode(&world)?);
-            let world_id = clock.new_world_id()?.into_iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-            commit.rows.push(put("kernel", "world_id".into(), json!(world_id)));
+            let world_id = clock
+                .new_world_id()?
+                .into_iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            commit
+                .rows
+                .push(put("kernel", "world_id".into(), json!(world_id)));
             for (index, repo) in bootstrap.repos.iter().enumerate() {
                 store.intern_repo(&repo.owner, &repo.name)?;
                 commit
@@ -2122,7 +2128,10 @@ impl Controller {
                 Out::Effect { node, seq, .. } => (node, snapshot::effect_key(snapshot, node, seq)?),
                 Out::Notice { node, .. } => (
                     node,
-                    snapshot::world_key(snapshot, &format!("notice:{}:{index}", snapshot.revision.get() + 1))?,
+                    snapshot::world_key(
+                        snapshot,
+                        &format!("notice:{}:{index}", snapshot.revision.get() + 1),
+                    )?,
                 ),
             };
             let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];

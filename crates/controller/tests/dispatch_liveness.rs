@@ -1,9 +1,12 @@
-
 mod world_identity {
     struct WorldClock;
     impl tl3_controller::clock::Clock for WorldClock {
-        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
-        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+        fn now(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+            Ok([0; 16])
+        }
     }
     pub(super) fn open(
         store: tl3_store::Store,
@@ -528,7 +531,10 @@ fn pending_start_stays_on_its_original_dispatch_path() {
         })
         .unwrap();
     let node = controller.world().unwrap().nodes[0];
-    let key = format!("w00000000000000000000000000000000:effect:0:{}", node.effect.unwrap().seq);
+    let key = format!(
+        "w00000000000000000000000000000000:effect:0:{}",
+        node.effect.unwrap().seq
+    );
     assert_eq!(runs.borrow().starts.len(), 0);
     lose_watch(&settings, &key);
     close(controller, &settings);
@@ -669,19 +675,19 @@ fn t817_assert_undispatched_wait(
     assert_eq!((node.run_failures, node.fx_failures), (0, 0));
     assert!(!node.waiting_incident);
     let snapshot = controller.snapshot().unwrap();
-    assert!(
-        snapshot
-            .pending_effects
-            .iter()
-            .all(|e| !e.key.starts_with("w00000000000000000000000000000000:effect:2:"))
-    );
+    assert!(snapshot.pending_effects.iter().all(|e| {
+        !e.key
+            .starts_with("w00000000000000000000000000000000:effect:2:")
+    }));
     assert!(
         Reader::open(settings)
             .unwrap()
             .effects()
             .unwrap()
             .iter()
-            .all(|e| !e.key.starts_with("w00000000000000000000000000000000:effect:2:"))
+            .all(|e| !e
+                .key
+                .starts_with("w00000000000000000000000000000000:effect:2:"))
     );
     for row in &snapshot.rows {
         if row.table == "watches" {
@@ -871,7 +877,10 @@ fn intended_checks_without_an_action_binding_are_a_retry() {
             .is_some_and(|e| e.kind == EffectKind::SubmitChecks)
         {
             let node = controller.world().unwrap().nodes[0];
-            let key = format!("w00000000000000000000000000000000:effect:0:{}", node.effect.unwrap().seq);
+            let key = format!(
+                "w00000000000000000000000000000000:effect:0:{}",
+                node.effect.unwrap().seq
+            );
             let effect = Store::open(&settings)
                 .unwrap()
                 .effect(&key)

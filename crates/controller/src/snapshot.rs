@@ -54,9 +54,19 @@ pub(crate) fn encode(world: &World) -> Result<Rows> {
 }
 
 pub(crate) fn world_id(snapshot: &Snapshot) -> Result<&str> {
-    let row = snapshot.rows.iter().find(|r| r.table == "kernel" && r.id == "world_id")
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "kernel" && r.id == "world_id")
         .ok_or(Error::MissingWorldId)?;
-    row.value.as_str().filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    row.value
+        .as_str()
+        .filter(|id| {
+            id.len() == 32
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
         .ok_or(Error::InvalidWorldId)
 }
 
@@ -64,7 +74,11 @@ pub(crate) fn world_key(snapshot: &Snapshot, key: &str) -> Result<String> {
     Ok(format!("w{}:{key}", world_id(snapshot)?))
 }
 
-pub(crate) fn effect_key(snapshot: &Snapshot, node: tl3_kernel::NodeId, seq: u64) -> Result<String> {
+pub(crate) fn effect_key(
+    snapshot: &Snapshot,
+    node: tl3_kernel::NodeId,
+    seq: u64,
+) -> Result<String> {
     world_key(snapshot, &format!("effect:{}:{seq}", node.0))
 }
 

@@ -1,9 +1,12 @@
-
 mod world_identity {
     struct WorldClock;
     impl tl3_controller::clock::Clock for WorldClock {
-        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
-        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+        fn now(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+            Ok([0; 16])
+        }
     }
     pub(super) fn open(
         store: tl3_store::Store,
@@ -1192,7 +1195,9 @@ fn crash_child(args: &[String]) {
         assert!(
             controller
                 .drive_once_with(|boundary, key| {
-                    if boundary == Boundary::AfterDispatch && key.starts_with("w00000000000000000000000000000000:notice:") {
+                    if boundary == Boundary::AfterDispatch
+                        && key.starts_with("w00000000000000000000000000000000:notice:")
+                    {
                         println!("POSTED");
                         std::io::stdout().flush().unwrap();
                         loop {
@@ -2348,7 +2353,8 @@ fn operations_and_delivery_log(settings: &tl3_config::Store) {
     boot.operations = Some(operations.clone());
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::GitHub, adapter(&api.uri(), root.path()));
-    let mut controller = world_identity::open(Store::open(settings).unwrap(), registry, boot).unwrap();
+    let mut controller =
+        world_identity::open(Store::open(settings).unwrap(), registry, boot).unwrap();
     api.state.lock().unwrap().fail_reads = true;
     controller.look_now().unwrap();
     assert!(

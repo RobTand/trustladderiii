@@ -131,7 +131,11 @@ fn fixture() -> (Snapshot, World, Vec<Effect>) {
         .world;
     }
     let mut rows = vec![WorldRow {
-        version: Revision::ZERO, arrival: 0, table: "kernel".into(), id: "world_id".into(), value: json!("00000000000000000000000000000000"),
+        version: Revision::ZERO,
+        arrival: 0,
+        table: "kernel".into(),
+        id: "world_id".into(),
+        value: json!("00000000000000000000000000000000"),
     }];
     let mut effects = Vec::new();
     for (i, node) in world.nodes.iter_mut().enumerate() {

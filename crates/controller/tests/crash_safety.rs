@@ -1,9 +1,12 @@
-
 mod world_identity {
     struct WorldClock;
     impl tl3_controller::clock::Clock for WorldClock {
-        fn now(&self) -> std::time::SystemTime { std::time::SystemTime::now() }
-        fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+        fn now(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+            Ok([0; 16])
+        }
     }
     pub(super) fn open(
         store: tl3_store::Store,
@@ -76,7 +79,9 @@ const SCENARIOS: &[&str] = &[
 #[derive(Clone)]
 struct FakeClock(Rc<Cell<u64>>);
 impl Clock for FakeClock {
-    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+        Ok([0; 16])
+    }
 
     fn now(&self) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(self.0.get())
@@ -252,10 +257,10 @@ fn child(args: &[String]) {
                     ))
                     .records
                     .contains_key("w00000000000000000000000000000000:effect:0:0"))
-                    && snapshot
-                        .pending_effects
-                        .iter()
-                        .any(|e| e.key == "w00000000000000000000000000000000:effect:0:0" && e.state == EffectState::Sent)
+                    && snapshot.pending_effects.iter().any(|e| {
+                        e.key == "w00000000000000000000000000000000:effect:0:0"
+                            && e.state == EffectState::Sent
+                    })
             }
             "stop-run" => {
                 node.phase == Phase::Making && node.run.is_some() && node.effect.is_none()
@@ -480,7 +485,10 @@ fn emission_coverage(
                     format!("{kind:?}"),
                 ),
                 Out::Notice { node, notice } => (
-                    format!("w00000000000000000000000000000000:notice:{}:{index}", record.receipt.revision.get()),
+                    format!(
+                        "w00000000000000000000000000000000:notice:{}:{index}",
+                        record.receipt.revision.get()
+                    ),
                     node,
                     format!("Notice({notice:?})"),
                 ),

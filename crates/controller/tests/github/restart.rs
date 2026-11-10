@@ -494,7 +494,10 @@ pub(super) fn unreadable_issue(settings: &tl3_config::Store) {
     step_until(&mut controller, |c| {
         let pending = c.snapshot().unwrap().pending_effects;
         pending.iter().any(|e| e.key.starts_with("restart:"))
-            && !pending.iter().any(|e| e.key.starts_with("w00000000000000000000000000000000:notice:"))
+            && !pending.iter().any(|e| {
+                e.key
+                    .starts_with("w00000000000000000000000000000000:notice:")
+            })
     });
     api.state.lock().unwrap().issue_read_status = Some(403);
     drain(&mut controller);

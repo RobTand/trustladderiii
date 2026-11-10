@@ -320,7 +320,9 @@ fn refusal_is_a_noop_seeded() {
 
 struct FixedClock;
 impl crate::clock::Clock for FixedClock {
-    fn new_world_id(&self) -> std::io::Result<[u8; 16]> { Ok([0; 16]) }
+    fn new_world_id(&self) -> std::io::Result<[u8; 16]> {
+        Ok([0; 16])
+    }
     fn now(&self) -> std::time::SystemTime {
         std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000)
     }
