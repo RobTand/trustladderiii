@@ -1,10 +1,60 @@
 {
-  "source_head": "144cfee64e169154e4698ca1bcecf9f590e7756b",
+  "source_head": "1ee8c26e5156ecda0c18663531bee2d73856a344",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "88dec467c286f2a4d8bb7acb89d9adecf1ed273bd1bda3293c28b87c5856c989",
-  "groups": 589,
-  "obligations": 787,
+  "source_sha256": "345b81ad5a0e1b99d3200227bab4927d942d640660d6e69c110f5de8e79b385f",
+  "groups": 599,
+  "obligations": 797,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_world_rewrite",
+      "selector": "kernel::apply_command_safety#world_rewrite",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_stop_rows_eq",
+      "selector": "kernel::apply_command_safety#stop_rows_eq",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_stop_rows_imp",
+      "selector": "kernel::apply_command_safety#stop_rows_imp",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_stop_dist",
+      "selector": "kernel::apply_command_safety#stop_dist",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_change_request_dist",
+      "selector": "kernel::apply_command_safety#change_request_dist",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_answer_rows_eq",
+      "selector": "kernel::apply_command_safety#answer_rows_eq",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_answer_rows_imp",
+      "selector": "kernel::apply_command_safety#answer_rows_imp",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_answer_dist",
+      "selector": "kernel::apply_command_safety#answer_dist",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_command_stutter",
+      "selector": "kernel::apply_command_safety#command_stutter",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_pause_v",
+      "selector": "kernel::commands#pause_v",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_apply_command_safety_last_cmd_rebase",
       "selector": "kernel::apply_command_safety#last_cmd_rebase",
