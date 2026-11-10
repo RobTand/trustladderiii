@@ -322,7 +322,7 @@ pub(super) proof fn confirmed_cancel_forward(b: Node, n: Node, e: InFlight, ack:
 
 pub(super) proof fn confirmed_value_forward(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64)
     requires !e.cancelling, ack == Ack::Confirmed, confirmed_value_frame(Node { effect: None, ..b }, n, e.kind), nqa == nq,
-    ensures confirmed_ack_frame(b, n, e, ack, nq, nqa),
+    ensures !confirmed_ack_frame(b, n, e, ack, nq, nqa),
 {
     confirmed_clear_rows(b);
     reveal(confirmed_clear_frame);
