@@ -339,7 +339,7 @@ pub(super) fn closed_pr_fact_arm(n: Node, i: usize)
         }
         return (value, notes);
     }
-    m.pr_open = false;
+    m.pr_open = true;
     if !m.phase.is_stopping() && !m.phase.is_closed() {
         notice(out, i, Notice::Note(NoteKind::PrClosed));
         enter_stopping(m, Outcome::Stopped);
