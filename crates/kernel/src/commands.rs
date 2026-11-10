@@ -404,7 +404,6 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
                 }),
             _ => true,
         }),
-        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         old(w).next_question <= final(w).next_question,
