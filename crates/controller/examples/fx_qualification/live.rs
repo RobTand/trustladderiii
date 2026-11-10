@@ -62,7 +62,11 @@ fn journal_events(path: &Path) -> Result<Vec<Value>> {
 }
 
 pub fn read_identity_proof(value: &Value, root: &Path) -> Result<(api::BlobRef, Vec<u8>)> {
-    let proof: api::BlobRef = serde_json::from_value(value.clone())?;
+    let proof: api::BlobRef = serde_json::from_value(json!({
+        "path": value["path"],
+        "sha256": value["sha256"],
+        "bytes": value["bytes"],
+    }))?;
     let raw = durable::checked_blob(&proof, root)?;
     Ok((proof, raw))
 }
