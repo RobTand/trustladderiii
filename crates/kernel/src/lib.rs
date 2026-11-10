@@ -72,6 +72,9 @@ mod retirement_terminal_fact_witness;
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/facts_family_lemmas.rs"]
+mod facts_family_lemmas;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
@@ -129,6 +132,7 @@ use retries::*;
 mod acknowledgements;
 use acknowledgements::*;
 mod facts;
+mod facts_family_values;
 use facts::*;
 mod commands;
 use commands::*;
