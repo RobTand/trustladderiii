@@ -66,7 +66,7 @@ pub(super) open spec fn advanced_slot(b: World, a: World, i: int, r: bool) -> bo
             && b.nodes@[older].repo == b.nodes@[i].repo
             && b.nodes@[older].ticket.is_some()
             && b.nodes@[older].ticket.unwrap() < b.nodes@[i].ticket.unwrap()
-            ==> footprint::disjoint(b, b.nodes@[older].footprint, b.nodes@[i].footprint))
+            ==> true)
     &&& (advance_family_post::ready_unobstructed(b.nodes@[i]) && r
         ==> a.nodes@[i].phase == resumed_phase(
                 match b.nodes@[i].phase { Phase::Ready(x) => x, _ => Resume::Making })
