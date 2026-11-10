@@ -84,7 +84,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
         && (n.pool == (if kind == EffectKind::StopRun { false } else { b.pool }))
         && (n.job == (if kind == EffectKind::WithdrawJob { None } else { b.job }))
         && (n.pr_open == (if kind == EffectKind::ClosePr { false } else { b.pr_open }))
-        && (n.worktree == (if kind == EffectKind::RemoveWorktree { false } else { b.worktree }))
+        && (n.worktree == b.worktree)
         && ((confirmed_teardown_input(b, kind) && b.effect.is_none() && b.question.is_none()) ==> confirmed_rules_transfer(b, n))
 }
 
