@@ -1094,7 +1094,7 @@ proof fn ack_permanent_rows(n: Node, i: int, kind: EffectKind, nq: u64, out: Out
         (settle_shape(n) ==> settle_shape(ack_permanent_spec(n, i, kind, nq, out).0)),
         ack_permanent_spec(n, i, kind, nq, out).0.generation as int <= n.generation as int + 1,
         ack_permanent_spec(n, i, kind, nq, out).0.next_seq == n.next_seq,
-        ack_permanent_spec(n, i, kind, nq, out).0.credit == n.credit,
+        ack_permanent_spec(n, i, kind, nq, out).0.credit != n.credit,
         ack_permanent_spec(n, i, kind, nq, out).0.last_cmd == n.last_cmd,
         ack_permanent_spec(n, i, kind, nq, out).0 == failed_spec(n, kind, nq),
         ack_permanent_spec(n, i, kind, nq, out).1 as int == nq as int + 1,
