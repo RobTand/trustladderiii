@@ -259,7 +259,8 @@ class FreshInitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "backup"):
             deploy.verify_cold_backup(self.sources, self.backup)
 
-    def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
+    @contextlib.contextmanager
+    def fresh_attempt(self, failure=None, fail_start=None):
         args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home,
                                binaries=self.home / "release", backup=self.backup,
                                state_manifest=self.home / "scope.json")
@@ -283,6 +284,10 @@ class FreshInitTests(unittest.TestCase):
                 self.states[argv[3]] = "inactive"
             if argv[:3] == ["systemctl", "--user", "start"]:
                 self.states[argv[3]] = "active"
+                if argv[3] == "tl3d.service":
+                    self.states["tl3-workers.slice"] = "active"
+                if argv[3] == fail_start:
+                    raise RuntimeError("partial start failure")
             if "fresh-database" in argv:
                 self.assertEqual(self.states["tl3d.service"], "inactive")
                 for unit in ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service"):
@@ -293,7 +298,12 @@ class FreshInitTests(unittest.TestCase):
         with patch.object(deploy, "fresh_scope", return_value=(self.sources, ("world", "journal"), self.config / "tl3.toml")), \
              patch.object(deploy, "run", side_effect=transport), \
              patch.object(deploy, "listener_ready", return_value=True), \
-             patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"):
+             patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"), \
+             patch.object(deploy, "verify_stability", side_effect=failure):
+            yield args
+
+    def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
+        with self.fresh_attempt() as args:
             deploy.fresh_init(args)
         stops = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
         self.assertEqual(stops, ["tl3d.service", "tl3-mlflow.service", "tl3-status.service",
@@ -304,6 +314,30 @@ class FreshInitTests(unittest.TestCase):
         reset_index = next(i for i, call in enumerate(self.calls) if "fresh-database" in call)
         controller_index = self.calls.index(["systemctl", "--user", "start", "tl3d.service"])
         self.assertLess(reset_index, controller_index)
+
+    def test_worker_guard_active_scope_refuses_before_backup_or_reset(self):
+        self.states["tl3-workers.slice"] = "active"
+        with self.fresh_attempt() as args:
+            with self.assertRaisesRegex(RuntimeError, "worker"):
+                deploy.fresh_init(args)
+        self.assertFalse(self.backup.exists())
+        self.assertTrue((self.root / "world/snapshot").exists())
+        self.assertFalse(any("fresh-database" in call for call in self.calls))
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_worker_guard_stability_failure_freezes_attempt(self):
+        self.states["tl3-workers.slice"] = "inactive"
+        with self.fresh_attempt(failure=RuntimeError("console stability failure")) as args:
+            with self.assertRaisesRegex(RuntimeError, "console stability failure"):
+                deploy.fresh_init(args)
+        self.assertTrue(all(self.states[unit] == "inactive" for unit in
+                            (*deploy.CLIENT_UNITS, "tl3-workers.slice", "tl3-postgres.service")), self.states)
+        self.assertEqual((self.backup / "world/snapshot").read_bytes(), b"old world")
+        self.assertFalse((self.root / "world/snapshot").exists())
+        stops = [call[3] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
+        self.assertEqual(stops[-6:], ["tl3d.service", "tl3-workers.slice", *reversed(deploy.DEPENDENT_UNITS),
+                                    "tl3-postgres.service"])
+        self.assertFalse(any("restore" in item for call in self.calls for item in call))
 
     def test_qualification_refusal_does_not_stop_any_unit(self):
         args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home)
