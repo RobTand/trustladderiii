@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='pgutil-green-') as temporary:
     sentinel.write_bytes(b'protected synthetic original backup')
     before = (sentinel.stat().st_ino, sentinel.stat().st_mtime_ns, sentinel.stat().st_atime_ns)
     text = deploy.render_config(home, '192.168.1.107:8033', 987, 123, 'sha256:' + 'a' * 64)
-    flux = {'instance_generation':'synthetic-pgutil', 'uri':'local:///synthetic-pgutil/socket',
+    flux = {'instance_file':'/mnt/shared/flux-migration/INSTANCE',
             'executable':str(scratch / 'unused-flux'), 'backend_cli':str(scratch / 'unused-backend'),
             'container_mode':'own_scope', 'container_image':'synthetic@sha256:' + 'a' * 64,
             'environment':{'PATH':'/usr/bin:/bin', 'HOME':'/home/rob', 'XDG_RUNTIME_DIR':'/run/user/1000'},

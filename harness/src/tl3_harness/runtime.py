@@ -35,7 +35,13 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
     harness = safe_option_path(harness if harness is not None else Path(__file__).resolve().parent)
     if coordinator_uri is not None:
         coordinator_uri = validate_flux_uri(coordinator_uri)
-        socket_directory = str(Path(coordinator_uri.removeprefix('local://')).parent)
+        socket_path = Path(coordinator_uri.removeprefix('local://'))
+        try:
+            socket_mode = socket_path.lstat().st_mode
+        except OSError:
+            raise TargetEnvironmentError('invalid_flux_uri') from None
+        if not stat.S_ISSOCK(socket_mode):
+            raise TargetEnvironmentError('invalid_flux_uri')
     checkout = ['--mount', f'type=bind,src={tree},dst=/checkout' + ('' if writable_checkout else ',readonly')]
     if writable_checkout:
         checkout += ['--mount', f'type=bind,src={Path(tree) / ".git"},dst=/checkout/.git,readonly']
@@ -63,8 +69,8 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         '--mount', f'type=bind,src={scratch},dst=/tmp',
         '--env', 'HOME=/tmp', '--env', 'TMPDIR=/tmp', '--env', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1',
         *[arg for name in NATIVE_THREAD_ENVIRONMENT for arg in ('--env', f'{name}={threads}')],
-        *(['--env', f'FLUX_URI={coordinator_uri}', '--mount',
-           f'type=bind,src={socket_directory},dst={socket_directory}']
+        *(['--env', 'FLUX_URI=local:///run/tl3-flux.sock', '--mount',
+           f'type=bind,source={socket_path},target=/run/tl3-flux.sock,readonly']
           if coordinator_uri is not None else []),
         *extra,
         f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py',
