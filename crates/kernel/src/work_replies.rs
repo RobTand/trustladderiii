@@ -342,7 +342,7 @@ fn work_checked_v(n: Node) -> (result: ReplyChange) [
     ensures result == reply_family_values::work_checked(n), reply_family_values::callable(result),
 ] {
     let mut m = n;
-    m.checked = m.head;
+    m.checked = None;
     m = set_phase_v(m, Phase::Reviewing);
     ReplyChange::Done { node: m, note: None }
 }
