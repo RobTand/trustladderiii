@@ -912,49 +912,17 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 
 
 
-/// Design A (Opus 1110, attempt 2): the last_cmd write's consequences for answer_command, over plain
-/// values. No premise relates a node of `mid` to `b`: the conclusions are about `b` and the literal
-/// written node, and answer_command links that literal to w.nodes@[i] only through the write's own
-/// facts. (Diagnostics 11-10: making the entry prove a written-node relation, in any of five forms,
-/// cost 30-55M of its rlimit.) Only world-field frame premises remain.
-pub(super) proof fn answer_mid(before: World, mid: World, b: Node, id: u64, question: u64,
-    answer: Answer)
-    requires
-        mid.next_question == before.next_question,
-        mid.next_ticket == before.next_ticket,
-        mid.gates@ == before.gates@,
-        mid.file_sets@ == before.file_sets@,
-    ensures
-        node_checked(before, b) ==> node_checked(mid, (Node { last_cmd: id, ..b })),
-        node_checked(before, b) && command_progress_input(b, Command::Answer { question, answer })
-            ==> answer_progress_input((Node { last_cmd: id, ..b }), question, answer)
-                && distance((Node { last_cmd: id, ..b })) == distance(b),
-        retirement::node_rules(before, b) ==> retirement::node_rules(mid, (Node { last_cmd: id, ..b })),
-{
-    let a = Node { last_cmd: id, ..b };
-    if node_checked(before, b) {
-        footprint::valid_under_table_growth(before, mid, a.footprint);
-        assert(node_checked(mid, a));
-        if command_progress_input(b, Command::Answer { question, answer }) {
-            assert(answer_progress_input(a, question, answer));
-            handler_safety::distance_last_cmd(b, id);
-        }
-    }
-    if retirement::node_rules(before, b) {
-        handler_safety::rules_to_v(before, b);
-        handler_safety::last_cmd_rules_v(b, before.next_question, id);
-        handler_safety::rules_world_update(before, mid, b, a);
-    }
-}
 
-/// Design A: a one-slot frame is a table update (the N-cut table clause), proven here so the
-/// extensionality step stays out of the entry's query. The premise is the entry's own frame clause.
-pub(super) proof fn frame_to_update(s: Seq<Node>, t: Seq<Node>, i: int)
-    requires 0 <= i < s.len(), t.len() == s.len(),
-        forall|j: int| 0 <= j < s.len() && j != i ==> t[j] == s[j],
-    ensures t == s.update(i, t[i]),
+/// Cheaper form (kernel master 11-10): answer_command exports L1's contract only. Consumers get the
+/// table frame (N5 `nodes@ == old.nodes@.update(i, n)`) from answer_command's length and
+/// other-node frame clauses through this one lemma (form rule 3).
+pub(super) proof fn answer_frame(before: World, after: World, i: usize)
+    requires i < before.nodes@.len(),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
+    ensures after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
 {
-    assert(t =~= s.update(i, t[i]));
+    assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
 }
 
 }
