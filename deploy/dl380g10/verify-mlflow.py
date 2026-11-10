@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live MLflow deployment check. Submit through PrismaBuild on dl380g10."""
+"""Live MLflow deployment check. Run in an admitted Flux job on dl380g10."""
 import json
 import os
 from pathlib import Path
@@ -35,7 +35,7 @@ def live_check():
     from mlflow.tracing.client import TracingClient
     from tl3_workers import runtime
 
-    assert os.environ.get('PRISMABUILD_ACTION_KEY'), 'submit this check through PrismaBuild'
+    assert os.environ.get('FLUX_JOB_ID'), 'submit this check through Flux'
     config = tomllib.loads((Path.home() / '.config/tl3/mlflow.toml').read_text())['mlflow']
     with httpx.Client(base_url=config['tracking_uri'], timeout=3, trust_env=False) as client:
         def health():

@@ -210,7 +210,7 @@ def render_config(home, listen, installation=1, issue=None, image=None, primary=
     root, config, _ = paths(home)
     text = (SOURCE / "crates/config/example.toml").read_text()
     start = text.index('# Names below are deployment placeholders')
-    end = text.index('\n[prismabuild]', start)
+    end = text.index('\n[flux]', start)
     models = (HERE / "models.toml").read_text().removeprefix('[models]\n')
     text = text[:start] + models + text[end:]
     replacements = {
@@ -800,7 +800,7 @@ def fresh_scope(args):
     reset = plan.get("reset")
     if not isinstance(archive, dict) or archive != {name: str(path) for name, path in allowed.items()}:
         raise RuntimeError("archive manifest must enumerate exact supported controller journals and attempts")
-    resettable = {"controller/" + name for name in ("direct-merge", "workers", "writer", "github", "mergify", "prismabuild")}
+    resettable = {"controller/" + name for name in ("direct-merge", "workers", "writer", "github", "mergify", "flux-checks")}
     controller = runs / ".controller"
     known = {name.split("/")[1] for name in resettable} | {"flux-checks", "worker-waits"}
     if any(path.name not in known for path in controller.iterdir()):
@@ -1399,7 +1399,7 @@ def check(home):
         ("model names configured", all(step["name"] not in {"default-model", "alternate-model"}
                                        for step in data["models"]["maker"])),
         ("sandbox installation configured", data["github"]["repos"][0]["installation_id"] != 1),
-        ("harness image configured", data["prismabuild"]["container_image"] != "sha256:" + "0" * 64),
+        ("harness image configured", data["flux"]["container_image"] != "sha256:" + "0" * 64),
     ):
         print(f"{'OK' if ok else 'MISSING'} {label}")
         missing += not ok

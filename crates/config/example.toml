@@ -132,7 +132,7 @@ runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/00000000000000000000000000
 environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
 staging_root = "/mnt/shared/tl3-inputs"
 output_root = "/mnt/shared/flux-out/tl3"
-container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 # Broker starttime and config hash are receipts; activation binds code, images and tools.
 # Inputs are immutable. Mutable work belongs in job-owned local scratch, never /mnt/shared.
 

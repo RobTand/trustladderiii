@@ -156,7 +156,7 @@ _CONTROLLER_RUNTIME = {
         "//deploy/dl380g10:verify.sh",
     ] + ["//crates/%s:Cargo.toml" % crate for crate in [
         "config", "contracts", "controller-core", "delivery", "github", "harness-core",
-        "kernel", "plan-check", "prismabuild", "store", "verus-runner", "worktrees",
+        "kernel", "plan-check", "store", "verus-runner", "worktrees",
     ]],
     "test_test_workers": [
         "//harness/src/tl3_harness",

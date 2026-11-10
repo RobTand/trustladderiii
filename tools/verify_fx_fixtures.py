@@ -200,7 +200,7 @@ def verify(root):
     changed = set(git(SOURCE, 'diff', '--name-only', BASE).decode().splitlines())
     metadata = {name for name in changed if re.fullmatch(r'\.pbrun-closure\.[0-9a-f]{16}\.json', name)}
     summary['changed_paths'] = sorted(changed - metadata)
-    summary['prismabuild_snapshot_metadata'] = sorted(metadata)
+    summary['snapshot_metadata'] = sorted(metadata)
     summary['original_fixture_source_sha256'] = hashlib.sha256(old_source.encode()).hexdigest()
     summary['production_sha256'] = {str(path.relative_to(SOURCE)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (SOURCE / 'harness/src/tl3_harness/model.py', SOURCE / 'crates/harness-core/src/judge.rs',

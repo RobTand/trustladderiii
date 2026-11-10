@@ -75,7 +75,7 @@ fn phases_valid(phases: &PhaseEvidence, requested: &str) -> bool {
 }
 
 /// TL3's trusted harness failures, including parsed test-run infrastructure outcomes.
-/// TL3-side under Q51, not a PrismaBuild failure.
+/// TL3-side under Q51, not an executor failure.
 pub(crate) const HARNESS: &str = "harness";
 
 /// Q51/#822: disagreement between TL3's producer and judge is a TL3-side defect.
