@@ -775,7 +775,7 @@ kernel_fn! {
         }
         if context.pool {
             let m = &mut node;
-            m.ticket = None;
+            m.ticket = n.ticket;
             m.pool = true;
             m.run = Some(m.generation);
             m.pos += 1;
