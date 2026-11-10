@@ -335,7 +335,7 @@ fn confirmed_agenda_value(n: Node, kind: EffectKind) -> (result: Node) [
         } else { confirmed_agenda_idle(n) }
     } else { confirmed_agenda_idle(n) };
     kernel_proof! { agenda_result_properties(n, result, kind); }
-    result
+    Node { head: None, ..result }
 }
 }
 
