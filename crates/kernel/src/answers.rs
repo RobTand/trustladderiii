@@ -89,6 +89,10 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
             }));
     }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
+    kernel_proof! {
+        reveal(handler_safety::command_step);
+        assert(n1.credit.withheld == before_answer@.credit.withheld);
+    }
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
@@ -146,7 +150,6 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             None => true,
         })),
 ] proof [reveal(distance);] {
-
     let mut m = n;
     let mut nq = nq;
     let mut note: Option<Notice> = None;
@@ -189,17 +192,26 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             }
             match answer {
                 Answer::Continue => {
-                    kernel_proof! { assert(n.phase == Phase::AwaitingRob
-        && match n.question {
-            Some(q) => q.id == id && match (q.kind, answer) {
-                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                _ => false,
-            },
-            None => false,
-        }); }
+                    kernel_proof! {
+                        assert(m == n);
+                        assert(n.question == Some(q));
+                        assert(n.phase == Phase::AwaitingRob);
+                        assert(q.id == id);
+                        assert(n.phase == Phase::AwaitingRob && match n.question {
+                            Some(q) => q.id == id && match (q.kind, answer) {
+                                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                                _ => false,
+                            },
+                            None => false,
+                        });
+                    }
                     let (m1, x) = go_on(m, q, 0);
                     m = m1;
+                    kernel_proof! {
+                        assert(m.question.is_none());
+                        assert(handler_safety::command_step(n, m));
+                    }
                     note = x;
                 }
                 Answer::TryAgain => {
@@ -208,17 +220,26 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     note = x;
                 }
                 Answer::AddCredit(k) => {
-                    kernel_proof! { assert(n.phase == Phase::AwaitingRob
-        && match n.question {
-            Some(q) => q.id == id && match (q.kind, answer) {
-                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
-                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
-                _ => false,
-            },
-            None => false,
-        }); }
+                    kernel_proof! {
+                        assert(m == n);
+                        assert(n.question == Some(q));
+                        assert(n.phase == Phase::AwaitingRob);
+                        assert(q.id == id);
+                        assert(n.phase == Phase::AwaitingRob && match n.question {
+                            Some(q) => q.id == id && match (q.kind, answer) {
+                                (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                                    | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                                _ => false,
+                            },
+                            None => false,
+                        });
+                    }
                     let (m1, x) = go_on(m, q, k);
                     m = m1;
+                    kernel_proof! {
+                        assert(m.question.is_none());
+                        assert(handler_safety::command_step(n, m));
+                    }
                     note = x;
                 }
                 Answer::ChangeRequest => {
