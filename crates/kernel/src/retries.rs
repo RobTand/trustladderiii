@@ -696,7 +696,7 @@ fn next_rung_paid(n: Node) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::rung_paid);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node.credit = spend_v(node.credit, 1);
+    node.credit = spend_v(node.credit, 0);
     node = set_phase_v(node, if node.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
     ReplyChange::Done { node, note }
 }
