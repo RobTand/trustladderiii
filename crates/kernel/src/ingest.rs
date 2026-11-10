@@ -225,7 +225,7 @@ fn reply_ingest_parts(n: Node, c: ReplyCtx) -> (result: (Node, Option<Notice>)) 
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
             | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
-    ensures ReplyChange::Done { node: result.0, note: result.1 } == reply_family_values::ingest(n, c.reply),
+    ensures (ReplyChange::Done { node: result.0, note: result.1 }) == reply_family_values::ingest(n, c.reply),
 ] proof [reveal(reply_family_values::ingest);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
