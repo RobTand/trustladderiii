@@ -764,6 +764,16 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_world_rewrite": ("kernel::apply_command_safety#world_rewrite", 1),
+            "apply_command_safety_stop_rows_eq": ("kernel::apply_command_safety#stop_rows_eq", 1),
+            "apply_command_safety_stop_rows_imp": ("kernel::apply_command_safety#stop_rows_imp", 1),
+            "apply_command_safety_stop_dist": ("kernel::apply_command_safety#stop_dist", 1),
+            "apply_command_safety_change_request_dist": ("kernel::apply_command_safety#change_request_dist", 1),
+            "apply_command_safety_answer_rows_eq": ("kernel::apply_command_safety#answer_rows_eq", 1),
+            "apply_command_safety_answer_rows_imp": ("kernel::apply_command_safety#answer_rows_imp", 1),
+            "apply_command_safety_answer_dist": ("kernel::apply_command_safety#answer_dist", 1),
+            "apply_command_safety_command_stutter": ("kernel::apply_command_safety#command_stutter", 1),
+            "commands_pause_v": ("kernel::commands#pause_v", 1),
             "apply_command_safety_last_cmd_rebase": ("kernel::apply_command_safety#last_cmd_rebase", 1),
             "apply_command_safety_other_resume_post": ("kernel::apply_command_safety#other_resume_post", 1),
             "apply_command_safety_stop_rows": ("kernel::apply_command_safety#stop_rows", 1),
