@@ -163,7 +163,7 @@ pub(super) proof fn value_event_rules(b: Node, n: Node, fast: bool, i: usize, fa
 
 /// Compose separately measured node properties without exposing their updates.
 pub(super) proof fn value_node_rows(b: Node, n: Node, fast: bool, i: usize, fact: Fact)
-    requires node_headroom(b), n == retirement::fact_node(b, fact),
+    requires node_headroom(b),
         matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict
             | Fact::IncidentCleared { .. } | Fact::PrMerged { .. }),
     ensures node_rows(b, n, fast, i, fact),
