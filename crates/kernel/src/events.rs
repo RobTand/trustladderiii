@@ -334,15 +334,16 @@ fn apply_new_adoption(w: &mut World, repo: RepoId, head: HeadId, priority: Prior
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *_out }
     kernel_proof! { report_projection(*w, (Event::NewAdoption { repo, head, priority })); events_lemmas::selected_input(before_apply@, (Event::NewAdoption { repo, head, priority })); }
+        kernel_proof! { assert(w.gates@ == before_apply@.gates@); assert(w.nodes@ == before_apply@.nodes@); }
         if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
             let mut node = Node::new(repo);
             node.proposed = Some(head);
             node.priority = priority;
             w.nodes.push(node);
-            kernel_proof! { assert(node.proposed == Some(head)); assert(!node.adopted); assert(w.nodes@ == before_apply@.nodes@.push(node)); assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int] == node); }
+            kernel_proof! { assert(repo.0 < before_apply@.gates@.len()); assert(node.proposed == Some(head)); assert(!node.adopted); assert(w.nodes@ == before_apply@.nodes@.push(node)); assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int] == node); }
         }
         kernel_proof! {
-            assert(repo.0 < before_apply@.gates@.len() ==> w.nodes@.len() == before_apply@.nodes@.len() + 1);
+            if repo.0 < before_apply@.gates@.len() { assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); } else { assert(w.nodes@ == before_apply@.nodes@); }
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewAdoption { repo, head, priority }), before_apply_out@, *_out);
         }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewAdoption { repo, head, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewAdoption { repo, head, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
