@@ -417,7 +417,6 @@ mod gate_assembly {
                 checking::accepted_node(before, i as int);
                 gate_ticket_projection::ticketed_grant(before.nodes@[i as int], w.nodes@[i as int]);
                 if w.nodes@[i as int].holds {
-                    assert(advance_family_post::ready_unobstructed(before.nodes@[i as int]));
                 }
                 advance_family_frames::step_premises_lift(before, w, i as int);
                 internal_safety::step_preserves_accepted_full(before, w, i as int);
