@@ -539,7 +539,7 @@ fn out_of_room_fast(n: Node, step: ReviewStop) -> (result: ReplyChange) [
 ] {
     let mut node = n;
     let note: Option<Notice> = None;
-    node = stop_for_review_v(node, step);
+    node = stop_for_review_v(node, ReviewStop::MakerCantMeet);
     ReplyChange::Done { node, note }
 }
 }
