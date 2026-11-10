@@ -606,7 +606,6 @@ mod aggregate_command_rows {
         let i = node.0 as int;
         checking::accepted_node(before, i);
         if command is Pause || command is Resume {
-            pause_projection::pause_dependencies(before, after, i);
             internal_safety::apply_step_preserves_accepted(before, after, i);
         } else {
             checking::accepted_parts(before);
