@@ -1443,4 +1443,103 @@ pub(super) proof fn node_update_preserves(before: World, after: World, i: int)
     }
     acyclic_after(before, after, NodeId(0), NodeId(0), false);
 }
+
+// ------------------------------------------------------ node appends (K5 G19)
+
+/// Appended nodes own no row and hold no withheld credit; the old nodes keep
+/// every endpoint field the checker reads. Then rules_ok is preserved.
+pub(super) proof fn append_preserves(before: World, after: World)
+    requires rules_ok(before),
+        after.dependencies@ == before.dependencies@,
+        after.nodes@.len() >= before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len()
+            ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
+        forall|j: int| before.nodes@.len() <= j < after.nodes@.len()
+            ==> !(#[trigger] after.nodes@[j]).credit.withheld,
+    ensures rules_ok(after),
+{
+    rules_definition(before);
+    rules_definition(after);
+    let len = before.nodes@.len();
+    assert forall|o: NodeId| prerequisites_delivered(after, o) == prerequisites_delivered(before, o) by {
+        prerequisite_definition(after, o);
+        prerequisite_definition(before, o);
+    }
+    assert forall|k: int| 0 <= k < after.dependencies@.len()
+        implies row_ok(after, #[trigger] after.dependencies@[k]) by {
+        let d = after.dependencies@[k];
+        assert(row_ok(before, before.dependencies@[k]));
+        assert(same_endpoint(before.nodes@[d.node.0 as int], after.nodes@[d.node.0 as int]));
+        if let Some(t) = d.target.request {
+            assert(same_endpoint(before.nodes@[t.0 as int], after.nodes@[t.0 as int]));
+        }
+    }
+    assert forall|j: int| 0 <= j < after.nodes@.len() && #[trigger] after.nodes@[j].credit.withheld
+        implies exists|k: int| 0 <= k < after.dependencies@.len()
+            && after.dependencies@[k].node == NodeId(j as u64) by {
+        if j < len {
+            assert(same_endpoint(before.nodes@[j], after.nodes@[j]));
+            assert(before.nodes@[j].credit.withheld);
+        }
+    }
+    // Every edge of `after` is an edge of `before` between old nodes.
+    assert forall|a: NodeId, b: NodeId| #[trigger] active_edge(after, a, b)
+        implies active_edge(before, a, b) by {
+        reveal(active_edge);
+        let k = choose|k: int| 0 <= k < after.dependencies@.len()
+            && after.dependencies@[k].node == a && after.dependencies@[k].target.request == Some(b)
+            && !after.dependencies@[k].rejected
+            && after.dependencies@[k].status == DependencyStatus::Pending;
+        assert(row_ok(before, before.dependencies@[k]));
+        assert(same_endpoint(before.nodes@[a.0 as int], after.nodes@[a.0 as int]));
+    }
+    acyclic_definition(before);
+    acyclic_definition(after);
+    // A cycle route in `after` visits only old nodes, so it is a route in `before`.
+    assert forall|a: NodeId, b: NodeId| active_edge(after, a, b) implies !reachable(after, b, a) by {
+        if reachable(after, b, a) {
+            reveal(reachable);
+            let route = choose|route: Seq<NodeId>| path(after, route)
+                && route[0] == b && route[route.len() - 1] == a;
+            reveal(path);
+            assert(active_edge(before, a, b));
+            assert forall|x: int| 0 <= x < route.len() - 1
+                implies active_edge(before, #[trigger] route[x], route[x + 1]) by {
+                assert(active_edge(after, route[x], route[x + 1]));
+            }
+            assert forall|x: int| 0 <= x < route.len() implies route[x].0 < len by {
+                reveal(active_edge);
+                if x < route.len() - 1 {
+                    assert(active_edge(before, route[x], route[x + 1]));
+                } else {
+                    assert(route[x] == a);
+                }
+            }
+            assert(path(before, route));
+            assert(reachable(before, b, a));
+        }
+    }
+}
+
+/// Covers K5 G19 append: the waiting fixture plus one fresh Ingesting request.
+fn append_cover() -> (result: World)
+    ensures rules_ok(result), result.nodes@.len() == 2,
+        result.nodes@[0].credit.withheld, result.nodes@[1].phase == Phase::Ingesting,
+        !result.nodes@[1].credit.withheld,
+{
+    let mut world = dependency_retirement::waiting_world();
+    fixture_accepted(&world);
+    let ghost before = world;
+    world.nodes.push(Node::new(RepoId(0)));
+    proof {
+        checking::accepted_parts(before);
+        reveal(initial_node);
+        assert forall|j: int| 0 <= j < before.nodes@.len()
+            implies same_endpoint(#[trigger] before.nodes@[j], world.nodes@[j]) by {
+            assert(world.nodes@[j] == before.nodes@[j]);
+        }
+        append_preserves(before, world);
+    }
+    world
+}
 }

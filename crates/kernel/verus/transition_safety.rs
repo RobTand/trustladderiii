@@ -81,7 +81,9 @@ pub(super) open spec fn apply_exempt(event: Event) -> Option<int> {
     match event {
         Event::Ack { node, .. } => Some(node.0 as int),
         Event::Command { node, command: Command::Resume, .. } => Some(node.0 as int),
-        _ => None,
+        Event::NewRequest { .. } | Event::NewAdoption { .. } | Event::Reply { .. } | Event::Fact { .. }
+            | Event::Command { command: Command::Stop | Command::Pause | Command::ChangeRequest
+                | Command::Answer { .. }, .. } => None,
     }
 }
 
@@ -249,7 +251,12 @@ pub(super) open spec fn event_rules(before: World, after: World, event: Event) -
                     None => true,
                 }
             },
-        _ => true,
+        Event::NewRequest { .. } | Event::Ack { .. }
+            | Event::Fact { fact: Fact::DependencyRemove { .. } | Fact::Dependency { .. }
+                | Fact::PrMerged { .. } | Fact::PrClosedByPerson | Fact::PushByOther { .. }
+                | Fact::CiFailed { .. } | Fact::IncidentCleared { .. } | Fact::Priority(_), .. }
+            | Event::Command { command: Command::Stop | Command::Pause | Command::Resume
+                | Command::ChangeRequest, .. } => true,
     }
 }
 
@@ -310,7 +317,11 @@ pub(super) open spec fn reply_rules(b: Node, n: Node, fast: bool, generation: u6
         Reply::PlanCantMeet => (fast && b.phase is Planning && owns(b, generation))
             ==> n.phase == Phase::Stopping(Outcome::Stopped)
                 && n.review_stop == Some(ReviewStop::PlanCantMeet),
-        _ => true,
+        Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
+            | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCheckRejected
+            | Reply::PlanCheckNeedsSplit | Reply::MakerDone { .. } | Reply::MakerNeedsFiles { .. }
+            | Reply::MakerCantMeet | Reply::MakerOutOfRoom | Reply::ChecksDone { .. }
+            | Reply::Approved { .. } | Reply::ChangesRequested | Reply::RunFailed => true,
     }
 }
 
@@ -538,11 +549,21 @@ pub(super) open spec fn retried(b: Node, n: Node) -> bool {
 /// The nine check_fail_fast_diverts event shapes, in any phase.
 pub(super) open spec fn fail_fast_event(event: Event) -> bool {
     match event {
-        Event::Reply { reply, .. } => matches!(reply, Reply::PlanCantMeet | Reply::MakerCantMeet
-            | Reply::MakerOutOfRoom | Reply::MakerNeedsFiles { .. } | Reply::ChecksDone { .. }
-            | Reply::ChangesRequested | Reply::ReviewerOutOfRoom),
+        Event::Reply { reply, .. } => match reply {
+            Reply::PlanCantMeet | Reply::MakerCantMeet | Reply::MakerOutOfRoom
+                | Reply::MakerNeedsFiles { .. } | Reply::ChecksDone { .. }
+                | Reply::ChangesRequested | Reply::ReviewerOutOfRoom => true,
+            Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
+                | Reply::AuditDisagrees | Reply::PlanLeaf { .. } | Reply::PlanSplit
+                | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit | Reply::ProtectedPaths
+                | Reply::MakerDone { .. } | Reply::Approved { .. } | Reply::RebaseClean { .. }
+                | Reply::RebaseNeedsChanges | Reply::RunFailed => false,
+        },
         Event::Fact { fact: Fact::CiFailed { .. }, .. } => true,
-        _ => false,
+        Event::NewRequest { .. } | Event::NewAdoption { .. } | Event::Ack { .. } | Event::Command { .. }
+            | Event::Fact { fact: Fact::DependencyRemove { .. } | Fact::Dependency { .. }
+                | Fact::PrMerged { .. } | Fact::PrClosedByPerson | Fact::PushByOther { .. }
+                | Fact::Conflict | Fact::IncidentCleared { .. } | Fact::Priority(_), .. } => false,
     }
 }
 
@@ -615,12 +636,172 @@ pub(super) proof fn outputs_quiet(before: World, after: World, out: Seq<Option<O
     } by {}
 }
 
+/// Gap 2a: a command-family handler appends nothing, or one notice for its node.
+pub(super) open spec fn notice_only(o0: Outbox, o1: Outbox, node: NodeId) -> bool {
+    o1.len == o0.len || (o1.len == o0.len + 1 && match o1.items@[o0.len as int] {
+        Some(Out::Notice { node: n, .. }) => n == node,
+        _ => false,
+    })
+}
+
+/// A command-family suffix holds no effect, so check_outputs applies vacuously.
+pub(super) proof fn notice_only_effects(o0: Outbox, o1: Outbox, node: NodeId)
+    requires o0.len < OUTBOX, notice_only(o0, o1, node),
+    ensures no_effects(emitted(o0, o1)),
+{
+    reveal(no_effects);
+    assert(o1.items@.len() == OUTBOX);
+    if o1.len == o0.len {
+        assert(emitted(o0, o1).len() == 0);
+    } else {
+        assert(emitted(o0, o1) =~= seq![o1.items@[o0.len as int]]);
+    }
+}
+
 /// K4b: Q54 check_fail_fast and the check_apply event rows for one apply.
 pub(super) proof fn apply_rules(before: World, after: World, event: Event, out: Seq<Option<Out>>)
     requires transition_safety(before, after, Transition::Apply(event), out),
     ensures fail_fast_step(before, after, event), event_rules(before, after, event),
 {
     reveal(transition_safety);
+}
+
+
+// ---- K5 G9 shared surface (frozen once wired): the Apply arm from one node ----
+
+/// G9: the node an event targets, if any (explicit variants, G21(b)).
+pub(super) open spec fn event_target(event: Event) -> Option<int> {
+    match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
+            | Event::Command { node, .. } => Some(node.0 as int),
+        Event::NewRequest { .. } | Event::NewAdoption { .. } => None,
+    }
+}
+
+/// G9 other-node frame: every node present before, other than i, is unchanged.
+pub(super) open spec fn others_unchanged(before: World, after: World, i: int) -> bool {
+    forall|j: int| 0 <= j < before.nodes@.len() && j != i
+        ==> #[trigger] after.nodes@[j] == before.nodes@[j]
+}
+
+/// check_effect for an effect of an existing node, read from its own before state.
+pub(super) open spec fn effect_node_ok(b: Node, n: Node, seq: u64, kind: EffectKind,
+    head: Option<HeadId>, exempt: bool) -> bool {
+    seq < n.next_seq && seq >= b.next_seq
+        && (b.paused && !(b.phase is Stopping) && !exempt ==> teardown_kind(kind))
+        && (kind == EffectKind::Enqueue ==> match head {
+            Some(h) => n.approved == Some(h) && n.checked == Some(h),
+            None => false,
+        })
+}
+
+/// G9: everything node i's handler appends is a notice or an effect of node i.
+pub(super) open spec fn node_outputs(b: Node, n: Node, i: int, ob: Outbox, oa: Outbox,
+    exempt: bool) -> bool {
+    ob.len <= oa.len
+        && forall|k: int| ob.len <= k < oa.len ==> match #[trigger] oa.items@[k] {
+            Some(Out::Effect { node, seq, kind, head }) => node.0 == i
+                && effect_node_ok(b, n, seq, kind, head, exempt),
+            Some(Out::Notice { .. }) | None => true,
+        }
+}
+
+/// G9: event_rules at the event's node.
+pub(super) open spec fn node_event_rules(b: Node, n: Node, fast: bool, event: Event) -> bool {
+    match event {
+        Event::Reply { generation, reply, .. } => reply_rules(b, n, fast, generation, reply),
+        Event::Fact { fact: Fact::Conflict, .. } =>
+            if b.phase == Phase::AwaitingDelivery || b.phase == Phase::Publishing {
+                n.phase == (if b.phase == Phase::AwaitingDelivery {
+                    Phase::Ready(Resume::Rebasing) } else { Phase::Rebasing })
+                    && n.generation == b.generation + 1
+                    && n.credit == b.credit && n.holds == b.holds
+            } else { n == b },
+        Event::Command { command: Command::Answer { question, .. }, .. } =>
+            n != Node { last_cmd: n.last_cmd, ..b } ==> match b.question {
+                Some(q) => q.id == question,
+                None => false,
+            } && match n.question {
+                Some(q) => q.id != question,
+                None => true,
+            },
+        Event::NewRequest { .. } | Event::NewAdoption { .. } | Event::Ack { .. }
+            | Event::Fact { fact: Fact::DependencyRemove { .. } | Fact::Dependency { .. }
+                | Fact::PrMerged { .. } | Fact::PrClosedByPerson | Fact::PushByOther { .. }
+                | Fact::CiFailed { .. } | Fact::IncidentCleared { .. } | Fact::Priority(_), .. }
+            | Event::Command { command: Command::Stop | Command::Pause | Command::Resume
+                | Command::ChangeRequest, .. } => true,
+    }
+}
+
+/// G9 node contract: what each family's arm lemma establishes for the event's node.
+#[verifier::opaque]
+pub(super) open spec fn node_safety(b: Node, n: Node, fast: bool, event: Event, i: int,
+    ob: Outbox, oa: Outbox) -> bool {
+    node_step(b, n)
+        && fail_fast_node(b, n, fast, event, i)
+        && node_outputs(b, n, i, ob, oa, apply_exempt(event) == Some(i))
+        && node_event_rules(b, n, fast, event)
+}
+
+/// An untouched node other than the event's own meets the per-node rules.
+pub(super) proof fn unchanged_node(b: Node, fast: bool, event: Event, j: int)
+    requires event_target(event) != Some(j),
+    ensures node_step(b, b), fail_fast_node(b, b, fast, event, j),
+{
+}
+
+/// G9: the Apply arm from apply's world frame, the other-node frame and the
+/// event node's contract.
+pub(super) proof fn lift_apply(before: World, after: World, event: Event, i: int, ob: Outbox, oa: Outbox)
+    requires apply_frame(before, after), event_target(event) == Some(i),
+        0 <= i < before.nodes@.len(), ob.len <= OUTBOX, oa.len <= OUTBOX,
+        others_unchanged(before, after, i),
+        node_safety(before.nodes@[i], after.nodes@[i], before.fail_fast, event, i, ob, oa),
+    ensures transition_safety(before, after, Transition::Apply(event), emitted(ob, oa)),
+{
+    reveal(node_safety);
+    let b = before.nodes@[i];
+    let n = after.nodes@[i];
+    assert forall|j: int| 0 <= j < before.nodes@.len()
+        implies node_step(before.nodes@[j], #[trigger] after.nodes@[j]) by {
+        if j != i { unchanged_node(before.nodes@[j], before.fail_fast, event, j); }
+    }
+    assert forall|j: int| 0 <= j < before.nodes@.len()
+        implies fail_fast_node(before.nodes@[j], #[trigger] after.nodes@[j], before.fail_fast, event, j) by {
+        if j != i { unchanged_node(before.nodes@[j], before.fail_fast, event, j); }
+    }
+    let out = emitted(ob, oa);
+    assert(oa.items@.len() == OUTBOX);
+    assert forall|k: int| 0 <= k < out.len() implies match #[trigger] out[k] {
+        Some(Out::Effect { node, seq, kind, head }) => node.0 < after.nodes@.len()
+            && effect_ok(before, after.nodes@[node.0 as int], node.0 as int, seq, kind, head,
+                apply_exempt(event) == Some(node.0 as int)),
+        _ => true,
+    } by {
+        assert(out[k] == oa.items@[ob.len + k]);
+    }
+    intro(before, after, Transition::Apply(event), out);
+}
+
+/// G9: the Apply arm for an event that changes no existing node and emits nothing
+/// (NewRequest, NewAdoption, or a target outside the world).
+pub(super) proof fn lift_apply_none(before: World, after: World, event: Event, ob: Outbox, oa: Outbox)
+    requires apply_frame(before, after),
+        match event_target(event) { Some(t) => t >= before.nodes@.len(), None => true },
+        forall|j: int| 0 <= j < before.nodes@.len() ==> #[trigger] after.nodes@[j] == before.nodes@[j],
+        ob.len == oa.len, ob.len <= OUTBOX,
+        event_rules(before, after, event),
+    ensures transition_safety(before, after, Transition::Apply(event), emitted(ob, oa)),
+{
+    assert forall|j: int| 0 <= j < before.nodes@.len()
+        implies node_step(before.nodes@[j], #[trigger] after.nodes@[j])
+            && fail_fast_node(before.nodes@[j], after.nodes@[j], before.fail_fast, event, j) by {
+        unchanged_node(before.nodes@[j], before.fail_fast, event, j);
+    }
+    assert(oa.items@.len() == OUTBOX);
+    assert(emitted(ob, oa).len() == 0);
+    intro(before, after, Transition::Apply(event), emitted(ob, oa));
 }
 
 }

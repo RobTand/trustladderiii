@@ -377,4 +377,87 @@ pub(super) proof fn kept_ladder(fast: bool, b: Node, m: Node, n: Node, ob: Outbo
     reveal(keeps_review_stop); reveal(ladder);
 }
 
+
+/// K5 gap 2a / G8: node_checked's node conjuncts for the value-form command
+/// handlers. Copied verbatim from lib.rs node_checked, except: the repo and
+/// footprint conjuncts (world tables) are dropped, `w.next_question` is the
+/// parameter `nq`, and the `t < w.next_ticket` atom is dropped. Implied by
+/// node_checked (checked_node_ok).
+pub(super) open spec fn node_ok(n: Node, nq: u64) -> bool {
+    arithmetic_consistent(n) && settle_shape(n) && stopping_effect_fits(n)
+        && (n.phase is Closed ==> n.pos == 0 && n.effect.is_none() && n.run.is_none()
+            && n.job.is_none() && !n.pool && !n.holds && n.ticket.is_none()
+            && n.question.is_none() && !n.waiting_incident && !n.pr_open && !n.worktree)
+        && (!(n.phase is Closed) ==> n.pos <= items(n.phase).len()
+            && (n.pos == items(n.phase).len() ==> n.phase is Stopping))
+        && (holding(n.phase) ==> n.holds)
+        && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
+        && (n.phase == Phase::AwaitingDelivery ==> n.pr_open && n.effect.is_none())
+        && (n.pr_open ==> n.had_pr)
+        && (n.merged.is_some() ==> n.phase == Phase::Stopping(Outcome::Merged)
+            || n.phase == Phase::Closed(Outcome::Merged))
+        && (n.pool ==> n.run.is_some() && n.phase != Phase::Rebasing)
+        && (match n.run {
+            Some(g) => (current_item(n) == Some(Item::Await) && g == n.generation
+                && matches!(n.phase, Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }
+                    | Phase::Making | Phase::Reviewing | Phase::Rebasing))
+                || (n.phase is Stopping && n.pos == 0),
+            None => true,
+        })
+        && (match n.job {
+            Some(g) => (n.phase == Phase::Checking && current_item(n) == Some(Item::Await) && g == n.generation)
+                || (n.phase is Stopping && n.pos <= 1),
+            None => true,
+        })
+        && (current_item(n) == Some(Item::Await) ==> if n.phase == Phase::Checking {
+            n.job == Some(n.generation)
+        } else { n.run == Some(n.generation) })
+        && (match n.effect {
+            None => true,
+            Some(e) => e.seq < n.next_seq && (e.cancelling || if
+                matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase) {
+                current_item(n) == Some(Item::Await)
+            } else { current_item(n) == Some(Item::Do(e.kind)) || current_item(n) == Some(Item::Teardown(e.kind)) }),
+        })
+        && (match n.ticket { None => true, Some(t) => !n.waiting_incident && n.effect.is_none() && !n.pool
+            && matches!(current_item(n), Some(Item::Slot) | Some(Item::Start(_))) })
+        && (n.waiting_incident ==> !(n.phase is Closed) && !holding(n.phase)
+            && n.ticket.is_none() && (match n.effect { None => true, Some(e) => e.cancelling })
+            && (!(n.phase is Stopping) ==> n.run.is_none() && n.job.is_none() && !n.pool))
+        && (match n.question {
+            None => n.phase != Phase::AwaitingRob,
+            Some(q) => q.id < nq && (match n.effect { None => true, Some(e) => e.cancelling })
+                && match n.phase {
+                    Phase::AwaitingRob => question_fits(q) && n.run.is_none() && n.job.is_none() && !n.pool,
+                    Phase::Stopping(_) => q.kind == QKind::CleanupFailed && matches!(current_item(n), Some(Item::Teardown(_))),
+                    _ => false,
+                },
+        })
+        && (match n.phase { Phase::Ready(r) => ready_checked(n, r), _ => true })
+        && (match n.phase {
+            Phase::Making => ready_checked(n, Resume::Making),
+            Phase::Checking => ready_checked(n, Resume::Checking),
+            Phase::Reviewing => ready_checked(n, Resume::Reviewing),
+            Phase::Publishing | Phase::AwaitingDelivery => ready_checked(n, Resume::Publishing),
+            Phase::Rebasing => ready_checked(n, Resume::Rebasing),
+            _ => true,
+        })
+}
+
+/// node_checked gives the value handlers' node premise.
+pub(super) proof fn checked_node_ok(w: World, n: Node)
+    requires node_checked(w, n),
+    ensures node_ok(n, w.next_question),
+{
+}
+
+
+/// K5 design 3 rung: the node distance does not read last_cmd, proved once
+/// here so resume_command never unfolds distance.
+pub(super) proof fn distance_last_cmd(n: Node, id: u64)
+    ensures distance(Node { last_cmd: id, ..n }) == distance(n),
+{
+    reveal(distance);
+}
+
 }
