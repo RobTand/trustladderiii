@@ -181,6 +181,7 @@ pub fn lifecycle_inputs(
     if canaries.len() != 3 || canaries.iter().any(|c| c.status != "PASS") {
         return Err("three accepted lifecycle canaries required".into());
     }
+    let canaries = lifecycle_canaries(canaries)?;
     let private = inputs.out.join("private");
     fs::create_dir_all(private.join("qualification/fx-current"))?;
     let mut index = d8::current::Index {
@@ -193,7 +194,7 @@ pub fn lifecycle_inputs(
     let prepared: Value =
         serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
     let mut output = BTreeMap::new();
-    for canary in canaries {
+    for canary in &canaries {
         let key = if canary.kind == "launch_failure" {
             "launch_failure"
         } else {

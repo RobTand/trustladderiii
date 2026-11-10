@@ -82,12 +82,13 @@ fn accepted(canary: &CanaryEvidence) -> bool {
         && canary
             .cleanup
             .as_ref()
-            .is_some_and(|cleanup| cleanup.stopped && cleanup.pending_executions.is_empty())
+            .is_some_and(|cleanup| cleanup.stopped && cleanup.pending_executions.is_empty() && !cleanup.evidence.is_empty())
+        && canary.checks.iter().all(|check| check.pass)
         && required.iter().all(|name| {
             canary
                 .checks
                 .iter()
-                .filter(|check| check.name == *name && check.pass)
+                .filter(|check| check.name == *name)
                 .count()
                 == 1
         })
@@ -119,6 +120,25 @@ mod tests {
             evidence: vec![],
         });
         assert_eq!(decisions(&[canary]).unwrap()[0].1, policy::Status::Fail);
+    }
+
+    #[test]
+    fn accepted_requires_each_kinds_ending_cleanup_and_exact_required_checks() {
+        let root = tempfile::tempdir().unwrap();
+        for kind in ["launch_failure", "cancel", "success", "generator"] {
+            let good = super::super::tests::canary(root.path(), kind);
+            assert!(accepted(&good));
+            let mut wrong = good.clone(); wrong.ending = Some(if good.ending == Some(api::Ending::Passed) { api::Ending::Cancelled } else { api::Ending::Passed });
+            assert!(!accepted(&wrong));
+            let mut wrong = good.clone(); wrong.cleanup.as_mut().unwrap().stopped = false;
+            assert!(!accepted(&wrong));
+            let mut wrong = good.clone(); wrong.checks.push(wrong.checks[0].clone());
+            assert!(!accepted(&wrong));
+            let mut wrong = good.clone(); wrong.checks.pop();
+            assert!(!accepted(&wrong));
+            let mut wrong = good; wrong.terminal_receipt = None;
+            assert!(!accepted(&wrong));
+        }
     }
 
     #[test]
@@ -231,7 +251,7 @@ pub fn pathset(repo: &Path, head: &str) -> Result<BTreeMap<String, String>> {
     Ok(entries)
 }
 
-pub fn carry(args: &[std::ffi::OsString]) -> Result<()> {
+pub fn carry(args: &[std::ffi::OsString]) -> Result<i32> {
     let mut fields = BTreeMap::new();
     for pair in args.chunks(2) {
         if pair.len() != 2 {
@@ -260,6 +280,10 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<()> {
             || verdict["executor_pathset"]["version"] != policy::PATHSET_VERSION
         {
             return Err("complete PASS at the identical pathset version required".into());
+        }
+        let canaries: Vec<CanaryEvidence> = serde_json::from_value(verdict["canaries"].clone())?;
+        if policy::verdict(&decisions(&canaries)?, true) != policy::Status::Pass {
+            return Err("retained canaries do not prove complete PASS".into());
         }
         verify_references(&verdict)?;
         let qualified = verdict["qualified_head"]
@@ -337,5 +361,5 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<()> {
         "{}",
         json!({"decision":if reasons.is_empty(){"carry"}else{"rerun"},"head":head,"pathset_version":policy::PATHSET_VERSION,"changed_paths":changed,"reasons":reasons})
     );
-    Ok(())
+    Ok(if reasons.is_empty() { 0 } else { 3 })
 }

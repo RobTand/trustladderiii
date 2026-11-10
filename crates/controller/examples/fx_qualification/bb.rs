@@ -5,12 +5,14 @@ use std::{
 };
 
 const CLIENT: &str = "/home/rob/tmp/bazel-wave2/tools/bbrun.py";
+const CLIENT_SHA256: &str = "8016e41d97aac7e83f7b5b39c57aea3c030a35d555e35f2929f09ab6076d7aa0";
 const HOLD: &str = "/home/rob/tmp/tl3-build/rust-fv/BB-HOLD";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Build {
     pub invocation_id: String,
+    pub client_sha256: String,
     pub base_head: String,
     pub overlay_tree: String,
     pub command_exit: i32,
@@ -29,7 +31,15 @@ fn blob(path: &Path) -> Result<api::BlobRef> {
     })
 }
 
+pub fn verify_client() -> Result<()> {
+    if durable::digest(&durable::read(Path::new(CLIENT))?) != CLIENT_SHA256 {
+        return Err("BuildBuddy client sha256 differs from pinned version".into());
+    }
+    Ok(())
+}
+
 fn client(args: &[String], out: &Path) -> Result<String> {
+    verify_client()?;
     let output = Command::new("/usr/bin/python3")
         .arg("-I")
         .arg(CLIENT)
@@ -127,8 +137,9 @@ pub fn admitted_preview(inputs: &Inputs) -> Result<Value> {
     fs::create_dir_all(&root)?;
     let log = root.join("remote.log");
     let output = fs::File::create(&log)?;
-    let status = Command::new("/bin/bash")
-        .args(["-c", &script(inputs, None)?])
+    let argv = build_argv(inputs, None)?;
+    let status = Command::new(&argv[0])
+        .args(&argv[1..])
         .current_dir(&inputs.repo)
         .env("BUILDBUDDY_ARTIFACTS_DIRECTORY", &root)
         .stdin(Stdio::null())
@@ -177,17 +188,23 @@ pub fn build(
     let result = root.join("build.json");
     if result.exists() {
         let build: Build = serde_json::from_slice(&durable::read(&result)?)?;
+        verify_client()?;
+        if build.client_sha256 != CLIENT_SHA256 {
+            return Err("retained BuildBuddy client hash differs".into());
+        }
         evidence::verify_references(&serde_json::to_value(&build)?)?;
         return Ok(build);
     }
-    let script = script(inputs, overlay)?;
-    let script_path = root.join("remote-build.sh");
-    if script_path.exists() {
-        if durable::read(&script_path)? != script.as_bytes() {
+    verify_client()?;
+    let argv = build_argv(inputs, overlay)?;
+    let raw_argv = serde_json::to_vec(&argv)?;
+    let argv_path = root.join("remote-build-argv.json");
+    if argv_path.exists() {
+        if durable::read(&argv_path)? != raw_argv {
             return Err("retained build input changed".into());
         }
     } else {
-        durable::atomic(&script_path, script.as_bytes())?;
+        durable::atomic(&argv_path, &raw_argv)?;
     }
     let submitted = root.join("submit.log");
     let raw = if submitted.exists() {
@@ -200,31 +217,17 @@ pub fn build(
         // log after interruption is uncertain, never permission to dispatch twice.
         write(
             &root.join("intent.json"),
-            &json!({"head":inputs.head,"script_sha256":durable::digest(script.as_bytes())}),
+            &json!({"head":inputs.head,"argv_sha256":durable::digest(&raw_argv),"client_sha256":CLIENT_SHA256}),
         )?;
         fs::File::create(&submitted)?.sync_all()?;
-        client(
-            &[
-                "step".into(),
-                "--repo".into(),
-                "https://github.com/RobTand/trustladderiii".into(),
-                "--commit".into(),
-                inputs.head.clone(),
-                "--branch".into(),
-                "fx-x3-qualify".into(),
-                "--timeout".into(),
-                "60".into(),
-                "--max-wait".into(),
-                "50".into(),
-                "--log-file".into(),
-                root.join("remote.log").to_string_lossy().into_owned(),
-                "--".into(),
-                "/bin/bash".into(),
-                "-c".into(),
-                script,
-            ],
-            &submitted,
-        )?
+        let mut args = vec![
+            "step".into(), "--repo".into(), "https://github.com/RobTand/trustladderiii".into(),
+            "--commit".into(), inputs.head.clone(), "--branch".into(), "fx-x3-qualify".into(),
+            "--timeout".into(), "60".into(), "--max-wait".into(), "50".into(),
+            "--log-file".into(), root.join("remote.log").to_string_lossy().into_owned(), "--".into(),
+        ];
+        args.extend(argv);
+        client(&args, &submitted)?
     };
     let id = invocation(&raw)?;
     let mut own = verdict(&raw);
@@ -300,6 +303,7 @@ pub fn build(
     }
     let build = Build {
         invocation_id: id,
+        client_sha256: CLIENT_SHA256.into(),
         base_head: inputs.head.clone(),
         overlay_tree: record["tree"].as_str().ok_or("build tree")?.into(),
         command_exit: 0,
@@ -312,52 +316,97 @@ pub fn build(
     Ok(build)
 }
 
-fn quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
+const REMOTE_BUILD: &str = r#"import base64, gzip, json, os, pathlib, subprocess, sys
+head, qualified = sys.argv[1:3]
+payload = json.loads(gzip.decompress(base64.b64decode(''.join(sys.argv[3:]))))
+def run(argv):
+    subprocess.run(argv, check=True)
+assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == head
+for name in payload['obsolete']:
+    pathlib.Path(name).unlink()
+for entry in payload['files']:
+    path = pathlib.Path(entry['path'])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(base64.b64decode(entry['data']))
+    path.chmod(entry['mode'])
+if qualified == 'true':
+    run(['git', 'add', '--', 'crates/controller/qualification/fx-current', 'crates/controller/qualification/current.json', 'crates/controller/src/adapters/flux_checks/activation/qualification.json'])
+targets = ['//crates/controller:' + name for name in ['tl3-run-backend', 'tl3', 'tl3d', 'tl3-worker-supervisor', 'example_fx-stage-packet', 'example_generate-fx-qualification', 'example_tl3-deploy']]
+run(['bazel', 'build', '--config=remote', '--remote_download_outputs=toplevel', '--jobs=8', *targets])
+run(['bazel-bin/crates/controller/example_fx-stage-packet', 'inventory-build', os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']])
+if qualified == 'true':
+    run(['bazel', 'build', '--config=remote', '--remote_download_outputs=toplevel', '--jobs=8', '//crates/controller:lib_test_tl3_controller_binary', '//crates/controller:example_test_fx-stage-packet_binary'])
+    run(['bazel-bin/crates/controller/example_fx-stage-packet', 'inventory-build', os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']])
+    run(['bazel-bin/crates/controller/example_generate-fx-qualification', '--repo', str(pathlib.Path.cwd() / 'crates/controller'), '--check'])
+    run(['bazel', 'test', '--config=remote', '--jobs=8', '--test_output=errors', '//crates/controller:test_test_activation_qualification_absent'])
+"#;
+
+fn gzip(bytes: Vec<u8>, decompress: bool) -> Result<Vec<u8>> {
+    let mut child = Command::new("/usr/bin/gzip")
+        .args(if decompress { &["-d", "-c"][..] } else { &["-n", "-c"][..] })
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+    let mut stdin = child.stdin.take().ok_or("gzip input absent")?;
+    let writer = std::thread::spawn(move || stdin.write_all(&bytes));
+    let output = child.wait_with_output()?;
+    writer.join().map_err(|_| "gzip writer panicked")??;
+    if !output.status.success() { return Err("overlay gzip failed".into()); }
+    Ok(output.stdout)
 }
 
-fn script(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Result<String> {
+fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Result<Vec<String>> {
     use base64::Engine;
-    let mut script = format!(
-        "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = {}\n",
-        quote(&inputs.head)
-    );
+    let mut files = vec![];
+    let mut removed = vec![];
     if let Some(overlay) = overlay {
         policy::publication_order(&overlay.keys().cloned().collect::<Vec<_>>())?;
-        for path in obsolete(inputs, overlay)? {
-            script.push_str(&format!("rm -- {}\n", quote(&path)));
-        }
+        removed = obsolete(inputs, overlay)?;
         for (path, bytes) in overlay {
-            script.push_str(&format!(
-                "mkdir -p {}\nprintf %s {} | base64 -d > {}\n",
-                quote(
-                    Path::new(path)
-                        .parent()
-                        .ok_or("overlay parent")?
-                        .to_str()
-                        .ok_or("overlay UTF-8")?
-                ),
-                quote(&base64::engine::general_purpose::STANDARD.encode(bytes)),
-                quote(path)
-            ));
-            script.push_str(&format!(
-                "chmod {} {}\n",
-                if source_mode(overlay, path)? == 0o100755 {
-                    "755"
-                } else {
-                    "644"
-                },
-                quote(path)
-            ));
+            files.push(json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,
+                "data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
         }
-        script.push_str("git add -- crates/controller/qualification/fx-current crates/controller/qualification/current.json crates/controller/src/adapters/flux_checks/activation/qualification.json\n");
     }
-    script.push_str("bazel build --config=remote --remote_download_outputs=toplevel --jobs=8 //crates/controller:tl3-run-backend //crates/controller:tl3 //crates/controller:tl3d //crates/controller:tl3-worker-supervisor //crates/controller:example_fx-stage-packet //crates/controller:example_generate-fx-qualification //crates/controller:example_tl3-deploy\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
-    if overlay.is_some() {
-        script.push_str("bazel build --config=remote --remote_download_outputs=toplevel --jobs=8 //crates/controller:lib_test_tl3_controller_binary //crates/controller:example_test_fx-stage-packet_binary\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
-        script.push_str("bazel-bin/crates/controller/example_generate-fx-qualification --repo \"$PWD/crates/controller\" --check\nbazel test --config=remote --jobs=8 --test_output=errors //crates/controller:test_test_activation_qualification_absent\n");
+    let payload = base64::engine::general_purpose::STANDARD.encode(gzip(serde_json::to_vec(&json!({"files":files,"obsolete":removed}))?, false)?);
+    // Leave room for the pinned client's secured wrappers and JSON escaping.
+    if payload.len() + REMOTE_BUILD.len() > 80 * 1024 {
+        return Err("compressed BuildBuddy overlay exceeds 80 KiB action budget".into());
     }
-    Ok(script)
+    let mut argv = vec!["/usr/bin/python3".into(), "-c".into(), REMOTE_BUILD.into(), inputs.head.clone(), overlay.is_some().to_string()];
+    for chunk in payload.as_bytes().chunks(16 * 1024) {
+        argv.push(std::str::from_utf8(chunk)?.into());
+    }
+    Ok(argv)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn overlay_arguments_preserve_paths_bytes_and_modes_without_shell_interpolation() {
+        use base64::Engine;
+        let root = tempfile::tempdir().unwrap();
+        let mut inputs = super::super::tests::inputs(root.path());
+        inputs.head = git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap();
+        let index = d8::current::Index {
+            schema: "tl3.fx_qualification_inputs.v1".into(), source: inputs.head.clone(), inputs: BTreeMap::new(), runs: vec![],
+            fixtures: BTreeMap::from([("fixtures/helper $(literal).py".into(), d8::current::Input { sha256: "a".repeat(64), bytes: 3, mode: 0o755 })]),
+        };
+        let name = format!("{}fixtures/helper $(literal).py", policy::INPUTS);
+        let overlay = BTreeMap::from([(policy::INDEX.into(), serde_json::to_vec(&index).unwrap()), (policy::PIN.into(), b"pin".to_vec()), (name.clone(), b"\0\xff'".to_vec())]);
+        let argv = build_argv(&inputs, Some(&overlay)).unwrap();
+        assert_eq!(&argv[..2], ["/usr/bin/python3", "-c"]);
+        assert_eq!(argv[3], inputs.head);
+        assert_eq!(argv[4], "true");
+        assert!(argv.iter().all(|arg| arg.len() < 32 * 1024));
+        let payload: Value = serde_json::from_slice(&gzip(base64::engine::general_purpose::STANDARD.decode(argv[5..].concat()).unwrap(), true).unwrap()).unwrap();
+        let files = payload["files"].as_array().unwrap();
+        assert_eq!(files.len(), overlay.len());
+        for file in files {
+            let path = file["path"].as_str().unwrap();
+            assert_eq!(base64::engine::general_purpose::STANDARD.decode(file["data"].as_str().unwrap()).unwrap(), overlay[path]);
+            assert_eq!(file["mode"], if path == name { 0o755 } else { 0o644 });
+        }
+        assert_eq!(build_argv(&inputs, None).unwrap()[4], "false");
+    }
 }
 
 fn source_mode(overlay: &BTreeMap<String, Vec<u8>>, path: &str) -> Result<u32> {

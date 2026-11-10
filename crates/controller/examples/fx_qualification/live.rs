@@ -291,7 +291,7 @@ fn collect_inner(
     );
     add(
         "verified_cleanup",
-        cleanup.stopped && cleanup.pending_executions.is_empty(),
+        cleanup.stopped && cleanup.pending_executions.is_empty() && !cleanup.evidence.is_empty(),
         cleanup.evidence.clone(),
     );
     let scratch: Vec<_> = receipt
@@ -304,7 +304,17 @@ fn collect_inner(
         })
         .cloned()
         .collect();
-    add("scratch_absence", !scratch.is_empty(), scratch);
+    let scratch_status: Vec<_> = scratch.iter().filter(|r| r.path.to_string_lossy().ends_with(".status.json")).collect();
+    let mut scratch_pass = !scratch_status.is_empty();
+    for status in scratch_status {
+        let exit: Value = serde_json::from_slice(&durable::checked_blob(status, &intent.output_dir)?)?;
+        scratch_pass &= exit == 0;
+        let stdout = status.path.with_file_name(status.path.file_name().ok_or("scratch status name")?.to_string_lossy().replace(".status.json", ".stdout"));
+        let observed = scratch.iter().find(|r| r.path == stdout).ok_or("scratch observation missing")?;
+        let observed: Value = serde_json::from_slice(&durable::checked_blob(observed, &intent.output_dir)?)?;
+        scratch_pass &= observed["schema"] == "tl3.scratch_cleanup.v1" && observed["observation"] == json!({"kind":"absent","errno":2});
+    }
+    add("scratch_absence", scratch_pass, scratch);
     let grant = record
         .allocation_grant
         .as_ref()
@@ -340,11 +350,16 @@ fn collect_inner(
                 .ok_or("launch failure report missing")?,
             &intent.output_dir,
         )?)?;
-        add(
-            "post_begin_launch_failure",
-            report.outcome == api::ReportOutcome::PostBeginLaunchFailure,
-            vec![],
-        );
+        let mut cause = report.outcome == api::ReportOutcome::PostBeginLaunchFailure
+            && report.worker_payload.is_none() && report.payload.is_none()
+            && !report.launch_failures.is_empty();
+        let mut proofs = vec![];
+        for failure in &report.launch_failures {
+            let events = flushed_events(&durable::checked_blob(&failure.process_record, &intent.output_dir)?)?;
+            cause &= absent_interpreter_failure(&events);
+            proofs.push(failure.process_record.clone());
+        }
+        add("post_begin_launch_failure", cause, proofs);
     }
     if kind == "success" {
         let report = flux.daytime_payload(&owner, &terminal)?;
@@ -352,16 +367,8 @@ fn collect_inner(
         let results = values["results"].as_array().ok_or("checks result absent")?;
         add(
             "real_pytest_base_red_head_green",
-            !results.is_empty()
-                && results.iter().all(|r| {
-                    r["verdict"] == "pass"
-                        && r["tests"].as_array().is_some_and(|tests| {
-                            !tests.is_empty()
-                                && tests
-                                    .iter()
-                                    .all(|t| t["base"] == "assertion" && t["head"] == "passed")
-                        })
-                }),
+            success_results(results, record.container_launches.len())
+                && record.container_launches.keys().all(|execution| intent.output_dir.join(format!("{execution}.runtime.jsonl")).is_file()),
             vec![],
         );
     }
@@ -398,6 +405,26 @@ fn collect_inner(
     Ok(result)
 }
 
+fn absent_interpreter_failure(events: &[Value]) -> bool {
+    !events.iter().any(|e| e["event"] == "payload_released")
+        && events.iter().filter(|e| e["event"] == "launcher_exit").count() == 1
+        && events.iter().any(|e| e["event"] == "launcher_exit"
+            && e["exit_code"].as_i64().is_some_and(|code| code != 0)
+            && e["stderr_tail"].as_str().is_some_and(|cause| {
+                cause.contains("/opt/tl3/bin/python-canary2-absent")
+                    && ["no such file", "not found"].iter().any(|text| cause.to_ascii_lowercase().contains(text))
+            }))
+}
+
+fn success_results(results: &[Value], executions: usize) -> bool {
+    executions == 2 && !results.is_empty() && results.iter().all(|r| {
+        r["verdict"] == "pass" && r["tests"].as_array().is_some_and(|tests| {
+            !tests.is_empty() && tests.iter().all(|t| t["base"] == "assertion" && t["head"] == "passed"
+                && t["message"].as_str().is_some_and(|m| m.contains("sandbox value must be 2")))
+        })
+    })
+}
+
 pub fn job_absence(
     inputs: &Inputs,
     options: &api::Options,
@@ -407,10 +434,9 @@ pub fn job_absence(
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == 'ƒ') {
         return Err("invalid owned job id".into());
     }
-    let path = format!(
-        "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-{id}:sys.service"
-    );
-    let control = "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice";
+    let uid = unsafe { libc::geteuid() };
+    let control = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/flux.slice");
+    let path = format!("{control}/flux-jobs.slice/shell-{id}:sys.service");
     let (exit, _) = admission::capture(
         options,
         &[
@@ -420,7 +446,7 @@ pub fn job_absence(
             "-c".into(),
             "test -d \"$1\" && test ! -e \"$2\"".into(),
             "x3-read-only".into(),
-            control.into(),
+            control.clone(),
             path.clone(),
         ],
         &root.join("absence.log"),
@@ -459,6 +485,25 @@ mod tests {
         assert!(!ready_events(&wrong, "id", "name"));
         assert!(!ready_events(&events, "foreign", "name"));
     }
+    #[test]
+    fn lifecycle_predicates_require_the_specific_causes_and_both_executions() {
+        let row = json!({"verdict":"pass","tests":[{"base":"assertion","head":"passed","message":"AssertionError: sandbox value must be 2"}]});
+        assert!(success_results(std::slice::from_ref(&row), 2));
+        assert!(!success_results(std::slice::from_ref(&row), 1));
+        let mut wrong = row.clone(); wrong["tests"][0]["message"] = "unrelated assertion".into();
+        assert!(!success_results(&[wrong], 2));
+        let mut wrong = row; wrong["tests"][0]["head"] = "assertion".into();
+        assert!(!success_results(&[wrong], 2));
+        let exit = json!({"event":"launcher_exit","exit_code":127,"stderr_tail":"crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"});
+        assert!(absent_interpreter_failure(std::slice::from_ref(&exit)));
+        assert!(!absent_interpreter_failure(&[exit.clone(), json!({"event":"payload_released"})]));
+        let mut wrong = exit.clone(); wrong["stderr_tail"] = "image unavailable".into();
+        assert!(!absent_interpreter_failure(&[wrong]));
+        let mut wrong = exit; wrong["exit_code"] = 0.into();
+        assert!(!absent_interpreter_failure(&[wrong]));
+        assert!(!absent_interpreter_failure(&[]));
+    }
+
     #[test]
     fn allocation_uses_counts_and_allowed_host_without_identity_pins() {
         let fixture = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"7"}}],"nodelist":["dl380g10"]}});

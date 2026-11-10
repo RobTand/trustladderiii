@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tl3_contracts::run_binding::Ending;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -165,9 +166,9 @@ pub fn generate(path: &Path) -> Result<Vec<u8>, String> {
             .get(&run.acceptance)
             .ok_or("qualification.acceptance")?;
         let expected_ending = match run.kind.as_str() {
-            "launch_failure" => "infra_lost",
-            "cancel" => "cancelled",
-            "success" => "passed",
+            "launch_failure" => Ending::InfraLost,
+            "cancel" => Ending::Cancelled,
+            "success" => Ending::Passed,
             _ => return Err("qualification.kind".into()),
         };
         if manifest["producer_commit"] != index.source
@@ -175,7 +176,7 @@ pub fn generate(path: &Path) -> Result<Vec<u8>, String> {
             || acceptance["source"] != index.source
             || acceptance["kind"] != run.kind
             || acceptance["status"] != "PASS"
-            || acceptance["ending"] != expected_ending
+            || serde_json::from_value::<Ending>(acceptance["ending"].clone()).ok() != Some(expected_ending)
             || acceptance["cleanup_verified"] != true
             || acceptance["allocation_verified"] != true
             || acceptance["job_id"].as_str().is_none_or(str::is_empty)
@@ -286,11 +287,11 @@ mod tests {
         for (kind, ending, interpreter) in [
             (
                 "launch_failure",
-                "infra_lost",
+                Ending::InfraLost,
                 "/opt/tl3/bin/python-canary2-absent",
             ),
-            ("cancel", "cancelled", "/opt/tl3/bin/python"),
-            ("success", "passed", "/opt/tl3/bin/python"),
+            ("cancel", Ending::Cancelled, "/opt/tl3/bin/python"),
+            ("success", Ending::Passed, "/opt/tl3/bin/python"),
         ] {
             let manifest_name = format!("{kind}-manifest.json");
             let acceptance_name = format!("{kind}-acceptance.json");

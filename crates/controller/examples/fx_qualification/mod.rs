@@ -63,7 +63,28 @@ struct State {
 }
 
 fn lifecycle_canaries(canaries: &[evidence::CanaryEvidence]) -> Result<Vec<evidence::CanaryEvidence>> {
-    Ok(canaries.get(..3).ok_or("three lifecycle canaries required")?.to_vec())
+    ["launch_failure", "cancel", "success"].into_iter().map(|kind| {
+        let mut matches = canaries.iter().filter(|canary| canary.kind == kind);
+        let canary = matches.next().ok_or("missing lifecycle canary kind")?;
+        if matches.next().is_some() {
+            return Err("duplicate lifecycle canary kind".into());
+        }
+        Ok(canary.clone())
+    }).collect()
+}
+
+fn retain_canary(canaries: &mut Vec<evidence::CanaryEvidence>, result: evidence::CanaryEvidence) {
+    canaries.retain(|canary| canary.kind != result.kind);
+    canaries.push(result);
+    canaries.sort_by_key(|canary| match canary.kind.as_str() {
+        "launch_failure" => 0, "cancel" => 1, "success" => 2, "generator" => 3, _ => 4,
+    });
+}
+
+fn exit_code(verdict: &Value, dry: bool) -> i32 {
+    if verdict["status"] == "PASS" || dry && verdict["errors"].as_array().is_some_and(|errors| {
+        errors.len() == 1 && errors[0]["code"] == "dry_run_no_jobs_submitted"
+    }) { 0 } else if verdict["status"] == "FAIL" { 1 } else { 2 }
 }
 
 fn save(out: &Path, state: &State) -> Result<()> {
@@ -215,7 +236,7 @@ fn plan(inputs: &Inputs) -> Value {
                 "TL3_RUN_BACKEND_CLI","TL3_RUN_BACKEND_CONFIG"],
             "native_thread_allowlist":["OMP_NUM_THREADS","MKL_NUM_THREADS","OPENBLAS_NUM_THREADS","TORCH_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS","VECLIB_MAXIMUM_THREADS","BLIS_NUM_THREADS"],"pass_flux_uri":pass_flux_uri},
-        "rlimits":{},"submission":"NOT_SUBMITTED"
+        "rlimit_flags":["--rlimit=-*"],"submission":"NOT_SUBMITTED"
     })).collect();
     json!({"schema":"tl3.fx_qualification_plan.v1","head":inputs.head,"serial":true,
         "flux_job_count":jobs.len(),"jobs":jobs,"readiness_seconds":inputs.readiness_seconds,
@@ -239,8 +260,7 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
 
 pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     if args.first().is_some_and(|s| s == "carry") {
-        evidence::carry(&args[1..])?;
-        return Ok(0);
+        return evidence::carry(&args[1..]);
     }
     let (inputs, dry) = parse(&args[1..])?;
     validate(&inputs)?;
@@ -282,6 +302,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             canaries: vec![],
         }
     };
+    if !dry { bb::verify_client()?; }
     save(&inputs.out, &state)?;
     let outcome = (|| -> Result<Value> {
         if inputs.out.join("verdict.json").exists() {
@@ -361,8 +382,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             let options: api::Options =
                 serde_json::from_slice(&durable::read(&packet.join("held-options.json"))?)?;
             let result = live::collect(&inputs, request, options, kind)?;
-            state.canaries.retain(|canary| canary.kind != kind);
-            state.canaries.push(result.clone());
+            retain_canary(&mut state.canaries, result.clone());
             save(&inputs.out, &state)?;
             if result.status != "PASS" {
                 return Err(
@@ -393,8 +413,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             &inputs.out.join("generator-journal/options.json"),
         )?)?;
         let result = live::collect(&inputs, request, gen_options, "generator")?;
-        state.canaries.retain(|canary| canary.kind != "generator");
-        state.canaries.push(result.clone());
+        retain_canary(&mut state.canaries, result.clone());
         save(&inputs.out, &state)?;
         if result.status != "PASS" {
             return Err("generator canary did not pass; checkout pin not published".into());
@@ -413,8 +432,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             let result: evidence::CanaryEvidence =
                 serde_json::from_slice(&durable::read(&checked)?)?;
             evidence::verify_references(&serde_json::to_value(&result)?)?;
-            state.canaries.retain(|canary| canary.kind != "generator");
-            state.canaries.push(result);
+            retain_canary(&mut state.canaries, result);
             save(&inputs.out, &state)?;
         }
         let verification = verification?;
@@ -463,9 +481,9 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
                 .into_iter()
                 .collect();
             json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
-            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
-            "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head)?},
-            "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
+            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"]).ok(),
+            "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head).ok()},
+            "inputs":{"image_map":identity(&inputs.image_map).ok(),"test_image":inputs.test_image,"generator_image":inputs.generator_image},
             "builds":state.builds,"preparation_jobs":preparation_jobs,
             "verification_jobs":verification_jobs,"canaries":state.canaries,"pin":null,
             "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
@@ -480,11 +498,5 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         "{}",
         json!({"verdict":inputs.out.join("verdict.json"),"status":verdict["status"]})
     );
-    Ok(if dry || verdict["status"] == "PASS" {
-        0
-    } else if verdict["status"] == "FAIL" {
-        1
-    } else {
-        2
-    })
+    Ok(exit_code(&verdict, dry))
 }

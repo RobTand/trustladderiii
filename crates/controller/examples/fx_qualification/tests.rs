@@ -87,11 +87,99 @@ fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 #[test]
 fn resume_selects_lifecycle_kinds_in_every_retained_order_after_generator() {
     let directory = tempfile::tempdir().unwrap();
+    let inputs = inputs(directory.path());
+    prepared(&inputs);
+    let mut original = None;
     for kinds in [&["launch_failure", "cancel", "success"][..], &["launch_failure", "cancel", "success", "generator"][..]] {
         for order in permutations(kinds) {
-            let retained: Vec<_> = order.iter().map(|kind| canary(directory.path(), kind)).collect();
+            let mut retained: Vec<_> = order.iter().map(|kind| canary(directory.path(), kind)).collect();
             let selected = lifecycle_canaries(&retained).unwrap();
             assert_eq!(selected.iter().map(|c| c.kind.as_str()).collect::<Vec<_>>(), ["launch_failure", "cancel", "success"], "retained order: {order:?}");
+            for kind in ["launch_failure", "cancel", "success"] {
+                retain_canary(&mut retained, canary(directory.path(), kind));
+            }
+            let state = State { schema: "tl3.fx_qualification_state.v1".into(), inputs: inputs.clone(), phase: "generator_complete".into(), builds: vec![], canaries: retained };
+            save(directory.path(), &state).unwrap();
+            let resumed: State = serde_json::from_slice(&durable::read(&directory.path().join("state.json")).unwrap()).unwrap();
+            let selected = lifecycle_canaries(&resumed.canaries).unwrap();
+            assert_eq!(selected.iter().map(|c| c.kind.as_str()).collect::<Vec<_>>(), ["launch_failure", "cancel", "success"]);
+            let outputs = prepare::lifecycle_inputs(&inputs, &selected).unwrap();
+            if let Some(original) = &original { assert_eq!(&outputs, original); }
+            else { original = Some(outputs); }
         }
     }
+}
+
+#[test]
+fn carry_checks_real_git_d8_closed_inventory_and_retained_decisions() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    let out = directory.path().join("evidence");
+    fs::create_dir(&repo).unwrap();
+    fs::create_dir(&out).unwrap();
+    git(&repo, &["init", "--quiet", "--template=", "-b", "main"]).unwrap();
+    fs::write(repo.join("Cargo.toml"), "executor source").unwrap();
+    git(&repo, &["add", "--all"]).unwrap();
+    git(&repo, &["commit", "--quiet", "-m", "executor"]).unwrap();
+    let mut inputs = inputs(&out);
+    inputs.repo = repo.clone();
+    inputs.head = git(&repo, &["rev-parse", "HEAD"]).unwrap();
+    prepared(&inputs);
+    let canaries: Vec<_> = ["launch_failure", "cancel", "success", "generator"].into_iter().map(|kind| canary(&out, kind)).collect();
+    let outputs = prepare::lifecycle_inputs(&inputs, &lifecycle_canaries(&canaries).unwrap()).unwrap();
+    let index: d8::current::Index = serde_json::from_slice(&outputs[policy::INDEX]).unwrap();
+    let mut installed = vec![];
+    for (relative, bytes) in &outputs {
+        let path = repo.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, bytes).unwrap();
+        let mode = relative.strip_prefix(policy::INPUTS).and_then(|name| index.fixtures.get(name)).map_or(0o644, |i| i.mode);
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        let mut record = identity(&path).unwrap();
+        record["relative_path"] = relative.clone().into();
+        installed.push(record);
+    }
+    git(&repo, &["add", "--all"]).unwrap();
+    git(&repo, &["commit", "--quiet", "-m", "qualified outputs"]).unwrap();
+    let head = git(&repo, &["rev-parse", "HEAD"]).unwrap();
+    let entries = evidence::pathset(&repo, &inputs.head).unwrap();
+    let verdict = json!({"schema":"tl3.fx_executor_qualification.v1","status":"PASS","complete":true,
+        "qualified_head":inputs.head,"canaries":canaries,
+        "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":entries,"sha256":durable::digest(&serde_json::to_vec(&entries).unwrap())},
+        "pin":{"sha256":durable::digest(&outputs[policy::PIN]),"installed_outputs":installed}});
+    let path = out.join("verdict.json");
+    let run = |value: &Value, requested: &str| {
+        write(&path, value).unwrap();
+        command(&["carry".into(), "--repo".into(), repo.clone().into_os_string(), "--verdict".into(), path.clone().into_os_string(), "--head".into(), requested.into()]).unwrap()
+    };
+    assert_eq!(run(&verdict, &head), 0);
+    assert_eq!(run(&verdict, &"f".repeat(40)), 3, "Git failure means rerun");
+    let mut unproven = verdict.clone(); unproven["canaries"][0]["checks"] = json!([]);
+    assert_eq!(run(&unproven, &head), 3, "PASS labels alone cannot carry");
+    let mut inventory = verdict.clone(); inventory["pin"]["installed_outputs"].as_array_mut().unwrap().pop();
+    assert_eq!(run(&inventory, &head), 3, "derived inventory must be closed");
+    fs::write(repo.join(format!("{}fixtures/unlisted.py", policy::INPUTS)), "unlisted").unwrap();
+    git(&repo, &["add", "--all"]).unwrap();
+    git(&repo, &["commit", "--quiet", "-m", "unexpected derived file"]).unwrap();
+    let changed = git(&repo, &["rev-parse", "HEAD"]).unwrap();
+    assert_eq!(run(&verdict, &changed), 3, "D8 rejects unlisted derived files");
+}
+
+#[test]
+fn lifecycle_inputs_refuse_missing_duplicate_and_foreign_kinds() {
+    let directory = tempfile::tempdir().unwrap();
+    let inputs = inputs(directory.path());
+    prepared(&inputs);
+    for kinds in [["launch_failure", "cancel", "generator"], ["launch_failure", "cancel", "cancel"]] {
+        let canaries: Vec<_> = kinds.into_iter().map(|kind| canary(directory.path(), kind)).collect();
+        assert!(prepare::lifecycle_inputs(&inputs, &canaries).is_err());
+    }
+}
+
+#[test]
+fn dry_run_exits_zero_only_for_the_completed_preview() {
+    assert_eq!(exit_code(&json!({"status":"UNKNOWN","errors":[{"code":"dry_run_no_jobs_submitted"}]}), true), 0);
+    assert_eq!(exit_code(&json!({"status":"UNKNOWN","errors":[{"code":"build failed"}]}), true), 2);
+    assert_eq!(exit_code(&json!({"status":"UNKNOWN","errors":[{"code":"dry_run_no_jobs_submitted"},{"code":"build failed"}]}), true), 2);
+    assert_eq!(exit_code(&json!({"status":"FAIL","errors":[]}), true), 1);
 }

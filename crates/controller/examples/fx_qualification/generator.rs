@@ -289,7 +289,12 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
         pass: probes,
         evidence: vec![artifact],
     });
-    let mut observed = false;
+    let prepared: Value = serde_json::from_slice(&durable::read(&inputs.out.join("prepared/result.json"))?)?;
+    let rootless: api::BlobRef = serde_json::from_value(prepared["rootless"].clone())?;
+    let rootless_raw = durable::checked_blob(&rootless, &inputs.out.join("prepared"))?;
+    let rootless_pass = std::str::from_utf8(&rootless_raw)?.trim() == "true";
+    let mut observed = true;
+    let mut configurations = 0;
     for execution in &result.executions {
         let path = Path::new(
             execution["journal"]["path"]
@@ -301,6 +306,7 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
             if event["event"] != "container_configuration" {
                 continue;
             }
+            configurations += 1;
             let facts = &event["facts"];
             let container_bound = receipt
                 .runtime_ownerships
@@ -334,13 +340,14 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
                 }
                 _ => false,
             });
-            observed = container_bound
+            observed &= container_bound
                 && actual == image.config_digest.trim_start_matches("sha256:")
                 && facts["ImageName"] == image.reference
                 && facts["NetworkMode"] == "none"
                 && facts["ReadonlyRootfs"] == true
                 && facts["Privileged"] == false
                 && facts["CapAdd"].as_array().is_none_or(Vec::is_empty)
+                && facts["CapDrop"].as_array().is_some_and(|caps| caps.iter().any(|cap| cap.as_str().is_some_and(|cap| cap.eq_ignore_ascii_case("all"))))
                 && facts["SecurityOpt"].as_array().is_some_and(|v| {
                     v.iter().any(|v| {
                         v.as_str()
@@ -366,8 +373,8 @@ pub fn check(inputs: &Inputs, result: &mut evidence::CanaryEvidence) -> Result<(
     }
     result.checks.push(evidence::Check {
         name: "actual_image_and_read_only_socket_mount".into(),
-        pass: observed,
-        evidence: vec![receipt_ref.clone()],
+        pass: observed && configurations > 0 && rootless_pass,
+        evidence: vec![receipt_ref.clone(), rootless],
     });
     if result.checks.iter().any(|c| !c.pass) {
         result.status = "FAIL".into();
