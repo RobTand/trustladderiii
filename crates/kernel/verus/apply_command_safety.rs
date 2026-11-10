@@ -1018,4 +1018,22 @@ pub(super) proof fn frame_to_update(s: Seq<Node>, t: Seq<Node>, i: int)
     assert(t =~= s.update(i, t[i]));
 }
 
+
+pub(super) proof fn answer_after_lit(s: Seq<Node>, t: Seq<Node>, i: int, id: u64, question: u64,
+    answer: Answer, table: Seq<Dependency>)
+    requires 0 <= i < s.len(), t.len() == s.len(),
+        forall|j: int| 0 <= j < s.len() && j != i ==> t[j] == s[j],
+        id > s[i].last_cmd,
+        handler_safety::answer_pair(Node { last_cmd: id, ..s[i] }, t[i], true, question, answer, table,
+            NodeId(i as u64)),
+    ensures t == s.update(i, t[i]),
+        handler_safety::answer_pair(s[i], t[i], id > s[i].last_cmd, question, answer, table,
+            NodeId(i as u64)),
+        progress_gate_apply::resume_post(s[i], t[i], id, Command::Answer { question, answer }),
+{
+    answer_pair_last_cmd(s[i], id, t[i], question, answer, table, NodeId(i as u64));
+    other_resume_post(s[i], t[i], id, Command::Answer { question, answer });
+    assert(t =~= s.update(i, t[i]));
+}
+
 }
