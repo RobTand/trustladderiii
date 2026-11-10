@@ -25,6 +25,67 @@ fn cli(request: &Value) -> Vec<Value> {
         .collect()
 }
 
+#[test]
+fn backend_session_survives_pending_and_repeated_term_but_not_kill() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::sync::mpsc;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"));
+    command
+        .arg("--session")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    // Match the in-job spawner, including a TERM arriving before Rust entry.
+    unsafe {
+        command.pre_exec(|| {
+            let mut signals: libc::sigset_t = std::mem::zeroed();
+            if libc::sigemptyset(&mut signals) != 0
+                || libc::sigaddset(&mut signals, libc::SIGTERM) != 0
+                || libc::sigprocmask(libc::SIG_BLOCK, &signals, std::ptr::null_mut()) != 0
+                || libc::raise(libc::SIGTERM) != 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let output = child.stdout.take().unwrap();
+    let (send, receive) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(output).lines() {
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut replies = Vec::new();
+    for request_id in 1..=3 {
+        if request_id > 1 {
+            assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+        }
+        if writeln!(input, "{}", json!({"request_id":request_id,"command":{"op":"cleanup_limits"}})).is_err() {
+            break;
+        }
+        match receive.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(line)) => replies.push(serde_json::from_str::<Value>(&line).unwrap()),
+            _ => break,
+        }
+    }
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    reader.join().unwrap();
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    assert_eq!(replies.len(), 3, "pending or repeated TERM killed the cleanup session: {replies:?}");
+    for (index, reply) in replies.iter().enumerate() {
+        assert_eq!(reply["request_id"], index + 1);
+        assert_eq!(reply["kind"], "result");
+        assert_eq!(reply["result"]["op"], "cleanup_limits");
+    }
+}
+
 /// Every suite Python that may import from a source checkout runs with `-B`. The flag is
 /// on the interpreter argv, so it survives the `env_clear()` of product spawn paths that
 /// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.

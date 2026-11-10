@@ -266,6 +266,19 @@ def backend_request(command, *, bounds=None):
         return _backend_request(command, bounds=bounds)
 
 
+@contextmanager
+def _backend_term_grace():
+    import signal
+
+    # Close the pre-exec TERM window. Rust installs SIG_IGN before unblocking;
+    # cleanup helpers inherit that disposition, while SIGKILL still bounds them.
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 def _backend_request(command, *, bounds=None):
     """Transport one command to FX1's Rust CLI; do not interpret its domain schema."""
     import selectors
@@ -349,10 +362,11 @@ def _backend_request(command, *, bounds=None):
             if _backend_session_key != key or (_backend_session is not None and _backend_session.poll() is not None):
                 close_backend_session()
             if _backend_session is None:
-                _backend_session = subprocess.Popen(
-                    [key[1], '--session', '--config', key[2]], bufsize=0,
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-                _backend_session_key = key
+                with _backend_term_grace():
+                    _backend_session = subprocess.Popen(
+                        [key[1], '--session', '--config', key[2]], bufsize=0,
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                    _backend_session_key = key
             process = _backend_session
             _backend_request_id += 1
             request_id = _backend_request_id
@@ -361,10 +375,11 @@ def _backend_request(command, *, bounds=None):
                 raise RuntimeError('backend session command exceeds transport bound')
             pending = memoryview(request)
         else:
-            process = subprocess.Popen(
-                [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
-                 ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            with _backend_term_grace():
+                process = subprocess.Popen(
+                    [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
+                     ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         with selectors.DefaultSelector() as ready:
             os.set_blocking(process.stdin.fileno(), False)
             ready.register(process.stdin, selectors.EVENT_WRITE)

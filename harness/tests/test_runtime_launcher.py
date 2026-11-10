@@ -156,6 +156,28 @@ def test_launch_context_consumes_generated_cli_boundary(backend_cli):
     assert runtime.cache_owner() == ('flux', 'local:///native', 'run/generation', 'fJob')
 
 
+@pytest.mark.parametrize('failure', [False, True])
+def test_backend_spawn_restores_calling_threads_signal_mask(backend_cli, failure):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    reply.write_text(json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='result',
+                                    result=dict(op='launch_context', context={}))) + '\n')
+    if failure:
+        (reply.parent / 'backend-cli').unlink()
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+    expected = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    try:
+        if failure:
+            with pytest.raises(runtime.BackendCliError):
+                runtime.launch_context()
+        else:
+            assert runtime.launch_context() == {}
+        assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == expected
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 @pytest.mark.parametrize('response', [
     '', 'not-json\n',
     '{"schema":"tl3.run_backend.frame.v1","sequence":0,"kind":"error","code":"invalid","message":"refused"}\n',
@@ -1243,7 +1265,7 @@ def test_backend_cli_transport_failures_keep_durable_diagnostics(backend_cli, tm
             'truncated': "sys.stdout.write('unfinished frame'); sys.stdout.flush()",
             'oversize': "sys.stdout.write('stdout marker\\n' + '界' * 100000); sys.stdout.flush()",
             'timeout': 'time.sleep(10)',
-            'signal': 'os.kill(os.getpid(), signal.SIGTERM)',
+            'signal': 'signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM}); os.kill(os.getpid(), signal.SIGTERM)',
         }[mode]
         executable.write_text(f'''#!{sys.executable}
 import os, signal, sys, time
