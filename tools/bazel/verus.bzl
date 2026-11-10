@@ -769,6 +769,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_family_spend_v": ("kernel::retries#spend_v", 1),
+            "reply_family_failed_prefix": ("kernel::retries#failed_prefix", 1),
+            "reply_family_incident_count": ("kernel::retries#incident_count", 1),
+            "reply_admission_clone_reply_change": ("kernel::reply_admission#ReplyChange::clone", 1),
+            "reply_admission_clone_reply_ctx": ("kernel::reply_admission#ReplyCtx::clone", 1),
             "reply_family_stop_for_review_v": ("kernel::retries#stop_for_review_v", 1),
             "reply_family_stopped_review": ("kernel::reply_family_facts#stopped_review", 1),
             "reply_family_incident_facts": ("kernel::reply_family_facts#incident_facts", 1),
