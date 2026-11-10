@@ -228,7 +228,7 @@ mod pause_assembly {
                 proof {
                     checking::accepted_node(before, i as int);
                     pause_projection::pause_dependencies(before, w, i as int);
-                    internal_safety::apply_step_preserves_accepted(before, w, i as int);
+
                 }
             },
             _ => {},
