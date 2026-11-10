@@ -145,7 +145,7 @@ pub(super) proof fn ingest_world(before: World, after: World, i: usize, reply: R
         port_t860_contracts::transition_post(before, after, i as int, reply, ob, oa),
         (successful_reply_input(before.nodes@[i as int], reply)
             ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
-        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].repo != before.nodes@[i as int].repo,
         after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
         reply_bounds(before, after, i as int, ob.len, oa.len),
         after.nodes@[i as int].last_cmd == before.nodes@[i as int].last_cmd,
