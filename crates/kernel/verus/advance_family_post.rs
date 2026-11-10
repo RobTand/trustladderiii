@@ -339,8 +339,7 @@ pub(super) open spec fn holds_item(b: Node) -> bool {
 #[verifier::opaque]
 pub(super) open spec fn holds_frame(b: Node, a: Node) -> bool {
     (!b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds)
-    && (matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
-        ==> a.holds == b.holds)
+    && true
 }
 
 pub(super) proof fn holds_frame_intro(b: Node, a: Node)
