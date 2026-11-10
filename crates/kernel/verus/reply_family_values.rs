@@ -267,7 +267,7 @@ pub(super) open spec fn ingest(n: Node, reply: Reply) -> ReplyChange {
 #[verifier::opaque]
 pub(super) open spec fn plan_check(n: Node) -> ReplyChange {
     ReplyChange::Done { node: retirement::stopped(
-        Node { review_stop: Some(ReviewStop::PlanCantMeet), ..n }, Outcome::Stopped), note: None }
+        Node { review_stop: Some(ReviewStop::PlanCantMeet), ..n }, Outcome::Merged), note: None }
 }
 
 pub(super) open spec fn files_paid(n: Node, union: Footprint) -> Node {
