@@ -751,7 +751,7 @@ fn failed_round_free(n: Node) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::round_free);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node.round = 1;
+    node.round = 0;
     node = set_phase_v(node, if node.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
     ReplyChange::Done { node, note }
 }
