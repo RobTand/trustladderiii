@@ -172,13 +172,15 @@ def test_pq_builder_requires_an_immutable_python312_base():
     assert builder.base_reference('docker.io/library/python:3.12-slim-bookworm@sha256:' + '1' * 64)
 
 
-def test_pq_install_keeps_the_subject_in_the_runtime_checkout():
+def test_pq_install_pins_the_editable_subject_and_preserves_runtime_checkout_precedence():
     script = pq_builder().install_script()
     assert '--require-hashes --no-deps' in script
     assert '-r /input/requirements_linux_x86_64.txt' in script
     assert 'sys.version_info[:2] == (3, 12)' in script
     assert 'pip check' in script
-    assert 'pip install -e' not in script
+    assert '--no-deps --no-build-isolation -e .' in script
+    assert pq_builder().COMMIT in script
+    assert 'import tessera.metadata, prismaquant' in script
     assert 'prismabuild' in script
     assert 'affinity changed' in script
 
