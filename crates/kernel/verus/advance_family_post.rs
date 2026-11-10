@@ -366,6 +366,128 @@ pub(super) proof fn holds_frame_intro(b: Node, a: Node)
     reveal(holds_frame);
 }
 
+
+/// E5.6's internal carrier; product clause stays plain on scheduler::advance.
+#[verifier::opaque]
+pub(super) open spec fn retains_holds(b: Node, a: Node) -> bool {
+    b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds
+}
+
+pub(super) proof fn retains_holds_intro(b: Node, a: Node)
+    requires b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds,
+    ensures retains_holds(b, a),
+{
+    reveal(retains_holds);
+}
+
+/// Only these agenda arms can occur while Making or Rebasing.
+pub(super) proof fn holds_phase_items(n: Node)
+    requires n.phase == Phase::Making || n.phase == Phase::Rebasing,
+    ensures match current_item(n) {
+        Some(item) => matches!(item, Item::Do(_) | Item::Start(_) | Item::StartRebase | Item::Await),
+        None => true,
+    },
+{
+    reveal(current_item);
+    reveal(items);
+    match n.phase {
+        Phase::Making => {
+            if n.pos < 3 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::Do(EffectKind::PrepareWorktree))); }
+                else if n.pos == 1 { assert(current_item(n) == Some(Item::Start(Role::Make))); }
+                else { assert(n.pos == 2); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        Phase::Rebasing => {
+            if n.pos < 2 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::StartRebase)); }
+                else { assert(n.pos == 1); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        _ => {},
+    }
+}
+
+
+pub(super) open spec fn teardown_gone(n: Node, kind: EffectKind) -> bool {
+    match kind { EffectKind::StopRun => n.run.is_none(), EffectKind::WithdrawJob => n.job.is_none(),
+        EffectKind::ClosePr => !n.pr_open, EffectKind::RemoveWorktree => !n.worktree, _ => false }
+}
+
+#[verifier::opaque]
+pub(super) open spec fn teardown_rows(b: Node, a: Node, moved: bool) -> bool {
+(((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => teardown_gone(b, k), _ => false }))
+    ==> moved && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none() && a.holds == b.holds
+        && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq
+        && a.pool == (b.pool && current_item(b) != Some(Item::Teardown(EffectKind::StopRun))))
+    && (((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => !teardown_gone(b, k), _ => false }))
+    ==> moved && a.effect.is_some() && a.effect.unwrap().seq == b.next_seq
+        && current_item(b) == Some(Item::Teardown(a.effect.unwrap().kind)) && !a.effect.unwrap().cancelling
+        && a.next_seq == b.next_seq + 1 && a.pos == b.pos && a.phase == b.phase && a.holds == b.holds
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree)
+    && (((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b) == Some(Item::Release))
+    ==> moved && !a.holds && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none()
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq)
+    && (((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_none())
+    ==> moved && a.holds == b.holds && a.pos == 0
+        && (match b.phase { Phase::Stopping(o) => a.phase == Phase::Closed(o), _ => true }))
+    && (((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_some())
+    ==> a.run_failures == b.run_failures && a.run_incidents == b.run_incidents
+        && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
+        && a.question == b.question && a.credit == b.credit
+        && a.generation == b.generation && a.ticket == b.ticket)
+}
+
+pub(super) proof fn teardown_rows_intro(b: Node, a: Node, moved: bool)
+    requires ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => teardown_gone(b, k), _ => false }))
+    ==> moved && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none() && a.holds == b.holds
+        && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq
+        && a.pool == (b.pool && current_item(b) != Some(Item::Teardown(EffectKind::StopRun))),
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => !teardown_gone(b, k), _ => false }))
+    ==> moved && a.effect.is_some() && a.effect.unwrap().seq == b.next_seq
+        && current_item(b) == Some(Item::Teardown(a.effect.unwrap().kind)) && !a.effect.unwrap().cancelling
+        && a.next_seq == b.next_seq + 1 && a.pos == b.pos && a.phase == b.phase && a.holds == b.holds
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree,
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b) == Some(Item::Release))
+    ==> moved && !a.holds && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none()
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq,
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_none())
+    ==> moved && a.holds == b.holds && a.pos == 0
+        && (match b.phase { Phase::Stopping(o) => a.phase == Phase::Closed(o), _ => true }),
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_some())
+    ==> a.run_failures == b.run_failures && a.run_incidents == b.run_incidents
+        && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
+        && a.question == b.question && a.credit == b.credit
+        && a.generation == b.generation && a.ticket == b.ticket,
+    ensures teardown_rows(b, a, moved),
+{
+    reveal(teardown_rows);
+}
+
+pub(super) proof fn stopping_items(n: Node)
+    requires n.phase is Stopping,
+    ensures match current_item(n) { Some(item) => matches!(item, Item::Teardown(_) | Item::Release), None => true },
+{
+    reveal(current_item); reveal(items);
+}
+
+
+/// Case-local R26 rows over the literal missing-resource result.
+pub(super) proof fn teardown_missing_rows(b: Node, kind: EffectKind)
+    requires b.phase is Stopping,
+        current_item(b) == Some(Item::Teardown(kind)), teardown_gone(b, kind),
+    ensures teardown_rows(b, Node { pool: b.pool && kind != EffectKind::StopRun,
+        pos: (b.pos + 1) as u8, ..b }, true),
+{
+    reveal(current_item); reveal(items);
+    assert(b.pos < 5);
+    let a = Node { pool: b.pool && kind != EffectKind::StopRun,
+        pos: (b.pos + 1) as u8, ..b };
+    teardown_rows_intro(b, a, true);
+}
+
 /// K5 frozen export E5.1 (CONTRACTS.md v2; owner Advance): framing for one internal step of node k,
 /// node-level rows only; `advance_family_frames::step_premises_lift` rebuilds internal_safety::step_premises.
 #[verifier::opaque]
@@ -399,16 +521,5 @@ pub(super) proof fn step_rows_intro(before: World, after: World, k: int)
     reveal(step_rows);
 }
 
-/// K5 frozen export E11.3 helper (CONTRACTS.md v2.3; owner Advance): transparent, the exact
-/// absent-resource test of advance_teardown.
-pub(super) open spec fn teardown_gone(n: Node, kind: EffectKind) -> bool {
-    match kind {
-        EffectKind::StopRun => n.run.is_none(),
-        EffectKind::WithdrawJob => n.job.is_none(),
-        EffectKind::ClosePr => !n.pr_open,
-        EffectKind::RemoveWorktree => !n.worktree,
-        _ => false,
-    }
-}
 
 }

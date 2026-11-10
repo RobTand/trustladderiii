@@ -125,4 +125,41 @@ pub(super) proof fn slot_resume_from_grant(b: Node, a: Node, c: AdvanceContext, 
 }
 
 
+
+/// E5.6 consumer elimination, outside the predicate's producer module.
+pub(super) proof fn retained_holds(b: Node, a: Node)
+    requires advance_family_post::retains_holds(b, a),
+    ensures b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds,
+{
+    reveal(advance_family_post::retains_holds);
+}
+
+
+pub(super) proof fn teardown_rows_reveal(b: Node, a: Node, moved: bool)
+    requires advance_family_post::teardown_rows(b, a, moved),
+    ensures ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => advance_family_post::teardown_gone(b, k), _ => false }))
+    ==> moved && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none() && a.holds == b.holds
+        && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq
+        && a.pool == (b.pool && current_item(b) != Some(Item::Teardown(EffectKind::StopRun))),
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && (match current_item(b) { Some(Item::Teardown(k)) => !advance_family_post::teardown_gone(b, k), _ => false }))
+    ==> moved && a.effect.is_some() && a.effect.unwrap().seq == b.next_seq
+        && current_item(b) == Some(Item::Teardown(a.effect.unwrap().kind)) && !a.effect.unwrap().cancelling
+        && a.next_seq == b.next_seq + 1 && a.pos == b.pos && a.phase == b.phase && a.holds == b.holds
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree,
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b) == Some(Item::Release))
+    ==> moved && !a.holds && a.pos == b.pos + 1 && a.phase == b.phase && a.effect.is_none()
+        && a.pool == b.pool && a.run == b.run && a.job == b.job && a.pr_open == b.pr_open && a.worktree == b.worktree && a.next_seq == b.next_seq,
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_none())
+    ==> moved && a.holds == b.holds && a.pos == 0
+        && (match b.phase { Phase::Stopping(o) => a.phase == Phase::Closed(o), _ => true }),
+        ((b.phase is Stopping && !b.waiting_incident && b.effect.is_none() && b.question.is_none()) && current_item(b).is_some())
+    ==> a.run_failures == b.run_failures && a.run_incidents == b.run_incidents
+        && a.fx_failures == b.fx_failures && a.fx_incidents == b.fx_incidents
+        && a.question == b.question && a.credit == b.credit
+        && a.generation == b.generation && a.ticket == b.ticket,
+{
+    reveal(advance_family_post::teardown_rows);
+}
+
 }

@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::teardown_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::retains_holds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::owner_waiting_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::endpoint_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::stop_live_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -924,6 +926,18 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "advance_family_post_teardown_missing_rows": ("kernel::advance_family_post#teardown_missing_rows", 1),
+            "ranks_advance_teardown_missing_value": ("kernel::ranks#advance_teardown_missing_value", 1),
+            "ranks_advance_teardown_emitting_value": ("kernel::ranks#advance_teardown_emitting_value", 1),
+            "ranks_advance_release_value": ("kernel::ranks#advance_release_value", 1),
+            "advance_family_post_teardown_rows_intro": ("kernel::advance_family_post#teardown_rows_intro", 1),
+            "advance_family_post_stopping_items": ("kernel::advance_family_post#stopping_items", 1),
+            "advance_family_rules_teardown_rows_reveal": ("kernel::advance_family_rules#teardown_rows_reveal", 1),
+            "ranks_advance_rebase_value": ("kernel::ranks#advance_rebase_value", 1),
+            "ranks_advance_finished_value": ("kernel::ranks#advance_finished_value", 1),
+            "advance_family_post_retains_holds_intro": ("kernel::advance_family_post#retains_holds_intro", 1),
+            "advance_family_post_holds_phase_items": ("kernel::advance_family_post#holds_phase_items", 1),
+            "advance_family_rules_retained_holds": ("kernel::advance_family_rules#retained_holds", 1),
             "stop_frames_stop_owner_waiting_frame": ("kernel::stop_frames#stop_owner_waiting_frame", 1),
             "stop_frames_pause_endpoint_frame": ("kernel::stop_frames#pause_endpoint_frame", 1),
             "stop_frames_n4_frames_refl": ("kernel::stop_frames#n4_frames_refl", 1),
