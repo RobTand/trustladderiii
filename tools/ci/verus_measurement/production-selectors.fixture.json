@@ -1,18 +1,13 @@
 {
-  "source_head": "7502b40e159883eec588170f7b3244aef443de1b",
+  "source_head": "4132bf20dec4a6921a06754ecb3b11d757080347",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "a72e2ef53fe16e4110f5f45ad1ba6b4e5d525072bdedae740acfed248ac50fe2",
-  "groups": 620,
-  "obligations": 818,
+  "source_sha256": "3e874d5e9fd44beaaa9e554a873419cea51f754290b8e084abc2650bf5450c4f",
+  "groups": 618,
+  "obligations": 816,
   "selections": [
     {
-      "target": "//crates/kernel:verus_apply_command_safety_held_answer_is",
-      "selector": "kernel::apply_command_safety#held_answer_is",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_apply_command_safety_answer_mid_world",
-      "selector": "kernel::apply_command_safety#answer_mid_world",
+      "target": "//crates/kernel:verus_apply_command_safety_answer_world_f",
+      "selector": "kernel::apply_command_safety#answer_world_f",
       "expected": 1
     },
     {
@@ -188,11 +183,6 @@
     {
       "target": "//crates/kernel:verus_apply_command_safety_pause_world",
       "selector": "kernel::apply_command_safety#pause_world",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_answers_on_answer_exact",
-      "selector": "kernel::answers#on_answer_exact",
       "expected": 1
     },
     {
