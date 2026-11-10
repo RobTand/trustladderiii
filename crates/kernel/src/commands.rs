@@ -71,6 +71,8 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         (old(w).nodes@[i as int].phase is Stopping ==> stop_frames::stop_stopping_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         // E11.1 forwarding atom (opaque; on_command reveals it through stop_frame_reveal).
         stop_frames::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id),
+        // E2.N4 (R28 framing, opaque; form rule 2).
+        stop_frames::owner_waiting_kept(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -134,6 +136,8 @@ pub(super) fn change_request_command(w: &mut World, i: usize, id: u64) -> (resul
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4 (R28 framing, opaque; form rule 2).
+        stop_frames::owner_waiting_kept(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -216,6 +220,8 @@ pub(super) fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E2.N4 (R28 framing, opaque; form rule 2).
+        stop_frames::endpoint_kept(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];

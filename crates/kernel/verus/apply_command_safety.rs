@@ -434,6 +434,7 @@ pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
             && stop_frames::stop_live_frame(before.nodes@[i as int], after.nodes@[i as int]))
         && (before.nodes@[i as int].phase is Stopping ==> stop_frames::stop_stopping_frame(before.nodes@[i as int], after.nodes@[i as int])),
         stop_frames::stop_post(before.nodes@[i as int], after.nodes@[i as int], id),
+        stop_frames::owner_waiting_kept(before.nodes@[i as int], after.nodes@[i as int]),
 {
     let b = before.nodes@[i as int];
     world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped));
@@ -447,6 +448,7 @@ pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
     }
     stop_frames::stop_e11_frames(b, id);
     stop_frames::stop_post_intro(b, n, id);
+    stop_frames::stop_owner_waiting_frame(b, id, Outcome::Stopped);
 }
 
 /// Opus 1110: change_request_command's ensures verbatim over (before, after). Every clause is a literal
@@ -506,6 +508,7 @@ pub(super) proof fn change_request_world(before: World, after: World, i: usize, 
         before.next_question <= after.next_question,
         (retirement::node_rules(before, before.nodes@[i as int])
             ==> retirement::node_rules(after, after.nodes@[i as int])),
+        stop_frames::owner_waiting_kept(before.nodes@[i as int], after.nodes@[i as int]),
 {
     let b = before.nodes@[i as int];
     world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Replaced));
@@ -517,6 +520,7 @@ pub(super) proof fn change_request_world(before: World, after: World, i: usize, 
     if retirement::node_rules(before, b) {
         handler_safety::rules_world_update(before, after, b, n);
     }
+    stop_frames::stop_owner_waiting_frame(b, id, Outcome::Replaced);
 }
 
 /// Pause: the exact node pause_command's unchanged statements leave at index i.
@@ -583,6 +587,7 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
         before.next_question <= after.next_question,
         (retirement::node_rules(before, before.nodes@[i as int])
             ==> retirement::node_rules(after, after.nodes@[i as int])),
+        stop_frames::endpoint_kept(before.nodes@[i as int], after.nodes@[i as int]),
 {
     let b = before.nodes@[i as int];
     let a = Node { last_cmd: id, ..b };
@@ -602,6 +607,7 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
             handler_safety::rules_world_update(before, after, b, p);
         }
     }
+    stop_frames::pause_endpoint_frame(b, id);
 }
 
 

@@ -75,6 +75,9 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
         // quoted exactly in the named lemma stop_frame_reveal::stop_post_rows; the v2.7 / E11.1b framing rows
         // come back through stop_frame_reveal::stop_frames_reveal.
         ((command is Stop && id > old(w).nodes@[i as int].last_cmd) ==> stop_frames::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id)),
+        // E2.N4a / E2.N4b (R28 framing, CONTRACTS.md v2.20; opaque, form rule 2; rows via stop_frame_reveal::n4_frames_reveal).
+        ((command is Stop || command is ChangeRequest) ==> stop_frames::owner_waiting_kept(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+        ((command is Pause) ==> stop_frames::endpoint_kept(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])
@@ -90,6 +93,7 @@ pub(super) fn on_command_proved(w: &mut World, i: usize, id: u64, command: Comma
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
             handler_safety::same_step(w.nodes@[i as int]);
+            stop_frames::n4_frames_refl(w.nodes@[i as int]);
             handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
             match command {
                 Command::Answer { question, answer } => {
