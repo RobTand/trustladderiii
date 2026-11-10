@@ -234,7 +234,7 @@ pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report
 
 kernel_fn! {
 /// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E1: TRUSTED export wrapper. Contract =
-/// `apply_proved`'s, verbatim, plus one opaque export clause (v2.10; R1-R5 via apply_exports_rows). The body only calls the
+/// `apply_proved`'s, verbatim, plus one opaque export clause (v2.10; R1-R5 via apply_exports_rows) and E10's Ack clause (v2.31). The body only calls the
 /// verified `apply_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
 #[cfg_attr(verus_keep_ghost, verifier::external_body)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
@@ -359,6 +359,12 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
     transition_safety::apply_exports(*old(w), *final(w), event, *old(out), *final(out)),
+    // E10 (CONTRACTS.md v2.31; TRUSTED-FROZEN, owner debt): the Ack arm forwards on_ack's opaque post.
+    (match event {
+        Event::Ack { node, seq, ack } => node.0 < old(w).nodes@.len()
+            ==> acknowledgements::on_ack_post(*old(w), *final(w), node.0 as int, seq, ack, *old(out), *final(out)),
+        _ => true,
+    }),
 ] {
     apply_proved(w, event, out, report)
 }
