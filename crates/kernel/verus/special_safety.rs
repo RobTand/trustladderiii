@@ -114,7 +114,6 @@ fn gate_planning_step(mut w: World, i: usize, mut out: Outbox, mut report: Repor
     let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
     proof {
         advance_family_frames::step_premises_lift(before, w, i as int);
-        internal_safety::step_preserves_accepted_full(before, w, i as int);
         gate_planning_holds_nothing(before, i as int, w.nodes@[i as int],
             before.next_ticket, w.next_ticket, changed);
         advance_projection::settle_rank(before.nodes@[i as int], w.nodes@[i as int],
