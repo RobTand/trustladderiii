@@ -1,10 +1,95 @@
 {
-  "source_head": "9004f1b6834152247b155af1fc3ff3f7bb2f4566",
+  "source_head": "cbd9eb921ed5362724b03d80a62001c98ffd4d03",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b4f1dcacf598ca903c78d2fbe3d15031ec71bab0a59a6e6e16f73141ac6d1524",
-  "groups": 550,
-  "obligations": 748,
+  "source_sha256": "3d065781eecd2d58c8c273e9652aa8e5248e82625ee285bf246c44a266cf3821",
+  "groups": 567,
+  "obligations": 765,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_continuations_continue_ingesting_v",
+      "selector": "kernel::continuations#continue_ingesting_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_auditing_v",
+      "selector": "kernel::continuations#continue_auditing_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_unplanned_v",
+      "selector": "kernel::continuations#continue_unplanned_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_planning_v",
+      "selector": "kernel::continuations#continue_planning_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_ready_v",
+      "selector": "kernel::continuations#continue_ready_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_stop_v",
+      "selector": "kernel::continuations#continue_stop_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_nowhere_v",
+      "selector": "kernel::continuations#continue_nowhere_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_unclear_v",
+      "selector": "kernel::answers#awaiting_unclear_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_denied_v",
+      "selector": "kernel::answers#awaiting_denied_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_continue_v",
+      "selector": "kernel::answers#awaiting_continue_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_retry_v",
+      "selector": "kernel::answers#awaiting_retry_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_credit_v",
+      "selector": "kernel::answers#awaiting_credit_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_replace_v",
+      "selector": "kernel::answers#awaiting_replace_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_stop_v",
+      "selector": "kernel::answers#awaiting_stop_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_awaiting_other_v",
+      "selector": "kernel::answers#awaiting_other_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_arms_bridge",
+      "selector": "kernel::apply_answer_safety#continued_arms_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_awaiting_arms_bridge",
+      "selector": "kernel::apply_answer_safety#awaiting_arms_bridge",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_continuations_fund_and_pay_v",
       "selector": "kernel::continuations#fund_and_pay_v",
