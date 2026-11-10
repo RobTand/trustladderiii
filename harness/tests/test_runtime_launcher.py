@@ -1296,3 +1296,68 @@ def test_backend_cli_scrubs_structured_cause_and_each_stream_before_retention(ba
     retained = next(output.glob('backend-cli-*.json'))
     assert json.loads(retained.read_text()) == diagnostic
     assert retained.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize('opt_in', [False, True])
+@pytest.mark.parametrize('generator', [False, True])
+def test_x7_native_target_and_descendants_get_only_opted_in_flux_uri(tmp_path, monkeypatch, opt_in, generator):
+    import os
+    from tl3_harness import runtime
+
+    uri = 'local:///job-owned/run/local-1'
+    for name in ('FLUX_URI', 'FLUX_JOB_ID', 'FLUX_KVS_NAMESPACE', 'FLUX_JOB_TMPDIR'):
+        monkeypatch.setenv(name, uri if name == 'FLUX_URI' else 'injected')
+    flux_context(monkeypatch, pass_flux_uri=opt_in)
+    code = ("import json,os,subprocess,sys; "
+            "print(json.dumps({k:v for k,v in os.environ.items() if k.startswith('FLUX_')})); "
+            "subprocess.run([sys.executable,'-c',\"import os,json; print(json.dumps({k:v for k,v in os.environ.items() if k.startswith('FLUX_')}))\"],check=True)")
+    with (tmp_path / 'input').open('w+b') as selection:
+        with Supervised([sys.executable, '-B', '-c', code], selection, (),
+                        deadline_seconds=5 if generator else None) as process:
+            output = process.child.communicate(timeout=5)[0]
+    expected = {'FLUX_URI': uri} if opt_in else {}
+    assert [json.loads(line) for line in output.splitlines()] == [expected, expected]
+    assert os.environ['FLUX_JOB_ID'] == 'injected', 'supervisor keeps job metadata'
+
+
+@pytest.mark.parametrize('opt_in', [False, True])
+def test_x7_container_uses_job_uri_and_directory_mount(tmp_path, monkeypatch, opt_in):
+    from tl3_harness import runtime
+
+    monkeypatch.setenv('FLUX_URI', 'local:///job-owned/run/local-1')
+    monkeypatch.setattr(runtime, 'check_rootless_directory', lambda env: None)
+    import shutil
+    monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/' + name)
+    context = flux_context(monkeypatch, pass_flux_uri=opt_in, native_threads=1,
+                           coordinator_uri='local:///controller-submit-time',
+                           runtime={'image': 'sha256:' + '1' * 64, 'mode': 'in_job',
+                                    'executable': 'podman', 'trusted_root': '/harness', 'interpreter': 'python3'})
+    argv = runtime.command(tmp_path / 'checkout', tmp_path / 'scratch')
+    env = [argv[i + 1] for i, value in enumerate(argv) if value == '--env' and argv[i + 1].startswith('FLUX_')]
+    mounts = [argv[i + 1] for i, value in enumerate(argv) if value == '--mount']
+    assert env == (['FLUX_URI=local:///job-owned/run/local-1'] if opt_in else [])
+    assert ('type=bind,src=/job-owned/run,dst=/job-owned/run' in mounts) == opt_in
+    assert not any('/controller-submit-time' in value for value in argv)
+
+
+@pytest.mark.parametrize('uri', ['local:///safe,ro=false', 'local://relative', 'ssh:///socket',
+                                  'local:///safe=bad', 'local:///white space', 'local:///bad\npath'])
+def test_x7_invalid_flux_uri_is_refused_with_typed_reason(tmp_path, uri):
+    from tl3_harness import runtime
+
+    with pytest.raises(ValueError) as error:
+        runtime.podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1,
+                               mode='in_job', coordinator_uri=uri)
+    assert getattr(error.value, 'reason', None) == 'invalid_flux_uri'
+    assert uri not in str(error.value)
+
+
+@pytest.mark.parametrize('field', ['tree', 'scratch', 'harness'])
+def test_x7_podman_mount_values_refuse_option_delimiters(tmp_path, field):
+    from tl3_harness import runtime
+
+    values = {'tree': tmp_path, 'scratch': tmp_path, 'harness': tmp_path}
+    values[field] = str(tmp_path) + ',ro=false'
+    with pytest.raises(ValueError):
+        runtime.podman_command(values['tree'], 'sha256:' + '1' * 64, values['scratch'], 1,
+                               mode='in_job', harness=values['harness'])

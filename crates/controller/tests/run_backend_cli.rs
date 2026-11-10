@@ -6398,3 +6398,21 @@ fn x7_flux_uri_is_controller_owned_and_opt_in() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through admitted compute"]
+fn x7_terminal_original_mismatch_retains_scratch_debt() {
+    let f = Fixture::new();
+    f.submit();
+    f.report(ReportOutcome::Passed, true);
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(frames.last().unwrap()["result"]["observation"]["kind"], "terminal", "{frames:?}");
+    let debt = f.options.journal_root.join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest).join(format!("{}.scratch", f.intent.correlation));
+    fs::write(&debt, serde_json::to_vec(&f.intent).unwrap()).unwrap();
+    foreign_original(&f, "fABC");
+    let frames = f.attach();
+    assert_eq!(frames.last().unwrap()["result"]["observation"]["kind"], "unknown", "{frames:?}");
+    assert!(debt.exists());
+}

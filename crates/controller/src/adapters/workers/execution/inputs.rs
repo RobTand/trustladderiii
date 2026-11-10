@@ -697,10 +697,12 @@ mod tests {
     #[test]
     fn repeat_parallel_demand_is_aggregate_and_threads_are_bounded() {
         let demand = reservation(2, 2, 4).unwrap();
-        assert_eq!(demand.cpus.get(), 8);
+        assert_eq!(demand.cpus.get(), 4);
         assert_eq!(demand.memory_bytes.get(), 8 << 30);
         assert_eq!(demand.native_threads.get(), 1);
-        assert!(reservation(3, 2, 4).is_err());
+        assert_eq!(reservation(3, 2, 4).unwrap().cpus.get(), 4);
+        assert_eq!(reservation(10, 2, 4).unwrap().native_threads.get(), 2);
+        assert!(reservation(11, 2, 4).is_err());
         assert!(reservation(2, 8, 4).is_err());
         assert!(reservation(1, 0, 0).is_err());
     }
