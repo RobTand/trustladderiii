@@ -36,10 +36,10 @@ pub(super) proof fn ack_guard(b: Node, n: Node)
 pub(super) fn round(w: &mut World, Ghost(k): Ghost<int>)
     requires context(*old(w), k), 0 <= k <= 900,
         clean(old(w).nodes@[1], old(w).nodes@[1].pos as int), old(w).nodes@[1].pos < 5,
-    ensures context(*w, k + 4), clean(w.nodes@[1], old(w).nodes@[1].pos as int + 1),
-        w.nodes@ == old(w).nodes@.update(1, w.nodes@[1]),
-        w.gates@ == old(w).gates@, w.file_sets@ == old(w).file_sets@,
-        w.nodes@[1].holds == (old(w).nodes@[1].holds && old(w).nodes@[1].pos != 3),
+    ensures context(*final(w), k + 4), clean(final(w).nodes@[1], old(w).nodes@[1].pos as int + 1),
+        final(w).nodes@ == old(w).nodes@.update(1, final(w).nodes@[1]),
+        final(w).gates@ == old(w).gates@, final(w).file_sets@ == old(w).file_sets@,
+        final(w).nodes@[1].holds == (old(w).nodes@[1].holds && old(w).nodes@[1].pos != 3),
 {
     let ghost before = *w;
     proof {
