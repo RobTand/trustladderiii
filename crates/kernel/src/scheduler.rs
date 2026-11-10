@@ -114,7 +114,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
                 && final(w).nodes@[i as int].ticket.is_none()
                 && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
-                && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
+                && final(w).nodes@[i as int].run != old(w).nodes@[i as int].run,
         !old(w).nodes@[i as int].pool && final(w).nodes@[i as int].pool
             ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
                 && oldest_waiter(*old(w), i as int)
