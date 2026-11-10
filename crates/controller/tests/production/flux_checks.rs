@@ -761,6 +761,78 @@ fn withdrawal(generation: Option<u64>) -> Delivery {
 }
 
 #[test]
+fn flux_checks_closed_and_superseded_requests_retain_every_journal() {
+    const RETENTION: &str = "Flux adapter removed a journal. Retired verus_prismabuild obligations 8 (retire) and 9 (superseded) now apply: a retirement change must prove (8) a journal is retired only when closed and unreferenced after effects and watches settle, and (9) durable completion supersedes only strictly older generations (old < new). Add those tests, then update this guard deliberately. See tl3-flux/x5-pb-removal/OBLIGATION-MAP.md.";
+
+    fn retained(root: &Path, paths: &mut Vec<std::path::PathBuf>) {
+        paths.push(root.to_owned());
+        if root.is_dir() {
+            for entry in fs::read_dir(root).unwrap() {
+                retained(&entry.unwrap().path(), paths);
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("flux_retention")).unwrap()).unwrap();
+    let (mut adapter, backend, attached, options) = setup(root.path(), &mut ownership);
+    let (sender, inputs) = mpsc::channel();
+    let running = adapter.source().unwrap().spawn(sender);
+    let mut paths = Vec::new();
+    let old = delivery();
+    let mut new = old.clone();
+    new.key = "effect:0:7".into();
+    new.generation = old.generation + 1;
+    new.job_generation = Some(new.generation);
+    new.output = Output::Effect {
+        node: NodeId(0),
+        seq: 7,
+        kind: EffectKind::SubmitChecks,
+        head: None,
+    };
+    assert!(old.generation < new.generation);
+    for d in [&old, &new] {
+        adapter.execute(d).unwrap();
+        let owner = attached.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(owner.correlation, durable::digest(d.key.as_bytes()));
+        retained(&backend.records, &mut paths);
+        // This fixture supplies a trusted stopped terminal, including settled runtime
+        // cleanup. No controller effect references are stored for these deliveries.
+        backend.terminal(Ending::Cancelled);
+        let input = inputs.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+        let Input::Completion { key, .. } = input else {
+            panic!("expected a durable completion");
+        };
+        assert_eq!(key, d.key);
+        assert!(matches!(adapter.reconcile(d).unwrap(), Reconciliation::Found(_)));
+        drop(owner);
+    }
+    running.stop().unwrap();
+    running.join().unwrap();
+    drop(adapter);
+    assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+
+    let mut restored = Adapter::new(
+        backend.clone(),
+        options,
+        &backend.records,
+        Staging,
+        &mut ownership,
+    )
+    .unwrap();
+    for d in [&old, &new] {
+        assert!(matches!(restored.reconcile(d).unwrap(), Reconciliation::Found(_)));
+    }
+    drop((restored, ownership));
+    assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+    assert_eq!(backend.state.lock().unwrap().submits, 2);
+    database.stop();
+}
+
+#[test]
 fn flux_checks_unbound_withdrawal_starts_no_work() {
     with_checks_adapter(|adapter, backend, _| {
         assert!(adapter.execute(&withdrawal(Some(4))).is_ok());
