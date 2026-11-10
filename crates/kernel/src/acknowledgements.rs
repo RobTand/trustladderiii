@@ -625,7 +625,7 @@ pub(super) open spec fn ack_live_post(b: Node, n: Node, e: InFlight, ack: Ack, n
         && (ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr
             ==> n == retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), ..c },
                 Outcome::Stopped) && oa == ob)
-        && (!(ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr) ==> n.review_stop == b.review_stop)
+        && (ack == Ack::Confirmed ==> n.review_stop == b.review_stop)
     })
 }
 
